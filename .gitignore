@@ -1,0 +1,13 @@
+Claude_optimized_inf.py
+analyze_model.py
+stream_gtcrn_RT_Cld.py
+.cursor/
+__pycache__/
+dist/
+build/
+poise.spec
+setup.iss
+todo.md
+AGENTS.md
+stream_denoiser_RT.py
+bash.exe.stackdump
