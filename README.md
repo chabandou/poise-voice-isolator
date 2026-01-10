@@ -28,7 +28,7 @@ Currently only supported on Windows.
 
 For the easiest experience, use the standalone Windows installer:
 
-1. Download the Poise Installer: [Poise_Setup.exe](https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.0/Poise_Setup_v1.0.exe).
+1. Download the Poise Installer: [Poise_Setup.exe](https://github.com/chabandou/poise-voice-isolator/releases/download/launch/Poise_Setup.exe).
 2. Run the installer and follow the on-screen instructions.
 3. Launch **Poise Voice Isolator** from your Desktop or Start Menu.
 
@@ -259,4 +259,5 @@ MIT License
 ## Contributing
 
 Contributions are welcome!
+
 
