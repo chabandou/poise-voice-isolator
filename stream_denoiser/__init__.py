@@ -29,7 +29,12 @@ from .device_utils import (
     validate_output_device,
 )
 from .cli import main, process_system_audio_realtime
-from .gui import run_gui
+
+# GUI is optional - only import if PyQt6 is available
+try:
+    from .gui import run_gui
+except ImportError:
+    run_gui = None
 
 __version__ = "1.0.0"
 
@@ -54,3 +59,4 @@ __all__ = [
     "main",
     "run_gui",
 ]
+

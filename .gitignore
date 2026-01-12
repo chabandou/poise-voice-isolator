@@ -5,8 +5,6 @@ stream_gtcrn_RT_Cld.py
 __pycache__/
 dist/
 build/
-poise.spec
-setup.iss
 todo.md
 AGENTS.md
 stream_denoiser_RT.py

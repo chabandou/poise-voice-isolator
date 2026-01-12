@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poise-voice-isolator"
+version = "1.0.0"
+description = "Real-time system audio denoiser and voice isolator"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "chabandou"}
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+keywords = ["audio", "denoiser", "voice", "isolator", "real-time", "noise-reduction"]
+
+dependencies = [
+    "numpy>=1.23.0,<2.0.0",
+    "onnxruntime>=1.15.0",
+    "sounddevice>=0.4.6",
+    "scipy>=1.10.0",
+    "samplerate>=0.1.0",
+]
+
+[project.optional-dependencies]
+linux = [
+    "pulsectl>=24.0.0",
+    "textual>=0.50.0",
+]
+gui = [
+    "PyQt6>=6.5.0",
+]
+all = [
+    "pulsectl>=24.0.0",
+    "textual>=0.50.0",
+    "PyQt6>=6.5.0",
+]
+
+[project.scripts]
+poise = "stream_denoiser.tui:main"
+poise-cli = "stream_denoiser.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/chabandou/Poise-Voice-Isolator"
+Repository = "https://github.com/chabandou/Poise-Voice-Isolator"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["stream_denoiser*"]
+
+[tool.setuptools.package-data]
+stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*"]

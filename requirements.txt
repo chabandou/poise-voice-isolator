@@ -1,0 +1,10 @@
+numpy>=1.23.0,<2.0.0
+onnxruntime>=1.15.0
+sounddevice>=0.4.6
+pyaudio>=0.2.13
+scipy>=1.10.0
+samplerate>=0.1.0
+PyQt6>=6.5.0
+pulsectl>=24.0.0; sys_platform == 'linux'
+textual>=0.50.0; sys_platform == 'linux'
+# pyaudiowpatch; sys_platform == 'win32'

@@ -2,6 +2,7 @@
 Command-Line Interface for Stream Denoiser
 
 Main entry point and argument parsing for the real-time audio denoiser.
+Supports both Windows (VB Cable) and Linux (PulseAudio/ALSA).
 """
 import os
 import sys
@@ -15,13 +16,12 @@ from .constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_FRAME_SIZE,
     DEFAULT_VAD_THRESHOLD_DB,
-    DEFAULT_VAD_THRESHOLD_DB,
     DEVICE_SWITCH_INIT_DELAY_SEC,
     MSG_ONNX_NOT_FOUND,
     MSG_POWERSHELL_UNAVAILABLE,
 )
 from .processor import DenoiserAudioProcessor, load_onnx_model
-from .vb_cable import VB_CableSwitcher
+from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import USE_PYAUDIOWPATCH, USE_SOUNDDEVICE
 from .logging_config import get_logger
@@ -48,21 +48,44 @@ def process_system_audio_realtime(onnx_session: onnxruntime.InferenceSession,
         enable_vad: Enable Voice Activity Detection
         vad_threshold_db: VAD threshold in dB
         atten_lim_db: Attenuation limit in dB
-        use_vb_cable: Whether to automatically switch to VB Cable as default playback device
+        use_vb_cable: Whether to automatically switch devices (VB Cable on Windows, null sink on Linux)
         vb_cable_name: Custom name for VB Cable device (auto-detected if None)
     """
-    # Create VB Cable switcher if enabled
+    # Platform-specific audio routing
     vb_cable_switcher = None
+    linux_router = None
+    
     if use_vb_cable:
-        cable_name = vb_cable_name or "CABLE Input (VB-Audio Virtual Cable)"
-        vb_cable_switcher = VB_CableSwitcher(vb_cable_name=cable_name, auto_switch=True)
-        if vb_cable_switcher._powershell_available:
-            _logger.info("VB Cable switching enabled - default playback device will be switched automatically")
-            _logger.info("Waiting for device switch to take effect...")
-            time.sleep(DEVICE_SWITCH_INIT_DELAY_SEC)
-        else:
-            _logger.warning(MSG_POWERSHELL_UNAVAILABLE)
-            vb_cable_switcher = None
+        if is_windows():
+            # Windows: Use VB Cable
+            VBCableSwitcher = get_vb_cable_switcher()
+            if VBCableSwitcher is not None:
+                cable_name = vb_cable_name or "CABLE Input (VB-Audio Virtual Cable)"
+                vb_cable_switcher = VBCableSwitcher(vb_cable_name=cable_name, auto_switch=True)
+                if vb_cable_switcher._powershell_available:
+                    _logger.info("VB Cable switching enabled - default playback device will be switched automatically")
+                    _logger.info("Waiting for device switch to take effect...")
+                    time.sleep(DEVICE_SWITCH_INIT_DELAY_SEC)
+                else:
+                    _logger.warning(MSG_POWERSHELL_UNAVAILABLE)
+                    vb_cable_switcher = None
+        elif is_linux():
+            # Linux: Use null sink routing
+            try:
+                from .backends.platform.linux import LinuxAudioRouter
+                linux_router = LinuxAudioRouter(auto_switch=True)
+                if linux_router.get_monitor_source_name():
+                    _logger.info("Linux audio routing enabled - using null sink for capture")
+                    # Override input device to use null sink monitor
+                    null_sink_device_id = linux_router.get_monitor_device_id()
+                    if null_sink_device_id is not None:
+                        input_device = null_sink_device_id
+                        _logger.info(f"Using null sink monitor as input device: {input_device}")
+                else:
+                    _logger.warning("Could not set up automatic routing - using default capture")
+                    linux_router = None
+            except ImportError:
+                _logger.info("Linux routing not available - using default capture")
     
     try:
         # Create unified audio processor
@@ -95,6 +118,8 @@ def process_system_audio_realtime(onnx_session: onnxruntime.InferenceSession,
         # Restore original audio device
         if vb_cable_switcher is not None:
             vb_cable_switcher.restore_original_device()
+        if linux_router is not None:
+            linux_router.restore_original_sink()
 
 
 def main():
@@ -152,8 +177,25 @@ Examples:
                         help='Disable automatic VB Cable switching (use current default device)')
     parser.add_argument('--vb-cable-name', type=str, default=None,
                         help='Custom name for VB Cable device (auto-detected if not specified)')
+    parser.add_argument('--tui', action='store_true',
+                        help='Launch terminal UI (Linux only)')
     
     args = parser.parse_args()
+    
+    # Launch TUI if requested (Linux only)
+    if args.tui:
+        if not is_linux():
+            _logger.error("TUI is only available on Linux. Use the GUI on Windows.")
+            sys.exit(1)
+        try:
+            from .tui import PoiseApp
+            app = PoiseApp()
+            app.run()
+            sys.exit(0)
+        except ImportError as e:
+            _logger.error(f"Failed to import TUI: {e}")
+            _logger.error("Make sure textual is installed: pip install textual")
+            sys.exit(1)
     
     if args.list_devices:
         if not USE_SOUNDDEVICE:
@@ -162,7 +204,22 @@ Examples:
         
         import sounddevice as sd
         
-        print("Available audio devices:")
+        # On Linux, show PulseAudio sources first if available
+        if is_linux():
+            try:
+                from .backends.platform.linux import list_pulseaudio_sources_formatted, USE_PULSECTL
+                if USE_PULSECTL:
+                    pulse_sources = list_pulseaudio_sources_formatted()
+                    if pulse_sources:
+                        print("PulseAudio/PipeWire Sources:")
+                        print("=" * 80)
+                        print(pulse_sources)
+                        print("-" * 80)
+                        print()
+            except ImportError:
+                pass
+        
+        print("PortAudio Devices:")
         print("=" * 80)
         devices = list_audio_devices()
         for i, device in enumerate(devices):

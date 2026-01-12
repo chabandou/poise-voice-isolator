@@ -1,8 +1,8 @@
 """
 Audio Device Utilities
 
-Functions for discovering and managing audio devices,
-including WASAPI loopback detection for system audio capture.
+Functions for discovering and managing audio devices.
+Supports both Windows (WASAPI loopback) and Linux (PulseAudio/ALSA monitors).
 """
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -10,6 +10,7 @@ from .backend_detection import (
     USE_SOUNDDEVICE, USE_PYAUDIO, USE_PYAUDIOWPATCH,
     sd, pyaudio
 )
+from .platform_utils import is_windows, is_linux, is_acceptable_host_api
 from .logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -115,8 +116,9 @@ def _find_wasapi_loopback_pyaudio() -> Optional[int]:
 def _find_loopback_devices_sounddevice() -> List[Tuple[int, Dict[str, Any]]]:
     """
     Find loopback devices using sounddevice.
-    Prioritizes VB Cable Output device.
-    Only searches WASAPI devices.
+    
+    On Windows: Prioritizes VB Cable Output, searches WASAPI devices.
+    On Linux: Searches for monitor sources (PulseAudio/PipeWire).
     
     Returns:
         List of tuples (device_id, device_info) for loopback devices
@@ -125,7 +127,7 @@ def _find_loopback_devices_sounddevice() -> List[Tuple[int, Dict[str, Any]]]:
         return []
     
     devices = sd.query_devices()
-    vb_cable_devices = []
+    priority_devices = []  # VB Cable on Windows, or preferred monitors on Linux
     loopback_devices = []
     
     for i, device in enumerate(devices):
@@ -133,33 +135,57 @@ def _find_loopback_devices_sounddevice() -> List[Tuple[int, Dict[str, Any]]]:
         device_name_lower = device_name.lower()
         host_api = sd.query_hostapis(device['hostapi'])['name']
         
-        # Filter to WASAPI devices only
-        if 'wasapi' not in host_api.lower():
+        # Platform-specific host API filtering
+        if is_windows():
+            # On Windows, only use WASAPI devices
+            if 'wasapi' not in host_api.lower():
+                continue
+        elif is_linux():
+            # On Linux, accept ALSA, PulseAudio, JACK, PipeWire
+            if not is_acceptable_host_api(host_api):
+                continue
+        
+        # Must be an input device to capture from
+        if device['max_input_channels'] == 0:
             continue
         
-        # First priority: VB Cable Output (loopback device)
-        if device['max_input_channels'] > 0:
+        # Windows: VB Cable detection
+        if is_windows():
             if 'cable output' in device_name_lower and 'vb-audio' in device_name_lower:
-                vb_cable_devices.append((i, device))
+                priority_devices.append((i, device))
+                continue
             elif 'cable output' in device_name_lower:
-                vb_cable_devices.append((i, device))
+                priority_devices.append((i, device))
+                continue
         
-        # Second priority: Other loopback devices
+        # Linux: Monitor source detection (PulseAudio/PipeWire)
+        if is_linux():
+            if 'monitor of' in device_name_lower or '.monitor' in device_name_lower:
+                # Prioritize built-in audio monitors
+                if 'built-in' in device_name_lower or 'internal' in device_name_lower:
+                    priority_devices.append((i, device))
+                else:
+                    loopback_devices.append((i, device))
+                continue
+        
+        # Generic loopback detection (both platforms)
         if 'loopback' in device_name_lower or 'stereo mix' in device_name_lower:
             loopback_devices.append((i, device))
-        elif device['max_input_channels'] > 0:
-            if any(kw in device_name_lower for kw in ['speakers', 'headphones', 'output', 'playback']):
-                if 'microphone' not in device_name_lower and 'mic' not in device_name_lower:
-                    loopback_devices.append((i, device))
+        elif any(kw in device_name_lower for kw in ['speakers', 'headphones', 'output', 'playback']):
+            if 'microphone' not in device_name_lower and 'mic' not in device_name_lower:
+                loopback_devices.append((i, device))
     
-    # Return VB Cable devices first, then other loopback devices
-    return vb_cable_devices + loopback_devices
+    # Return priority devices first, then other loopback devices
+    return priority_devices + loopback_devices
 
 
 def find_loopback_device(device_id: Optional[int] = None) -> Optional[int]:
     """
-    Find WASAPI loopback device for system audio capture on Windows.
-    Uses the system default playback device's loopback if available.
+    Find loopback device for system audio capture.
+    
+    On Windows: Uses WASAPI loopback via PyAudioWPatch or VB Cable.
+    On Linux: Uses pulsectl to find PulseAudio/PipeWire monitor sources,
+              then maps to PortAudio device for streaming.
     
     Args:
         device_id: Optional specific device ID to use
@@ -171,7 +197,18 @@ def find_loopback_device(device_id: Optional[int] = None) -> Optional[int]:
         RuntimeError: If required libraries are not available
         ValueError: If device_id is out of range
     """
-    # Try PyAudioWPatch first (preferred method)
+    # On Linux, try hybrid pulsectl approach first
+    if is_linux():
+        try:
+            from .backends.platform.linux import find_loopback_hybrid
+            hybrid_result = find_loopback_hybrid(device_id)
+            if hybrid_result is not None:
+                return hybrid_result
+            # If hybrid returns None but device_id was specified, continue to validation below
+        except ImportError:
+            _logger.debug("Linux platform module not available, using fallback")
+    
+    # Try PyAudioWPatch first (Windows preferred method)
     wasapi_device = _find_wasapi_loopback_pyaudio()
     if wasapi_device is not None:
         if device_id is not None and device_id != wasapi_device:
@@ -210,14 +247,19 @@ def find_loopback_device(device_id: Optional[int] = None) -> Optional[int]:
     return sd.default.device[0]
 
 
-def get_output_device_id(output_device: Optional[int], devices: List[Dict[str, Any]]) -> int:
+def get_output_device_id(output_device: Optional[int], devices: List[Dict[str, Any]], 
+                         input_host_api: Optional[str] = None) -> int:
     """
     Get output device ID.
-    Only searches WASAPI devices.
+    
+    On Windows: Only searches WASAPI devices.
+    On Linux: Searches ALSA, PulseAudio, JACK, PipeWire devices.
+              Prioritizes matching the input device's host API to avoid crashes.
     
     Args:
         output_device: User-specified output device ID or None
         devices: List of available audio devices
+        input_host_api: Host API name of the input device (to match for compatibility)
     
     Returns:
         Output device ID
@@ -232,44 +274,101 @@ def get_output_device_id(output_device: Optional[int], devices: List[Dict[str, A
         if output_device >= len(devices):
             raise ValueError(f"Output device ID {output_device} is out of range. Available devices: 0-{len(devices)-1}")
         device_info = devices[output_device]
-        # Check if it's WASAPI
+        
+        # Platform-specific host API check
         host_api = sd.query_hostapis(device_info['hostapi'])['name']
-        if 'wasapi' not in host_api.lower():
-            raise ValueError(f"Device {output_device} ({device_info['name']}) is not a WASAPI device. Please select a WASAPI device.")
+        if not is_acceptable_host_api(host_api):
+            if is_windows():
+                raise ValueError(f"Device {output_device} ({device_info['name']}) is not a WASAPI device. Please select a WASAPI device.")
+            else:
+                raise ValueError(f"Device {output_device} ({device_info['name']}) uses unsupported host API: {host_api}")
+        
         if device_info['max_output_channels'] == 0:
             raise ValueError(f"Device {output_device} ({device_info['name']}) does not support output")
         return output_device
     else:
-        # Filter to WASAPI devices only
-        wasapi_devices = []
+        # Filter to acceptable devices for current platform
+        acceptable_devices = []
+        matching_api_devices = []  # Devices matching input host API
+        
         for i, device in enumerate(devices):
             host_api = sd.query_hostapis(device['hostapi'])['name']
-            if 'wasapi' not in host_api.lower():
+            if not is_acceptable_host_api(host_api):
                 continue
             if device['max_output_channels'] > 0:
-                wasapi_devices.append((i, device))
+                # Skip monitor sources (they're for input)
+                device_name_lower = device['name'].lower()
+                if 'monitor' in device_name_lower:
+                    continue
+                acceptable_devices.append((i, device, host_api))
+                
+                # Track devices matching the input host API
+                if input_host_api and input_host_api.lower() in host_api.lower():
+                    matching_api_devices.append((i, device, host_api))
         
-        if not wasapi_devices:
-            raise ValueError("No WASAPI output-capable audio device found")
+        if not acceptable_devices:
+            platform_name = "WASAPI" if is_windows() else "ALSA/PulseAudio/JACK"
+            raise ValueError(f"No {platform_name} output-capable audio device found")
+        
+        # On Linux with PulseAudio, prioritize real sinks over virtual "Default Sink"
+        if is_linux() and input_host_api and matching_api_devices:
+            # Sort by preference: prefer devices with normal channel counts (not 32-channel virtual)
+            # and prefer actual named devices over "Default Sink"
+            real_sinks = []
+            virtual_sinks = []
+            
+            for i, device, host_api in matching_api_devices:
+                if device['max_output_channels'] > 0:
+                    device_name = device['name']
+                    channels = device['max_output_channels']
+                    
+                    # Skip monitors
+                    if 'monitor' in device_name.lower():
+                        continue
+                    
+                    # Categorize: real sinks have 1-8 channels, virtual may have more
+                    if 'default' in device_name.lower() or channels > 8:
+                        virtual_sinks.append((i, device, host_api))
+                    else:
+                        real_sinks.append((i, device, host_api))
+            
+            # Prefer real sinks
+            if real_sinks:
+                i, device, host_api = real_sinks[0]
+                _logger.info(f"Using real output sink: {device['name']} (ID: {i}, channels: {device['max_output_channels']})")
+                return i
+            
+            # Fall back to virtual if needed
+            if virtual_sinks:
+                i, device, host_api = virtual_sinks[0]
+                _logger.info(f"Using virtual output sink: {device['name']} (ID: {i})")
+                return i
         
         # First priority: Look for device with "headphones" in the name
-        for i, device in wasapi_devices:
+        for i, device, host_api in acceptable_devices:
             device_name_lower = device['name'].lower()
             if 'headphone' in device_name_lower:
                 _logger.info(f"Auto-selected headphones device: {device['name']} (ID: {i})")
                 return i
         
-        # Second priority: Try default output device (if it's WASAPI)
+        # Second priority: Try default output device (if it has acceptable host API)
         default_output = sd.default.device[1]
         if default_output is not None:
             if default_output < len(devices):
                 device_info = devices[default_output]
                 host_api = sd.query_hostapis(device_info['hostapi'])['name']
-                if 'wasapi' in host_api.lower() and device_info['max_output_channels'] > 0:
+                if is_acceptable_host_api(host_api) and device_info['max_output_channels'] > 0:
+                    # On Linux, warn if mismatching host API
+                    if is_linux() and input_host_api and input_host_api.lower() not in host_api.lower():
+                        _logger.warning(f"Default output uses different host API ({host_api}) than input ({input_host_api})")
+                        _logger.warning("This may cause audio issues. Consider specifying --output-device")
+                    _logger.info(f"Using default output device: {device_info['name']} (ID: {default_output})")
                     return default_output
         
-        # Last resort: return first WASAPI output device
-        return wasapi_devices[0][0]
+        # Last resort: return first acceptable output device
+        device_id, device = acceptable_devices[0]
+        _logger.info(f"Using first available output device: {device['name']} (ID: {device_id})")
+        return device_id
 
 
 def validate_output_device(device_id: int, sample_rate: int, devices: List[Dict[str, Any]]) -> bool:
