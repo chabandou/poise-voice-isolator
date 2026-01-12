@@ -1,0 +1,20 @@
+# Maintainer: chabandou <your.email@example.com>
+pkgname=poise-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Real-time system audio denoiser and voice isolator with TUI (prebuilt binary)"
+arch=('x86_64')
+url="https://github.com/chabandou/Poise-Voice-Isolator"
+license=('MIT')
+depends=(
+    'glibc'
+    'libpulse'
+)
+provides=('poise')
+conflicts=('poise')
+source=("poise-$pkgver::$url/releases/download/v$pkgver/poise")
+sha256sums=('SKIP')  # Update with actual hash after uploading binary
+
+package() {
+    install -Dm755 "$srcdir/poise-$pkgver" "$pkgdir/usr/bin/poise"
+}

@@ -20,9 +20,9 @@ A high-performance real-time system audio denoiser and voice isolator that captu
 
 ## Installation
 
-Currently only supported on Windows.
+Supported on **Windows** and **Linux**.
 
-<span style="color:red">**Important**:</span> Make sure to download and install VB Cable to allow loopback audio capture. [Download here](https://vb-audio.com/Cable/index.htm)
+> **Important**: Make sure to download and install VB Cable to allow loopback audio capture. [Download here](https://vb-audio.com/Cable/index.htm)
 
 ### Standalone Installer (Recommended)
 
@@ -37,7 +37,7 @@ For the easiest experience, use the standalone Windows installer:
 Prefrebly in a seperate conda environment.
 
 ```bash
-conda create -n poise python=3.9.5
+conda create -n poise python=3.10
 conda activate poise
 ```
 
@@ -245,6 +245,104 @@ During processing, the script/GUI displays real-time statistics:
 ### Audio dropouts
 - Reduce processing load (enable VAD, reduce model complexity)
 - Check system CPU usage and close unnecessary applications, the model can be resource hungry.
+
+### Linux Troubleshooting
+
+**Error: `cannot enable executable stack as shared object requires: Invalid argument`**
+
+This error occurs on newer Linux kernels (e.g., Arch Linux) where security policies prevent shared libraries from having an executable stack. It typically affects `onnxruntime`.
+
+**Fix:**
+Clear the executable stack flag on the ONNX Runtime library using `execstack` or `patchelf`.
+
+1. Install `patchelf`:
+   ```bash
+   sudo pacman -S patchelf    # Arch Linux
+   sudo apt install patchelf  # Ubuntu/Debian
+   ```
+
+2. Locate the `onnxruntime` shared object file and clear the flag:
+   ```bash
+   # Find the path (example path for conda environment 'poise')
+   find ~/miniforge3/envs/poise/lib/ -name "onnxruntime_pybind11_state.so"
+   
+   # Apply the fix
+   patchelf --clear-execstack /path/to/onnxruntime_pybind11_state.so
+   ```
+
+---
+
+**Error: `malloc(): invalid size (unsorted)` or crash on startup**
+
+This crash occurs when PortAudio uses the JACK backend, which has memory corruption issues. The solution is to rebuild PortAudio with PulseAudio support.
+
+**Fix - Rebuild PortAudio:**
+
+1. Install build dependencies:
+   ```bash
+   sudo pacman -S base-devel cmake libpulse alsa-lib   # Arch
+   sudo apt install build-essential cmake libpulse-dev libasound2-dev  # Ubuntu
+   ```
+
+2. Clone and build PortAudio with PulseAudio:
+   ```bash
+   git clone https://github.com/PortAudio/portaudio.git /tmp/portaudio
+   cd /tmp/portaudio && mkdir build && cd build
+   cmake .. -DCMAKE_BUILD_TYPE=Release -DPA_USE_ALSA=ON -DPA_USE_JACK=OFF -DPA_USE_PULSEAUDIO=ON -DCMAKE_INSTALL_PREFIX=/usr/local
+   make -j$(nproc)
+   sudo make install && sudo ldconfig
+   ```
+
+3. Reinstall sounddevice:
+   ```bash
+   pip uninstall sounddevice && pip install sounddevice --no-cache-dir
+   ```
+
+4. **Important:** Set `LD_LIBRARY_PATH` before running:
+   ```bash
+   export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+   python -m stream_denoiser
+   ```
+
+   To make permanent:
+   ```bash
+   echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+   ```
+
+---
+
+**No audio output or echo/duplicate audio**
+
+The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
+
+1. **Check current default sink:**
+   ```bash
+   pactl get-default-sink
+   ```
+   
+2. **If stuck on `Denoiser_Capture` after a crash:**
+   ```bash
+   pactl set-default-sink alsa_output.pci-0000_00_1f.3.analog-stereo
+   ```
+   (Replace with your actual sink name from `pactl list sinks short`)
+
+3. **Remove leftover null sink:**
+   ```bash
+   pactl unload-module module-null-sink
+   ```
+
+---
+
+**Audio routing (how it works)**
+
+On Linux, the denoiser:
+1. Creates a null sink (`Denoiser_Capture`)
+2. Sets it as the default (apps send audio there)
+3. Captures from the null sink's monitor
+4. Outputs processed audio to your real speakers
+5. Restores original routing on exit
+
+This eliminates echo because original audio goes to a silent null sink.
 
 ## Special thanks to
 GTCRN implementation by [here](https://github.com/Xiaobin-Rong/gtcrn#).

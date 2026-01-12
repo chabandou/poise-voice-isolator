@@ -1,0 +1,114 @@
+/* 
+ * Poise TUI - Transparent Background
+ */
+
+$fg: #c0caf5;
+$dim: #565f89;
+$border: #3b4261;
+$accent: #7dcfff;
+
+Screen {
+    background: transparent;
+    color: $fg;
+    layout: vertical;
+}
+
+Header {
+    dock: top;
+    background: transparent;
+    color: $dim;
+}
+
+HeaderIcon {
+    color: transparent;
+}
+
+HeaderTitle {
+    color: $accent;
+}
+
+Footer {
+    dock: bottom;
+    background: transparent;
+    color: $dim;
+}
+
+FooterKey {
+    background: transparent;
+    color: $dim;
+}
+
+FooterKey>.footer-key--key {
+    background: transparent;
+    color: $accent;
+}
+
+#main-container {
+    width: 1fr;
+    height: 1fr;
+}
+
+DeviceList {
+    width: 1fr;
+    height: 33%;
+    background: transparent;
+    border: heavy $border;
+    border-title-color: $accent;
+    border-title-background: transparent;
+}
+
+#device-list {
+    height: 1fr;
+    background: transparent;
+}
+
+ListItem {
+    padding: 0 1;
+    height: 1;
+    background: transparent;
+    color: $fg;
+}
+
+ListItem:hover {
+    background: $border;
+}
+
+ListItem.-selected {
+    background: $border;
+    color: $accent;
+}
+
+StatsPanel {
+    width: 1fr;
+    height: auto;
+    background: transparent;
+    border: heavy $border;
+    border-title-color: $accent;
+    border-title-background: transparent;
+}
+
+#stats-content {
+    padding: 0 1;
+    color: $fg;
+    background: transparent;
+}
+
+StatusLine {
+    dock: bottom;
+    width: 1fr;
+    height: 1;
+    padding: 0 1;
+    margin-bottom: 1;
+    color: $fg;
+    background: transparent;
+}
+
+#status-text {
+    background: transparent;
+}
+
+Scrollbar {
+    background: transparent;
+    color: $dim;
+    width: 1;
+}

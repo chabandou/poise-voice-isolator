@@ -48,8 +48,13 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
         input_dev_id = sd.default.device[0]
     
     devices = sd.query_devices()
+    
+    # Get input device's host API to ensure output uses the same backend
+    input_device_info = sd.query_devices(input_dev_id)
+    input_host_api = sd.query_hostapis(input_device_info['hostapi'])['name']
+    
     try:
-        output_dev_id = get_output_device_id(output_device, devices)
+        output_dev_id = get_output_device_id(output_device, devices, input_host_api=input_host_api)
         if not validate_output_device(output_dev_id, processor.target_sr, devices):
             raise ValueError(f"Output device {output_dev_id} does not support required configuration")
     except ValueError as e:
@@ -57,7 +62,9 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
         print("\nAvailable output devices:")
         for i, device in enumerate(devices):
             if device['max_output_channels'] > 0:
-                print(f"  ID {i}: {device['name']} (channels: {device['max_output_channels']}, sr: {device.get('default_samplerate', 'N/A')})")
+                host_api = sd.query_hostapis(device['hostapi'])['name']
+                match_marker = " [MATCHES INPUT]" if input_host_api.lower() in host_api.lower() else ""
+                print(f"  ID {i}: {device['name']} (API: {host_api}){match_marker}")
         raise
     
     input_device_info = sd.query_devices(input_dev_id)
