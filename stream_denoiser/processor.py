@@ -311,11 +311,54 @@ def load_onnx_model(onnx_path: str = 'denoiser_model.onnx') -> onnxruntime.Infer
     """
     Load ONNX model for inference with optimized settings.
     Uses CPU execution provider with intra-op parallelism for better performance.
-    """
-    if not os.path.exists(onnx_path):
-        raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
     
-    _logger.info(f"Loading ONNX model: {onnx_path}")
+    Searches for model in multiple locations:
+    1. Provided path (if absolute)
+    2. Same directory as the executable/script
+    3. Current working directory
+    """
+    import sys
+    
+    # If absolute path provided, use it directly
+    if os.path.isabs(onnx_path) and os.path.exists(onnx_path):
+        model_path = onnx_path
+    else:
+        # Search in multiple locations
+        search_paths = []
+        
+        # 1. Directory containing the executable (works for Nuitka onefile)
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller
+            search_paths.append(os.path.join(sys._MEIPASS, onnx_path))
+        
+        # Nuitka onefile extracts to a temp dir, __file__ points there
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        search_paths.append(os.path.join(script_dir, onnx_path))
+        search_paths.append(os.path.join(script_dir, '..', onnx_path))
+        
+        # 2. Directory containing the main script
+        if hasattr(sys, 'argv') and sys.argv[0]:
+            main_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            search_paths.append(os.path.join(main_dir, onnx_path))
+        
+        # 3. Current working directory
+        search_paths.append(os.path.join(os.getcwd(), onnx_path))
+        
+        # Find the first existing path
+        model_path = None
+        for path in search_paths:
+            _logger.debug(f"Searching for model at: {path}")
+            if os.path.exists(path):
+                model_path = path
+                break
+        
+        if model_path is None:
+            raise FileNotFoundError(
+                f"ONNX model not found: {onnx_path}\n"
+                f"Searched in:\n" + "\n".join(f"  - {p}" for p in search_paths)
+            )
+    
+    _logger.info(f"Loading ONNX model: {model_path}")
     
     # Configure session options for better performance
     session_options = onnxruntime.SessionOptions()
@@ -340,7 +383,7 @@ def load_onnx_model(onnx_path: str = 'denoiser_model.onnx') -> onnxruntime.Infer
     ]
     
     session = onnxruntime.InferenceSession(
-        onnx_path,
+        model_path,
         sess_options=session_options,
         providers=providers
     )

@@ -13,28 +13,53 @@ A high-performance real-time system audio denoiser and voice isolator that captu
 - **Voice Activity Detection (VAD)**: performance boost by skipping silence
 - **Low Latency**: Lock-free ring buffers for reduced latency
 - **WASAPI Loopback Support**: Captures system audio on Windows using PyAudioWPatch
-- **VB Cable Integration**: Automatic Windows audio device switching for seamless capture
-- **Streaming State Management**: Maintains model state across frames for continuous processing
-- **Automatic Resampling**: Handles different input/output sample rates seamlessly
+- **VB Cable Integration on windows**: Automatic Windows audio device switching for seamless capture
+- **Automatic Resampling**: Handles different input/output device sample rates seamlessly
 
 
 ## Installation
 
 Supported on **Windows** and **Linux**.
 
-> **Important**: Make sure to download and install VB Cable to allow loopback audio capture. [Download here](https://vb-audio.com/Cable/index.htm)
 
-### Standalone Installer (Recommended)
-
-For the easiest experience, use the standalone Windows installer:
+### Windows
 
 1. Download the Poise Installer: [Poise_Setup.exe](https://github.com/chabandou/poise-voice-isolator/releases/download/launch/Poise_Setup.exe).
 2. Run the installer and follow the on-screen instructions.
 3. Launch **Poise Voice Isolator** from your Desktop or Start Menu.
 
+> **Note**: Make sure to download and install [VB Cable](https://vb-audio.com/Cable/index.htm) for loopback audio capture on Windows.
+
+### Linux Binary
+
+Download the prebuilt binary for the TUI directly from GitHub:
+
+```bash
+# Download the latest release
+curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.0.0/poise
+
+# Make it executable
+chmod +x poise
+
+# Move to your PATH (optional)
+sudo mv poise /usr/local/bin/
+
+# Run the TUI
+poise
+```
+
+or, on **Arch Linux (btw):**
+
+```bash
+yay -S poise-bin
+
+# Run the TUI 
+poise
+```
+
 ### Installation from Source (Developers)
 
-Prefrebly in a seperate conda environment.
+Recommended to be done in a seperate conda environment.
 
 ```bash
 conda create -n poise python=3.10
@@ -43,8 +68,8 @@ conda activate poise
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd poise
+git clone https://github.com/chabandou/poise-voice-isolator.git
+cd poise-voice-isolator
 ```
 
 2. Install required dependencies:
@@ -58,15 +83,7 @@ pip install pyaudiowpatch
 pip install samplerate
 ```
 
-## Usage
-
-### Quick Start
-
-**GUI Mode:**
-```bash
-# Run the Poise Voice Isolator GUI
-python -m stream_denoiser.gui
-```
+#### Usage
 
 **CLI Mode:**
 Process system audio with default settings (VAD enabled, automatic VB Cable switching):
@@ -76,33 +93,6 @@ python -m stream_denoiser
 
 # Or using the entry point script
 python -m stream_denoiser.cli
-```
-
-### Programmatic Usage
-
-The modular package can be imported and used directly:
-
-```python
-from stream_denoiser import (
-    load_onnx_model,
-    DenoiserAudioProcessor,
-    VB_CableSwitcher,
-    process_system_audio_realtime
-)
-
-# Load ONNX model
-session = load_onnx_model('denoiser_model.onnx')
-
-# Create processor
-processor = DenoiserAudioProcessor(
-    session,
-    target_sr=48000,
-    frame_size=480,
-    enable_vad=True
-)
-
-# Process audio in real-time
-process_system_audio_realtime(session, enable_vad=True, use_vb_cable=True)
 ```
 
 ### Available Options
@@ -117,49 +107,64 @@ process_system_audio_realtime(session, enable_vad=True, use_vb_cable=True)
 - `--no-vb-cable`: Disable automatic VB Cable switching (use current default device)
 - `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
 
+
+**GUI Mode (windows only):**
+```bash
+# Run the Poise Voice Isolator GUI
+python -m stream_denoiser.gui
+```
+
+
 ## Package Structure
 
 ```
 stream_denoiser/
-├── gui/                     # Poise GUI implementation
-│   ├── __init__.py          # GUI package initialization
-│   ├── __main__.py          # GUI module entry point
+├── tui/                     # Terminal UI (Linux)
+│   ├── __init__.py
+│   ├── __main__.py          # TUI entry point
+│   ├── app.py               # Main Textual app
+│   ├── styles.tcss          # TUI stylesheet
+│   └── widgets/             # TUI components
+│       ├── device_list.py   # Device selection widget
+│       ├── stats_panel.py   # Statistics display
+│       └── status_line.py   # Status bar widget
+├── gui/                     # Desktop GUI (Windows, PyQt6)
+│   ├── __init__.py
+│   ├── __main__.py
 │   ├── assets/              # Icons and images
 │   ├── widgets/             # Custom UI components
-│   │   ├── __init__.py      # Widgets package initialization
-│   │   ├── device_selector.py
-│   │   ├── stats_panel.py
-│   │   └── toggle_button.py
-│   ├── main_window.py       # Main GUI logic
-│   ├── settings.py          # Settings dialog
-│   ├── styles.py            # Global QSS styles
-│   ├── system_tray.py       # System tray integration
-│   ├── utils.py             # GUI helper utilities
+│   ├── main_window.py
+│   ├── settings.py
+│   ├── styles.py
+│   ├── system_tray.py
 │   └── worker.py            # Audio processing thread
 ├── backends/                # Audio interface backends
-│   ├── __init__.py          # Backends package initialization
 │   ├── pyaudio_backend.py   # Windows/WASAPI support
-│   └── sounddevice_backend.py # Cross-platform support
+│   ├── sounddevice_backend.py # Cross-platform support
+│   └── platform/            # Platform-specific code
+│       ├── linux.py         # PulseAudio integration
+│       └── windows.py       # WASAPI support
 ├── processor.py             # Core ONNX model wrapper
 ├── vad.py                   # Voice Activity Detection
-├── resampler.py             # Audio resampling logic
+├── resampler.py             # Audio resampling
 ├── ring_buffer.py           # Thread-safe audio buffering
-├── vb_cable.py              # Virtual cable management
+├── vb_cable.py              # Virtual cable management (Windows)
 ├── device_utils.py          # Audio device utilities
+├── platform_utils.py        # Platform detection
 ├── constants.py             # Global configurations
 ├── cli.py                   # Command-line interface
-├── logging_config.py        # Central logging configuration
+├── logging_config.py        # Logging configuration
 ├── backend_detection.py     # Backend availability checks
-├── __init__.py              # Package initialization
-└── __main__.py              # Python module entry point
+├── __init__.py
+└── __main__.py
 ```
 
 ## Processing Flow
 
 ```
 ┌─────────────────┐
-│ System Audio    │
-│ (WASAPI/ALSA)   │
+│  System Audio   │
+│    (Input)      │
 └────────┬────────┘
          │
          ▼
@@ -204,8 +209,8 @@ stream_denoiser/
          │
          ▼
 ┌─────────────────┐
-│ Audio Output    │
-│ (Speakers)      │
+│  Audio Output   │
+│   (Speakers)    │
 └─────────────────┘
 ```
 
@@ -345,7 +350,7 @@ On Linux, the denoiser:
 This eliminates echo because original audio goes to a silent null sink.
 
 ## Special thanks to
-GTCRN implementation by [here](https://github.com/Xiaobin-Rong/gtcrn#).
+GTCRN implementation [here](https://github.com/Xiaobin-Rong/gtcrn#).
 
 yuyun2000 for the speech enhancement [model](https://github.com/yuyun2000/SpeechDenoiser).
 
@@ -356,6 +361,6 @@ MIT License
 
 ## Contributing
 
-Contributions are welcome!
+I have no specific method of contribution, but I'm open to ideas, and all contributions are welcome.
 
 
