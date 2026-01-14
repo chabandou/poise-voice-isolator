@@ -20,6 +20,7 @@ A high-performance real-time system audio denoiser and voice isolator that captu
 ## Installation
 
 Supported on **Windows** and **Linux**.
+There's also an android version of the app, check it out [here](https://github.com/chabandou/poise-android) 
 
 
 ### Windows
@@ -362,5 +363,6 @@ MIT License
 ## Contributing
 
 I have no specific method of contribution, but I'm open to ideas, and all contributions are welcome.
+
 
 
