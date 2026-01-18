@@ -18,6 +18,7 @@ from textual.binding import Binding
 
 from .widgets import DeviceList, StatsPanel, StatusLine
 from .widgets.status_line import TUIStatusHandler
+from ..logging_config import set_tui_mode
 
 
 class PoiseApp(App):
@@ -53,7 +54,6 @@ class PoiseApp(App):
     def _setup_logging(self) -> None:
         """Set up logging to TUI."""
         import logging
-        from ..logging_config import set_tui_mode
         
         # Enable TUI mode to suppress console logging
         set_tui_mode(True)

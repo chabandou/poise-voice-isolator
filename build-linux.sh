@@ -18,8 +18,8 @@ echo
 
 # Setup conda env
 if ! conda env list | grep -q "poise-build"; then
-    echo "Creating poise-build conda environment with Python 3.13..."
-    conda create -n poise-build python=3.13 -y
+    echo "Creating poise-build conda environment with Python 3.12..."
+    conda create -n poise-build python=3.12 -y
 fi
 
 # Activate and install dependencies
@@ -53,8 +53,6 @@ python -m nuitka \
     --onefile \
     --static-libpython=no \
     --lto=yes \
-    --python-flag=-m \
-    --module-name=stream_denoiser.tui \
     --nofollow-import-to=pytest,setuptools,pip,wheel,distutils \
     --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
@@ -65,7 +63,7 @@ python -m nuitka \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
     --output-filename=poise \
     --output-dir=dist \
-    stream_denoiser/tui
+    poise_tui.py
 
 echo
 echo "╭────────────────────────────────────────────╮"
