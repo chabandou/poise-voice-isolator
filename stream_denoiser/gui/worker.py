@@ -249,7 +249,9 @@ class AudioWorker(QThread):
                             padded = np.zeros(frames, dtype=np.float32)
                             padded[:len(processed_chunk)] = processed_chunk
                             processed_chunk = padded
+                        # Duplicate mono to stereo for proper playback on both channels
                         outdata[:, 0] = processed_chunk[:frames].astype(np.float32)
+                        outdata[:, 1] = processed_chunk[:frames].astype(np.float32)
                     else:
                         outdata.fill(0)
                 except Exception:
@@ -271,7 +273,7 @@ class AudioWorker(QThread):
             try:
                 output_stream = sd.OutputStream(
                     device=output_dev_id,
-                    channels=1,
+                    channels=2,
                     samplerate=output_sr,
                     blocksize=block_size,
                     callback=output_callback,
@@ -288,7 +290,7 @@ class AudioWorker(QThread):
                     
                     output_stream = sd.OutputStream(
                         device=output_dev_id,
-                        channels=1,
+                        channels=2,
                         samplerate=device_default_sr,
                         blocksize=block_size,
                         callback=output_callback,

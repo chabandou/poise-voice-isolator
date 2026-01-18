@@ -36,6 +36,11 @@ class VoiceActivityDetector:
         self.active_frames = 0
         self.bypassed_frames = 0
     
+    def set_threshold(self, threshold_db: float) -> None:
+        """Update the VAD threshold at runtime."""
+        self.threshold_db = threshold_db
+        self.threshold_linear = 10 ** (threshold_db / 20)
+    
     def is_speech(self, audio: np.ndarray) -> bool:
         """
         Determine if audio contains speech.

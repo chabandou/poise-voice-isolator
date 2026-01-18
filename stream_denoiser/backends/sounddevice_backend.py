@@ -104,7 +104,7 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
             output_stream = sd.OutputStream(
                 device=output_dev_id,
                 samplerate=processor.target_sr,
-                channels=1,
+                channels=2,
                 dtype='float32',
                 blocksize=block_size
             )
@@ -119,7 +119,7 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 output_stream = sd.OutputStream(
                     device=output_dev_id,
                     samplerate=device_default_sr,
-                    channels=1,
+                    channels=2,
                     dtype='float32',
                     blocksize=block_size
                 )
@@ -159,8 +159,9 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 audio_output = processor.process_chunk(audio_chunk)
                 
                 if audio_output is not None:
-                    # Write to output
-                    output_stream.write(audio_output.astype(np.float32))
+                    # Duplicate mono to stereo for proper playback on both channels
+                    stereo_output = np.column_stack((audio_output, audio_output)).astype(np.float32)
+                    output_stream.write(stereo_output)
                 
                 # Print stats
                 current_time = time.time()

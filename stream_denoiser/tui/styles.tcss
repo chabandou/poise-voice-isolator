@@ -1,11 +1,8 @@
-/* 
- * Poise TUI - Transparent Background
- */
-
-$fg: #c0caf5;
-$dim: #565f89;
-$border: #3b4261;
-$accent: #7dcfff;
+$fg: #e0e0e0;
+$dim: white;
+$border: #1a1a1a;
+$accent: #3be8ff;
+$running: #6eff25ff;
 
 Screen {
     background: transparent;
@@ -13,6 +10,22 @@ Screen {
     layout: vertical;
 }
 
+Screen.-running {
+    /* No global change needed, we target specific widgets */
+}
+
+#app-title {
+    color: $accent;
+    height: 6;
+    content-align: center top;
+    margin-bottom: 1;
+}
+
+/* Screen.-running #app-title {
+    color: $running;
+} */
+
+/* 
 Header {
     dock: top;
     background: transparent;
@@ -25,90 +38,188 @@ HeaderIcon {
 
 HeaderTitle {
     color: $accent;
+    text-style: bold;
 }
+
+Screen.-running HeaderTitle {
+    color: $running;
+}
+*/
 
 Footer {
     dock: bottom;
     background: transparent;
-    color: $dim;
+    color: #888888;
 }
 
 FooterKey {
     background: transparent;
-    color: $dim;
+    color: #888888;
+    padding: 0 1;
 }
 
 FooterKey>.footer-key--key {
-    background: transparent;
-    color: $accent;
+    background: $accent;
+    color: #1a1a1a;
+    text-style: bold;
+    padding: 0 1;
 }
+
+FooterKey>.footer-key--description {
+    padding: 0 0 0 1;
+}
+
+/* Screen.-running FooterKey>.footer-key--key {
+    color: $running;
+} */
 
 #main-container {
     width: 1fr;
     height: 1fr;
 }
 
-DeviceList {
+#panels-container {
+    layout: grid;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 2fr 1fr;
+    grid-gutter: 1;
     width: 1fr;
-    height: 33%;
+    height: 1fr;
+}
+
+/* DeviceList and StatsPanel styles moved to bottom for layout grouping */
+
+DeviceList {
+    column-span: 1;
+    row-span: 1;
     background: transparent;
-    border: heavy $border;
+    border: round $accent;
     border-title-color: $accent;
     border-title-background: transparent;
+    border-title-style: bold;
 }
 
-#device-list {
-    height: 1fr;
+VADPanel {
+    column-span: 1;
+    row-span: 1;
     background: transparent;
-}
-
-ListItem {
-    padding: 0 1;
-    height: 1;
-    background: transparent;
-    color: $fg;
-}
-
-ListItem:hover {
-    background: $border;
-}
-
-ListItem.-selected {
-    background: $border;
-    color: $accent;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-background: transparent;
+    border-title-style: bold;
 }
 
 StatsPanel {
-    width: 1fr;
-    height: auto;
+    column-span: 1;
+    row-span: 2;
     background: transparent;
-    border: heavy $border;
+    border: round $accent;
     border-title-color: $accent;
     border-title-background: transparent;
+    border-title-style: bold;
 }
 
-#stats-content {
-    padding: 0 1;
-    color: $fg;
+StatsPanel Rule {
+    color: #888888;
     background: transparent;
+    margin: 0 0;
 }
+
+/* Removed dynamic color for Rule to keep it static light gray */
+/* 
+Screen.-running StatsPanel Rule {
+    color: $running;
+}
+*/
+
+#stats-container {
+    padding: 0 1;
+}
+
+.stat-row {
+    height: 1;
+    width: 1fr;
+    /* This creates space between items if width is available? 
+       Actually in Textual Horizontal, items stack. 
+       We need 1fr on the value to push it to the right with content-align. */
+}
+
+.stat-label {
+    width: auto;
+    color: $dim;
+}
+
+.stat-value {
+    width: 1fr;
+    content-align: right middle;
+    color: $accent;
+}
+
+/* Screen.-running .stat-value {
+    color: $running;
+} */
 
 StatusLine {
     dock: bottom;
     width: 1fr;
     height: 1;
-    padding: 0 1;
+    padding: 0 0;
     margin-bottom: 1;
-    color: $fg;
-    background: transparent;
+    background: #1a1a1a;
+    transition: opacity 0.8s;
+}
+
+StatusLine.-pulse-dim {
+    opacity: 0.3;
 }
 
 #status-text {
-    background: transparent;
+    background: #1a1a1a;
 }
 
 Scrollbar {
     background: transparent;
     color: $dim;
     width: 1;
+}
+
+/* Layout styles are in #panels-container grid above */
+
+#vad-container {
+    padding: 0 1;
+}
+
+.vad-row {
+    height: 1;
+    width: 1fr;
+}
+
+.vad-label {
+    width: auto;
+    color: $dim;
+}
+
+.vad-value {
+    width: 1fr;
+    content-align: right middle;
+    color: $accent;
+}
+
+.vad-status {
+    width: 1fr;
+    content-align: right middle;
+    color: $accent;
+}
+
+.vad-hint {
+    width: 1fr;
+    content-align: center middle;
+    color: #888888;
+}
+
+.vad-bar {
+    width: 1fr;
+    content-align: center middle;
+    color: $accent;
 }

@@ -38,7 +38,7 @@ class DeviceList(Static):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.devices: List[Tuple[int, str, str]] = []  # (id, name, host_api)
-        self.border_title = "Output Devices"
+        self.border_title = "\[ OUTPUT DEVICES ]"
     
     def compose(self):
         yield ListView(id="device-list")

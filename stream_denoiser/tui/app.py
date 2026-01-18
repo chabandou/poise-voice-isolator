@@ -4,6 +4,8 @@ Poise Voice Isolator TUI App
 Main Textual application with audio processing integration.
 """
 import asyncio
+import atexit
+import signal
 import time
 from pathlib import Path
 from typing import Optional
@@ -21,7 +23,7 @@ from .widgets.status_line import TUIStatusHandler
 class PoiseApp(App):
     """Poise Voice Isolator TUI Application."""
     
-    TITLE = "Poise Voice Isolator"
+    TITLE = "[ POISE ISOLATOR ]"
     CSS_PATH = "styles.tcss"
     ENABLE_COMMAND_PALETTE = False
     
@@ -30,6 +32,8 @@ class PoiseApp(App):
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh_devices", "Refresh"),
         Binding("escape", "quit", "Quit", show=False),
+        Binding("minus", "decrease_threshold", "VAD -"),
+        Binding("plus", "increase_threshold", "VAD +"),
     ]
     
     def __init__(self, **kwargs):
@@ -42,11 +46,18 @@ class PoiseApp(App):
         self.stop_event = threading.Event()
         self.start_time = 0.0
         self.log_handler = TUIStatusHandler()
+        self._cleanup_done = False
         self._setup_logging()
+        self._setup_cleanup_handlers()
     
     def _setup_logging(self) -> None:
         """Set up logging to TUI."""
         import logging
+        from ..logging_config import set_tui_mode
+        
+        # Enable TUI mode to suppress console logging
+        set_tui_mode(True)
+        
         # Get the stream_denoiser logger
         logger = logging.getLogger('stream_denoiser')
         # Remove existing handlers to avoid clutter
@@ -54,13 +65,62 @@ class PoiseApp(App):
         logger.addHandler(self.log_handler)
         logger.setLevel(logging.INFO)
     
+    def _setup_cleanup_handlers(self) -> None:
+        """Set up signal handlers and atexit hook for graceful cleanup."""
+        # Register atexit handler for cleanup on normal exit
+        atexit.register(self._emergency_cleanup)
+        
+        # Register signal handlers for abrupt termination
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            try:
+                signal.signal(sig, self._signal_handler)
+            except (OSError, ValueError):
+                # Some signals may not be available on all platforms
+                pass
+    
+    def _signal_handler(self, signum, frame) -> None:
+        """Handle termination signals."""
+        self._emergency_cleanup()
+        # Re-raise signal to allow normal termination
+        signal.signal(signum, signal.SIG_DFL)
+        signal.raise_signal(signum)
+    
+    def _emergency_cleanup(self) -> None:
+        """
+        Emergency cleanup for when the app is terminated abruptly.
+        Restores original audio sink and removes the virtual null sink.
+        """
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+        
+        # Stop processing thread
+        self.stop_event.set()
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=1.0)
+        
+        # Restore audio routing
+        if self.linux_router:
+            try:
+                self.linux_router.restore_original_sink()
+            except Exception:
+                pass
+            self.linux_router = None
+    
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
-        yield Header(show_clock=False)
+        # yield Header(show_clock=False)
+        
+        from .font import get_outlined_block_text
+        from .widgets import VADPanel
+        # Use block text with outline/shadow effect
+        yield Static(get_outlined_block_text("POISE"), id="app-title")
         
         with Vertical(id="main-container"):
-            yield DeviceList(id="device-panel")
-            yield StatsPanel(id="stats-panel")
+            with Horizontal(id="panels-container"):
+                yield DeviceList(id="device-panel")
+                yield StatsPanel(id="stats-panel")
+                yield VADPanel(id="vad-panel")
             yield StatusLine(id="status-line")
         
         yield Footer()
@@ -104,6 +164,30 @@ class PoiseApp(App):
         status_line = self.query_one("#status-line", StatusLine)
         status_line.notify("Devices refreshed")
     
+    def action_increase_threshold(self) -> None:
+        """Increase VAD threshold (less sensitive)."""
+        self._adjust_threshold(5.0)
+    
+    def action_decrease_threshold(self) -> None:
+        """Decrease VAD threshold (more sensitive)."""
+        self._adjust_threshold(-5.0)
+    
+    def _adjust_threshold(self, delta: float) -> None:
+        """Adjust VAD threshold by delta dB."""
+        from .widgets import VADPanel
+        vad_panel = self.query_one("#vad-panel", VADPanel)
+        
+        # Clamp threshold between -80 and 0 dB
+        new_threshold = max(-80.0, min(0.0, vad_panel.threshold_db + delta))
+        vad_panel.set_threshold(new_threshold)
+        
+        # Update processor if running
+        if self.processor and self.processor.vad:
+            self.processor.vad.set_threshold(new_threshold)
+        
+        status_line = self.query_one("#status-line", StatusLine)
+        status_line.notify(f"VAD threshold: {new_threshold:.1f} dB")
+    
     def _start_processing(self) -> None:
         """Start audio processing."""
         status_line = self.query_one("#status-line", StatusLine)
@@ -119,6 +203,10 @@ class PoiseApp(App):
         output_device = device_list.selected_device
         
         status_line.notify("Starting audio processing...")
+        self.screen.add_class("-running")
+        
+        # Update widgets running state
+        self.query_one("#stats-panel", StatsPanel).set_running(True)
         
         # Set up Linux audio routing
         try:
@@ -163,9 +251,14 @@ class PoiseApp(App):
             self.linux_router.restore_original_sink()
             self.linux_router = None
         
+        # Mark cleanup as done to prevent double cleanup from atexit/signals
+        self._cleanup_done = True
+        
         self.is_processing = False
         self.processor = None
         status_line.set_running(False)
+        self.screen.remove_class("-running")
+        self.query_one("#stats-panel", StatsPanel).set_running(False)
         status_line.notify("Processing stopped.", "info")
     
     def _processing_loop(self, output_device: Optional[int]) -> None:
@@ -206,7 +299,7 @@ class PoiseApp(App):
             with sd.InputStream(device=input_device, samplerate=input_sr, channels=1, 
                               dtype='float32', blocksize=block_size) as inp, \
                  sd.OutputStream(device=output_device, samplerate=DEFAULT_SAMPLE_RATE, 
-                               channels=1, dtype='float32', blocksize=block_size) as out:
+                               channels=2, dtype='float32', blocksize=block_size) as out:
                 
                 self.processor.setup_output_resampler(DEFAULT_SAMPLE_RATE)
                 
@@ -222,7 +315,9 @@ class PoiseApp(App):
                     audio_output = self.processor.process_chunk(audio_chunk)
                     
                     if audio_output is not None:
-                        out.write(audio_output.astype(np.float32))
+                        # Duplicate mono to stereo for proper playback on both channels
+                        stereo_output = np.column_stack((audio_output, audio_output)).astype(np.float32)
+                        out.write(stereo_output)
         
         except Exception as e:
             # Log error (will be picked up by main thread)
