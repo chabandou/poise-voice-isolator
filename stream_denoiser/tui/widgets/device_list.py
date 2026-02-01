@@ -8,6 +8,7 @@ from textual.containers import Vertical
 from textual.reactive import reactive
 from typing import List, Tuple, Optional
 
+from ...backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 class DeviceListItem(ListItem):
     """A single device in the list."""
@@ -50,7 +51,20 @@ class DeviceList(Static):
     def refresh_devices(self) -> None:
         """Refresh the device list from sounddevice."""
         try:
-            import sounddevice as sd
+            if not USE_SOUNDDEVICE or sd is None:
+                self.devices = []
+                try:
+                    from .status_line import StatusLine
+                    status_line = self.app.query_one("#status-line", StatusLine)
+                    msg = "sounddevice/PortAudio unavailable"
+                    if SOUNDDEVICE_ERROR:
+                        msg = f"sounddevice/PortAudio unavailable: {SOUNDDEVICE_ERROR}"
+                    if SOUNDDEVICE_INSTALL_HINT:
+                        msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
+                    status_line.notify(msg, "error")
+                except Exception:
+                    pass
+                return
             devices = sd.query_devices()
             
             self.devices = []
@@ -93,7 +107,7 @@ class DeviceList(Static):
                 list_view.index = 0
                 self.selected_device = self.devices[0][0]
                 
-        except ImportError:
+        except (ImportError, OSError):
             self.devices = []
     
     def on_list_view_selected(self, event: ListView.Selected) -> None:

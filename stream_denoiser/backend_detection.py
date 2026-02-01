@@ -5,13 +5,23 @@ Single source of truth for audio backend availability.
 Consolidates library checks duplicated across cli.py, device_utils.py, worker.py.
 """
 
+from typing import Optional
+
 # Check for sounddevice
+SOUNDDEVICE_ERROR = None
+SOUNDDEVICE_INSTALL_HINT: Optional[str] = None
 try:
     import sounddevice as sd
     USE_SOUNDDEVICE = True
-except ImportError:
+except (ImportError, OSError) as e:
     sd = None
     USE_SOUNDDEVICE = False
+    SOUNDDEVICE_ERROR = str(e)
+    if "libportaudio.so.2" in SOUNDDEVICE_ERROR and "libsndio.so.7" in SOUNDDEVICE_ERROR:
+        SOUNDDEVICE_INSTALL_HINT = (
+            "Install PortAudio + sndio. Arch: sudo pacman -S sndio portaudio. "
+            "Debian/Ubuntu: sudo apt install libsndio7 libportaudio2."
+        )
 
 # Check for PyAudioWPatch (preferred for WASAPI loopback)
 USE_PYAUDIO = False

@@ -10,7 +10,7 @@ from typing import Optional
 try:
     import sounddevice as sd
     USE_SOUNDDEVICE = True
-except ImportError:
+except (ImportError, OSError):
     USE_SOUNDDEVICE = False
 
 from ..constants import STATS_PRINT_INTERVAL_SEC

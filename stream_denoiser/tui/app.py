@@ -19,6 +19,7 @@ from textual.binding import Binding
 from .widgets import DeviceList, StatsPanel, StatusLine
 from .widgets.status_line import TUIStatusHandler
 from ..logging_config import set_tui_mode
+from ..backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 
 class PoiseApp(App):
@@ -264,7 +265,15 @@ class PoiseApp(App):
     def _processing_loop(self, output_device: Optional[int]) -> None:
         """Audio processing loop (runs in background thread)."""
         try:
-            import sounddevice as sd
+            if not USE_SOUNDDEVICE or sd is None:
+                import logging
+                msg = "sounddevice is not available"
+                if SOUNDDEVICE_ERROR:
+                    msg = f"sounddevice/PortAudio unavailable: {SOUNDDEVICE_ERROR}"
+                if SOUNDDEVICE_INSTALL_HINT:
+                    msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
+                logging.getLogger('stream_denoiser').error(msg)
+                return
             import numpy as np
             
             from ..processor import DenoiserAudioProcessor

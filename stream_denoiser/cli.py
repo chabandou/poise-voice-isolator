@@ -23,7 +23,13 @@ from .constants import (
 from .processor import DenoiserAudioProcessor, load_onnx_model
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
-from .backend_detection import USE_PYAUDIOWPATCH, USE_SOUNDDEVICE
+from .backend_detection import (
+    USE_PYAUDIOWPATCH,
+    USE_SOUNDDEVICE,
+    sd,
+    SOUNDDEVICE_ERROR,
+    SOUNDDEVICE_INSTALL_HINT,
+)
 from .logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -199,10 +205,21 @@ Examples:
     
     if args.list_devices:
         if not USE_SOUNDDEVICE:
-            _logger.error("Device listing requires sounddevice library.")
+            msg = "Device listing requires sounddevice (PortAudio)."
+            if SOUNDDEVICE_ERROR:
+                msg = f"{msg} Import error: {SOUNDDEVICE_ERROR}"
+            if SOUNDDEVICE_INSTALL_HINT:
+                msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
+            _logger.error(msg)
             sys.exit(1)
-        
-        import sounddevice as sd
+        if sd is None:
+            msg = "Device listing requires sounddevice (PortAudio)."
+            if SOUNDDEVICE_ERROR:
+                msg = f"{msg} Import error: {SOUNDDEVICE_ERROR}"
+            if SOUNDDEVICE_INSTALL_HINT:
+                msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
+            _logger.error(msg)
+            sys.exit(1)
         
         # On Linux, show PulseAudio sources first if available
         if is_linux():

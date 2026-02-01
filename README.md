@@ -1,10 +1,14 @@
+<div align="center">
 <img src="stream_denoiser/gui/assets/calligraphy_bismillah.png" alt="Bismillah" width="200"/>
+</div>
 
 # Poise Voice Isolator
 
 A high-performance real-time system audio denoiser and voice isolator that captures system audio, processes it through an ONNX neural network model, and outputs enhanced audio with minimal latency.
 
-![Poise Voice Isolator GUI](stream_denoiser/gui/assets/screenshot.png)
+<div align="center">
+<img src="stream_denoiser/gui/assets/screenshot.png" alt="Poise Voice Isolator GUI" width="500"/>
+</div>
 
 ## Features
 
@@ -86,7 +90,7 @@ pip install samplerate
 #### Usage
 
 **CLI Mode:**
-Process system audio with default settings (VAD enabled, automatic VB Cable switching):
+Process system audio with default settings (VAD enabled, automatic audio device switching):
 
 ```bash
 # Using the modular package (recommended)
