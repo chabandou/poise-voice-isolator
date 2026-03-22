@@ -1,0 +1,44 @@
+name: Documentation Issue
+description: Something in the docs is wrong, missing, or unclear
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Good docs are as important as good code. Thanks for helping improve them.
+
+  - type: input
+    id: location
+    attributes:
+      label: Where is the issue?
+      description: Link to the page, section, or file with the problem.
+      placeholder: "https://... or README.md > Installation section"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of issue
+      options:
+        - Missing — something isn't documented at all
+        - Incorrect — the docs say something wrong
+        - Outdated — docs don't match the current version
+        - Unclear — hard to understand or follow
+        - Typo / formatting
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the problem
+      description: What's wrong or missing? What confused you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: If you have a specific correction or addition in mind, put it here. Even rough notes help.

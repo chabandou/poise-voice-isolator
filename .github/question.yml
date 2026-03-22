@@ -1,0 +1,36 @@
+name: Question / Support
+description: Ask a question or get help with usage
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For usage questions, please check the README and existing issues first.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do or understand?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Steps you've already taken, docs you've read, etc.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "v1.2.3"
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / Environment
+      placeholder: "Ubuntu 22.04, macOS 14, ..."

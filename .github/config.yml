@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: 💬 General Discussion
+    url: https://github.com/chabandou/poise-voice-isolator/discussions
+    about: For open-ended questions, ideas, or show-and-tell — use Discussions instead of Issues.

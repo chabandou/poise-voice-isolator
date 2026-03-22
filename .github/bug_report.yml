@@ -1,0 +1,84 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Fill out as much as you can — the more detail, the faster we can fix it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps that reliably trigger the bug.
+      placeholder: |
+        1. Run `...`
+        2. Pass input `...`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Paste any relevant logs or stack traces here.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `your-app --version` or the release tag you're on.
+      placeholder: "v1.2.3"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "Windows 11, macOS 14.4, Ubuntu 22.04, Arch Linux, ..."
+    validations:
+      required: true
+
+  - type: input
+    id: desktop_env
+    attributes:
+      label: Desktop Environment / Window Manager
+      description: Relevant on Linux — skip if on Windows/macOS.
+      placeholder: "GNOME 45, KDE Plasma 6, Hyprland, i3, ..."
+
+  - type: dropdown
+    id: display_server
+    attributes:
+      label: Display server (Linux only)
+      options:
+        - N/A (Windows / macOS)
+        - X11
+        - Wayland
+        - Not sure
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might be relevant (config files, hardware, related issues).
