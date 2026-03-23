@@ -1,4 +1,10 @@
 <div align="center">
+<img src="stream_denoiser/gui/assets/banner.png" alt="Poise Banner"/>
+</div>
+
+
+
+<div align="center">
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="stream_denoiser/gui/assets/calligraphy_bismillah_black.png">
   <source media="(prefers-color-scheme: dark)" srcset="stream_denoiser/gui/assets/calligraphy_bismillah.png">
@@ -7,7 +13,11 @@
 </div>
 
 <div align="center">
-<img src="stream_denoiser/gui/assets/banner.png" alt="Poise Banner"/>
+
+[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/chabandou/poise-voice-isolator/releases)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/chabandou/poise-voice-isolator/releases)
+[![Android](https://img.shields.io/badge/Android%20(SAMSUNG)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/chabandou/poise-android/releases)
+
 </div>
 
 # Poise Voice Isolator
