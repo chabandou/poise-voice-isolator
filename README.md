@@ -2,6 +2,23 @@
 <img src="stream_denoiser/gui/assets/banner.png" alt="Poise Banner"/>
 </div>
 
+<div align="center">
+
+[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/chabandou/poise-voice-isolator/releases)
+[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/chabandou/poise-voice-isolator/releases)
+[![Android](https://img.shields.io/badge/Android%20(SAMSUNG)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/chabandou/poise-android/releases)
+
+</div>
+
+
+<div align="center">
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/chabandou/poise-voice-isolator?style=flat-square&logo=github)](https://github.com/chabandou/poise-voice-isolator)
+[![Last Commit](https://img.shields.io/github/last-commit/chabandou/poise-voice-isolator?style=flat-square&logo=git)](https://github.com/chabandou/poise-voice-isolator)
+
+</div>
 
 
 <div align="center">
@@ -12,37 +29,51 @@
 </picture>
 </div>
 
-<div align="center">
-
-[![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/chabandou/poise-voice-isolator/releases)
-[![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/chabandou/poise-voice-isolator/releases)
-[![Android](https://img.shields.io/badge/Android%20(SAMSUNG)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/chabandou/poise-android/releases)
-
-</div>
-
 # Poise Voice Isolator
 
 A high-performance real-time system audio denoiser and voice isolator that captures system audio, processes it through an ONNX neural network model, and outputs enhanced audio with minimal latency.
 
-<div align="center">
-<img src="stream_denoiser/gui/assets/screenshot.png" alt="Poise Voice Isolator GUI" width="500"/>
-</div>
+|Screenshot |
+|---|
+| <img src="stream_denoiser/gui/assets/screenshot.png" alt="Poise Voice Isolator GUI" width="100%"/> |
 
-## Features
+---
 
-- **Real-time Processing**: Direct time-domain processing with ~10ms frame latency
-- **Voice Activity Detection (VAD)**: performance boost by skipping silence
-- **Low Latency**: Lock-free ring buffers for reduced latency
-- **WASAPI Loopback Support**: Captures system audio on Windows using PyAudioWPatch
-- **VB Cable Integration on windows**: Automatic Windows audio device switching for seamless capture
-- **Automatic Resampling**: Handles different input/output device sample rates seamlessly
+## For Users
 
-## Installation
+### Why Poise?
 
-Supported on **Windows** and **Linux**.
-There's also an android version of the app, check it out [here](https://github.com/chabandou/poise-android)
+Poise is designed to help you separate vocals from music and unwanted audio in real-time. Whether you're an educator, content creator, or someone seeking to isolate speech while removing background music, Poise has you covered.
 
-### Windows
+**Key Benefits:**
+
+- **Remove Music, Keep Vocals** - Extracts clear voice while filtering out musical backgrounds and instrumentals
+- **100% Private & Local** - All processing happens on your machine. Your audio never leaves your computer. Zero cloud dependencies. No tracking, no telemetry.
+- **Halal Alternative** - For those who practice Islamic values, easily remove musical content while preserving speech and spoken word
+- **Real-time Processing** - Instant audio isolation with only ~10ms latency, perfect for live streaming or recordings
+- **Zero Latency** - Process audio as it happens without noticeable delay
+- **Completely Free & Open Source** - MIT licensed. No subscriptions. No hidden costs.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Voice Isolation** | Removes music and instrumentals, keeps only vocals and speech |
+| **Real-time Processing** | Direct time-domain processing with ~10ms frame latency |
+| **Voice Activity Detection** | Performance boost by skipping silence and non-speech sections |
+| **Low Latency** | Lock-free ring buffers for reduced latency |
+| **WASAPI Loopback** | Captures system audio on Windows using PyAudioWPatch |
+| **VB Cable Integration** | Automatic Windows audio device switching for seamless capture |
+
+### Installation
+
+| Platform | Status |
+|----------|--------|
+| ![](https://img.shields.io/badge/Windows-0078D4?style=flat-square&logo=windows) | Full Support |
+| ![](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black) | Full Support |
+| ![](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white) | SAMSUNG ONLY [(poise-android)](https://github.com/chabandou/poise-android) |
+
+#### Windows
 
 > **Important**: Make sure to download and install [VB Cable](https://vb-audio.com/Cable/index.htm) for loopback audio capture on Windows.
 
@@ -50,7 +81,7 @@ There's also an android version of the app, check it out [here](https://github.c
 2. Run the installer and follow the on-screen instructions.
 3. Launch **Poise Voice Isolator** from your Desktop or Start Menu.
 
-### Linux Binary
+#### Linux Binary
 
 Download the prebuilt binary for the TUI directly from GitHub:
 
@@ -68,7 +99,7 @@ sudo mv poise /usr/local/bin/
 poise
 ```
 
-or, on **Arch Linux (btw):**
+Or on **Arch Linux**:
 
 ```bash
 sudo pacman -S poise-bin
@@ -77,9 +108,120 @@ sudo pacman -S poise-bin
 poise
 ```
 
-### Installation from Source (Developers)
+### Troubleshooting
 
-Recommended to be done in a seperate conda environment.
+#### No audio devices found
+
+- Run `python -m stream_denoiser --list-devices` to see available devices
+- On Windows, ensure `pyaudiowpatch` is installed for WASAPI loopback support
+
+#### High latency
+
+- Reduce `BUFFER_CAPACITY_RATIO` in the code (currently 0.1 = 100ms)
+- Ensure VAD is enabled to reduce processing load
+- Check that your system can process frames faster than real-time (RTF < 1.0)
+
+#### Audio dropouts
+
+- Reduce processing load (enable VAD, reduce model complexity)
+- Check system CPU usage and close unnecessary applications, the model can be resource hungry.
+
+#### Linux Troubleshooting
+
+##### Error: `cannot enable executable stack as shared object requires: Invalid argument`
+
+**Fix:**
+Clear the executable stack flag on the ONNX Runtime library using `execstack` or `patchelf`.
+
+1. Install `patchelf`:
+
+   ```bash
+   sudo pacman -S patchelf    # Arch Linux
+   sudo apt install patchelf  # Ubuntu/Debian
+   ```
+
+2. Locate the `onnxruntime` shared object file and clear the flag:
+
+   ```bash
+   # Find the path (example path for conda environment 'poise')
+   find ~/miniforge3/envs/poise/lib/ -name "onnxruntime_pybind11_state.so"
+
+   # Apply the fix
+   patchelf --clear-execstack /path/to/onnxruntime_pybind11_state.so
+   ```
+
+---
+
+##### Error: `malloc(): invalid size (unsorted)` or crash on startup
+
+**Fix - Rebuild PortAudio:**
+
+1. Install build dependencies:
+
+   ```bash
+   sudo pacman -S base-devel cmake libpulse alsa-lib   # Arch
+   sudo apt install build-essential cmake libpulse-dev libasound2-dev  # Ubuntu
+   ```
+
+2. Clone and build PortAudio with PulseAudio:
+
+   ```bash
+   git clone https://github.com/PortAudio/portaudio.git /tmp/portaudio
+   cd /tmp/portaudio && mkdir build && cd build
+   cmake .. -DCMAKE_BUILD_TYPE=Release -DPA_USE_ALSA=ON -DPA_USE_JACK=OFF -DPA_USE_PULSEAUDIO=ON -DCMAKE_INSTALL_PREFIX=/usr/local
+   make -j$(nproc)
+   sudo make install && sudo ldconfig
+   ```
+
+3. Reinstall sounddevice:
+
+   ```bash
+   pip uninstall sounddevice && pip install sounddevice --no-cache-dir
+   ```
+
+4. **Important:** Set `LD_LIBRARY_PATH` before running:
+
+   ```bash
+   export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+   python -m stream_denoiser
+   ```
+
+   To make permanent:
+
+   ```bash
+   echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+   ```
+
+---
+
+##### No audio output or echo/duplicate audio
+
+The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
+
+1. **Check current default sink:**
+   ```bash
+   pactl get-default-sink
+   ```
+2. **If stuck on `Denoiser_Capture` after a crash:**
+
+   ```bash
+   pactl set-default-sink alsa_output.pci-0000_00_1f.3.analog-stereo
+   ```
+
+   (Replace with your actual sink name from `pactl list sinks short`)
+
+3. **Remove leftover null sink:**
+   ```bash
+   pactl unload-module module-null-sink
+   ```
+
+---
+
+## For Developers
+
+### Installation from Source
+
+Recommended to be done in a separate conda environment.
 
 ```bash
 conda create -n poise python=3.10
@@ -107,7 +249,8 @@ pip install samplerate
 
 #### Usage
 
-**CLI Mode:**
+##### CLI Mode
+
 Process system audio with default settings (VAD enabled, automatic audio device switching):
 
 ```bash
@@ -130,21 +273,21 @@ python -m stream_denoiser.cli
 - `--no-vb-cable`: Disable automatic VB Cable switching (use current default device)
 - `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
 
-**GUI Mode (windows only):**
+##### GUI Mode (Windows only)
 
 ```bash
 # Run the Poise Voice Isolator GUI
 python -m stream_denoiser.gui
 ```
 
-**TUI Mode (linux only):**
+##### TUI Mode (Linux only)
 
 ```bash
 # Run the Poise Voice Isolator TUI
 python -m stream_denoiser.tui
 ```
 
-## Package Structure
+### Package Structure
 
 ```
 stream_denoiser/
@@ -188,7 +331,7 @@ stream_denoiser/
 └── __main__.py
 ```
 
-## Processing Flow
+### Processing Flow
 
 ```
 ┌─────────────────┐
@@ -243,23 +386,23 @@ stream_denoiser/
 └─────────────────┘
 ```
 
-## Model Requirements
+### Model Requirements
 
 The ONNX model should have the following interface:
 
-**Inputs:**
+### Inputs
 
 - `input_frame`: Float32 array of shape `[480]` (480 samples @ 48kHz)
 - `states`: Float32 array of shape `[45304]` (model internal state)
 - `atten_lim_db`: Float32 scalar (attenuation limit in dB)
 
-**Outputs:**
+### Outputs
 
 - `enhanced_audio`: Float32 array (variable length, normalized to 480 samples)
 - `new_states`: Float32 array of shape `[45304]` (updated state for next frame)
 - `lsnr`: Float32 scalar (optional, signal-to-noise ratio estimate)
 
-## Statistics
+### Statistics
 
 During processing, the script/GUI displays real-time statistics:
 
@@ -268,120 +411,7 @@ During processing, the script/GUI displays real-time statistics:
 - **VAD bypass**: Percentage of frames skipped due to silence
 - **Buffer status**: Input/output buffer fill levels
 
-## Troubleshooting
-
-### No audio devices found
-
-- Run `python -m stream_denoiser --list-devices` to see available devices
-- On Windows, ensure `pyaudiowpatch` is installed for WASAPI loopback support
-
-### High latency
-
-- Reduce `BUFFER_CAPACITY_RATIO` in the code (currently 0.1 = 100ms)
-- Ensure VAD is enabled to reduce processing load
-- Check that your system can process frames faster than real-time (RTF < 1.0)
-
-### Audio dropouts
-
-- Reduce processing load (enable VAD, reduce model complexity)
-- Check system CPU usage and close unnecessary applications, the model can be resource hungry.
-
-### Linux Troubleshooting
-
-**Error: `cannot enable executable stack as shared object requires: Invalid argument`**
-
-This error occurs on newer Linux kernels (e.g., Arch Linux) where security policies prevent shared libraries from having an executable stack. It typically affects `onnxruntime`.
-
-**Fix:**
-Clear the executable stack flag on the ONNX Runtime library using `execstack` or `patchelf`.
-
-1. Install `patchelf`:
-
-   ```bash
-   sudo pacman -S patchelf    # Arch Linux
-   sudo apt install patchelf  # Ubuntu/Debian
-   ```
-
-2. Locate the `onnxruntime` shared object file and clear the flag:
-
-   ```bash
-   # Find the path (example path for conda environment 'poise')
-   find ~/miniforge3/envs/poise/lib/ -name "onnxruntime_pybind11_state.so"
-
-   # Apply the fix
-   patchelf --clear-execstack /path/to/onnxruntime_pybind11_state.so
-   ```
-
----
-
-**Error: `malloc(): invalid size (unsorted)` or crash on startup**
-
-This crash occurs when PortAudio uses the JACK backend, which has memory corruption issues. The solution is to rebuild PortAudio with PulseAudio support.
-
-**Fix - Rebuild PortAudio:**
-
-1. Install build dependencies:
-
-   ```bash
-   sudo pacman -S base-devel cmake libpulse alsa-lib   # Arch
-   sudo apt install build-essential cmake libpulse-dev libasound2-dev  # Ubuntu
-   ```
-
-2. Clone and build PortAudio with PulseAudio:
-
-   ```bash
-   git clone https://github.com/PortAudio/portaudio.git /tmp/portaudio
-   cd /tmp/portaudio && mkdir build && cd build
-   cmake .. -DCMAKE_BUILD_TYPE=Release -DPA_USE_ALSA=ON -DPA_USE_JACK=OFF -DPA_USE_PULSEAUDIO=ON -DCMAKE_INSTALL_PREFIX=/usr/local
-   make -j$(nproc)
-   sudo make install && sudo ldconfig
-   ```
-
-3. Reinstall sounddevice:
-
-   ```bash
-   pip uninstall sounddevice && pip install sounddevice --no-cache-dir
-   ```
-
-4. **Important:** Set `LD_LIBRARY_PATH` before running:
-
-   ```bash
-   export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-   python -m stream_denoiser
-   ```
-
-   To make permanent:
-
-   ```bash
-   echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
-   ```
-
----
-
-**No audio output or echo/duplicate audio**
-
-The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
-
-1. **Check current default sink:**
-   ```bash
-   pactl get-default-sink
-   ```
-2. **If stuck on `Denoiser_Capture` after a crash:**
-
-   ```bash
-   pactl set-default-sink alsa_output.pci-0000_00_1f.3.analog-stereo
-   ```
-
-   (Replace with your actual sink name from `pactl list sinks short`)
-
-3. **Remove leftover null sink:**
-   ```bash
-   pactl unload-module module-null-sink
-   ```
-
----
-
-**Audio routing (how it works)**
+##### Audio routing (how it works)
 
 On Linux, the denoiser:
 
@@ -393,7 +423,7 @@ On Linux, the denoiser:
 
 This eliminates echo because original audio goes to a silent null sink.
 
-## Special thanks to
+## Special Thanks
 
 GTCRN implementation [here](https://github.com/Xiaobin-Rong/gtcrn#).
 
@@ -406,3 +436,11 @@ MIT License
 ## Contributing
 
 I have no specific method of contribution, but I'm open to ideas, and all contributions are welcome.
+
+<div align="center">
+
+### Made with care by Chabandou
+
+[Star us on GitHub](https://github.com/chabandou/poise-voice-isolator) · [Report Bug](https://github.com/chabandou/poise-voice-isolator/issues) · [Request Feature](https://github.com/chabandou/poise-voice-isolator/issues)
+
+</div>
