@@ -6,6 +6,10 @@
 </picture>
 </div>
 
+<div align="center">
+<img src="stream_denoiser/gui/assets/banner.png" alt="Poise Banner"/>
+</div>
+
 # Poise Voice Isolator
 
 A high-performance real-time system audio denoiser and voice isolator that captures system audio, processes it through an ONNX neural network model, and outputs enhanced audio with minimal latency.
