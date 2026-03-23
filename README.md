@@ -1,5 +1,9 @@
 <div align="center">
-<img src="stream_denoiser/gui/assets/calligraphy_bismillah.png" alt="Bismillah" width="200"/>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="stream_denoiser/gui/assets/calligraphy_bismillah_black.png">
+  <source media="(prefers-color-scheme: dark)" srcset="stream_denoiser/gui/assets/calligraphy_bismillah.png">
+  <img alt="Bismillah" src="stream_denoiser/gui/assets/calligraphy_bismillah.png" width="200"/>
+</picture>
 </div>
 
 # Poise Voice Isolator
