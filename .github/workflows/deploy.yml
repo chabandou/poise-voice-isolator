@@ -4,13 +4,11 @@ on:
   push:
     branches:
       - master
-      - safu/website
     paths:
       - 'website/**'
   pull_request:
     branches:
       - master
-      - safu/website
     paths:
       - 'website/**'
 
