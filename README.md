@@ -43,15 +43,16 @@ A high-performance real-time system audio denoiser and voice isolator that captu
 
 ### Why Poise?
 
-Poise is designed to help you separate vocals from music and unwanted audio in real-time. Whether you're an educator, content creator, or someone seeking to isolate speech while removing background music, Poise has you covered.
+Poise is a real-time audio filter that runs in the background while you browse, stream, or work. Simply enable it and let it automatically remove music and background noise from everything you hear - YouTube, social media, podcasts, live streams, and more.
 
 **Key Benefits:**
 
-- **Remove Music, Keep Vocals** - Extracts clear voice while filtering out musical backgrounds and instrumentals
+- **Enable & Forget** - Turn it on once and it continuously processes all system audio in real-time
+- **Instant Music Removal** - Automatically strips out music and instrumentals while preserving speech and vocals from any source
 - **100% Private & Local** - All processing happens on your machine. Your audio never leaves your computer. Zero cloud dependencies. No tracking, no telemetry.
-- **Halal Alternative** - For those who practice Islamic values, easily remove musical content while preserving speech and spoken word
-- **Real-time Processing** - Instant audio isolation with only ~10ms latency, perfect for live streaming or recordings
-- **Zero Latency** - Process audio as it happens without noticeable delay
+- **Halal-Friendly Alternative** - For those who practice Islamic values, easily remove musical content while preserving speech and spoken word from any online content
+- **Real-time Processing** - Processes audio as it plays with only ~10ms latency, unnoticeable to the user
+- **Works Everywhere** - Automatically filters system audio whether you're watching YouTube, streaming content, on video calls, or listening to podcasts
 - **Completely Free & Open Source** - MIT licensed. No subscriptions. No hidden costs.
 
 ### Features
