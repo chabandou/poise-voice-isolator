@@ -1,6 +1,6 @@
 const Quote = () => {
 	return (
-		<section className="py-40 px-6 bg-surface-container-lowest text-center">
+		<section className="bg-surface-container-lowest px-6 py-28 text-center md:py-40">
 			<div className="max-w-4xl mx-auto space-y-12">
 				<h2 className="font-headline text-[2.5rem] md:text-5xl text-white leading-tight font-medium">
 					"Music is everywhere even when you don't choose it."

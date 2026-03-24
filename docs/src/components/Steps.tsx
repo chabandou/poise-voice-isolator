@@ -1,8 +1,8 @@
 const Steps = () => {
 	return (
-		<section className="py-24 px-6 md:px-12 bg-surface-container-low" id="how-it-works">
+		<section className="bg-surface-container-low px-6 py-20 md:px-12 md:py-24" id="how-it-works">
 		<div className="max-w-360 mx-auto">
-				<div className="grid grid-cols-1 md:grid-cols-3 gap-20">
+				<div className="grid grid-cols-1 gap-12 md:grid-cols-3 md:gap-20">
 					{/* Step 1: Install */}
 					<div className="flex flex-col items-center text-center">
 						<div className="w-16 h-16 rounded-2xl bg-surface-container-highest flex items-center justify-center mb-8 border border-white/5">

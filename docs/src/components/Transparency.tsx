@@ -1,8 +1,8 @@
 const Transparency = () => {
 	return (
-		<section className="py-32 px-6 md:px-12">
-			<div className="max-w-360 mx-auto bg-surface-container-high/40 p-12 md:p-20 rounded-xl border border-white/5 backdrop-blur-xl">
-				<div className="flex flex-col md:flex-row items-center justify-between gap-12">
+		<section className="px-6 py-24 md:px-12 md:py-32">
+			<div className="mx-auto max-w-360 rounded-xl border border-white/5 bg-surface-container-high/40 p-8 backdrop-blur-xl md:p-20">
+				<div className="flex flex-col items-center justify-between gap-10 md:flex-row md:gap-12">
 					{/* Left Content */}
 					<div className="space-y-8 max-w-xl">
 						{/* Badge */}

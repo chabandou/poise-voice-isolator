@@ -1,0 +1,152 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - navigation [ref=e5]:
+      - generic [ref=e6]:
+        - img "Poise logo" [ref=e8]
+        - generic [ref=e9]: Poise
+      - generic [ref=e10]:
+        - link "Home" [ref=e11] [cursor=pointer]:
+          - /url: "#home"
+        - link "Features" [ref=e12] [cursor=pointer]:
+          - /url: "#how-it-works"
+        - link "Download" [ref=e13] [cursor=pointer]:
+          - /url: "#downloads"
+      - link "Download Now" [ref=e15] [cursor=pointer]:
+        - /url: "#downloads"
+        - generic [ref=e16]: Download Now
+        - generic:
+          - generic: download
+  - main [ref=e17]:
+    - generic [ref=e18]:
+      - button "Turn processing on" [ref=e21] [cursor=pointer]:
+        - generic [ref=e25]: Processing Off
+      - generic [ref=e26]:
+        - generic [ref=e27]: System-Wide Audio Control
+        - heading "Filter Music. In Real Time." [level=1] [ref=e29]:
+          - text: Filter Music.
+          - text: In Real Time.
+        - paragraph [ref=e30]: System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
+        - generic [ref=e31]:
+          - link "Download Now" [ref=e32] [cursor=pointer]:
+            - /url: "#downloads"
+            - generic [ref=e33]: Download Now
+            - generic:
+              - generic: download
+          - link "View Source" [ref=e34] [cursor=pointer]:
+            - /url: https://github.com/chabandou/poise-voice-isolator
+            - generic [ref=e35]: View Source
+            - generic:
+              - img
+        - paragraph [ref=e36]: Local AI. No cloud routing. No streaming detours.
+    - generic [ref=e39]:
+      - generic [ref=e40]:
+        - generic [ref=e42]: download_for_offline
+        - 'heading "Step 1: Install" [level=3] [ref=e43]'
+        - paragraph [ref=e44]: Download the lightweight client for your OS and complete the 30-second setup.
+      - generic [ref=e45]:
+        - generic [ref=e47]: play_circle
+        - 'heading "Step 2: Run" [level=3] [ref=e48]'
+        - paragraph [ref=e49]: Poise lives in your system tray, watching audio streams as they process.
+      - generic [ref=e50]:
+        - generic [ref=e52]: auto_awesome
+        - 'heading "Step 3: Auto-Filter" [level=3] [ref=e53]'
+        - paragraph [ref=e54]: AI isolates voices and strips unwanted background audio instantly.
+    - generic [ref=e56]:
+      - heading "Designed for total control." [level=2] [ref=e57]
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - generic [ref=e61]: bolt
+          - heading "Real-Time Processing" [level=4] [ref=e62]
+          - paragraph [ref=e63]: Zero-latency neural processing ensures your audio sync remains perfect while filtering.
+        - generic [ref=e64]:
+          - generic [ref=e65]: public
+          - heading "System-Wide" [level=4] [ref=e66]
+          - paragraph [ref=e67]: Works on browsers, apps, and video calls without individual plugin configuration.
+        - generic [ref=e68]:
+          - generic [ref=e69]: lock
+          - heading "100% Local AI" [level=4] [ref=e70]
+          - paragraph [ref=e71]: No data ever leaves your device. Private, secure, and fully offline.
+        - generic [ref=e72]:
+          - generic [ref=e74]: psychology
+          - heading "Smart Isolation" [level=4] [ref=e75]
+          - paragraph [ref=e76]: Distinguishes between essential sound cues and background music with surgical precision.
+    - generic [ref=e78]:
+      - heading "\"Music is everywhere even when you don't choose it.\"" [level=2] [ref=e79]
+      - paragraph [ref=e81]: Take back control of your environment.
+    - generic [ref=e84]:
+      - generic [ref=e85]:
+        - generic [ref=e86]:
+          - generic [ref=e87]: verified_user
+          - generic [ref=e88]: Local AI Verified
+        - heading "Technically Transparent." [level=2] [ref=e89]
+        - list [ref=e90]:
+          - listitem [ref=e91]:
+            - generic [ref=e92]: memory
+            - generic [ref=e93]:
+              - paragraph [ref=e94]: Built with local AI models
+              - paragraph [ref=e95]: Optimized for CPU and GPU acceleration without cloud reliance.
+          - listitem [ref=e96]:
+            - generic [ref=e97]: no_sim
+            - generic [ref=e98]:
+              - paragraph [ref=e99]: No internet required after install
+              - paragraph [ref=e100]: Works perfectly in airplane mode or secure offline environments.
+          - listitem [ref=e101]:
+            - generic [ref=e102]: code
+            - generic [ref=e103]:
+              - paragraph [ref=e104]: Open-source on GitHub
+              - paragraph [ref=e105]: Audit the code, contribute to the engine, or build your own fork.
+      - generic [ref=e108]:
+        - generic [ref=e109]: shield
+        - generic [ref=e110]: LOCAL AI
+        - generic [ref=e111]:
+          - generic [ref=e112]: lock
+          - text: Encrypted & Private
+    - generic [ref=e114]:
+      - generic [ref=e115]:
+        - generic [ref=e116]: Choose Your Build
+        - heading "Download Poise" [level=2] [ref=e118]
+        - paragraph [ref=e119]: Pick the version that fits your environment. Every build stays local-first and open-source.
+      - generic [ref=e120]:
+        - link "desktop_windows Desktop Client Windows Native installer with the full tray experience and the least setup friction. Open Download arrow_outward" [ref=e121] [cursor=pointer]:
+          - /url: https://github.com/chabandou/poise-voice-isolator/tree/master?tab=readme-ov-file#windows
+          - generic [ref=e122]:
+            - generic [ref=e123]:
+              - generic [ref=e125]: desktop_windows
+              - generic [ref=e126]: Desktop Client
+            - generic [ref=e127]:
+              - heading "Windows" [level=3] [ref=e128]
+              - paragraph [ref=e129]: Native installer with the full tray experience and the least setup friction.
+            - generic [ref=e131]:
+              - paragraph [ref=e132]: Open Download
+              - generic [ref=e134]: arrow_outward
+        - link "terminal Portable Binary Linux Direct binary for fast local deployment and minimal ceremony on desktop Linux. Open Download arrow_outward" [ref=e135] [cursor=pointer]:
+          - /url: https://github.com/chabandou/poise-voice-isolator/tree/master?tab=readme-ov-file#linux-binary
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - generic [ref=e139]: terminal
+              - generic [ref=e140]: Portable Binary
+            - generic [ref=e141]:
+              - heading "Linux" [level=3] [ref=e142]
+              - paragraph [ref=e143]: Direct binary for fast local deployment and minimal ceremony on desktop Linux.
+            - generic [ref=e145]:
+              - paragraph [ref=e146]: Open Download
+              - generic [ref=e148]: arrow_outward
+        - link "phone_android Companion Build Android Pocket workflow for supported Samsung devices when you need the same filter chain on mobile. SAMSUNG Only Open Download arrow_outward" [ref=e149] [cursor=pointer]:
+          - /url: https://github.com/chabandou/poise-android#installation
+          - generic [ref=e150]:
+            - generic [ref=e151]:
+              - generic [ref=e153]: phone_android
+              - generic [ref=e154]: Companion Build
+            - generic [ref=e155]:
+              - heading "Android" [level=3] [ref=e156]
+              - paragraph [ref=e157]: Pocket workflow for supported Samsung devices when you need the same filter chain on mobile.
+            - generic [ref=e158]:
+              - generic [ref=e160]: SAMSUNG Only
+              - generic [ref=e161]:
+                - paragraph [ref=e162]: Open Download
+                - generic [ref=e164]: arrow_outward
+      - paragraph [ref=e166]: All versions are open-source and available on GitHub
+  - contentinfo [ref=e167]:
+    - generic [ref=e168]:
+      - generic [ref=e169]: Poise
+      - generic [ref=e170]: ©2026 Poise Voice. Pure clarity from chaos.

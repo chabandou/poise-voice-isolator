@@ -1,94 +1,167 @@
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import CtaButton from './CtaButton';
 
-const Hero = () => {
-	return (
-		<section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-50 pt-50" id="home">
-			{/* Background Waveform Visual */}
-			<div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 opacity-30">
-				<div className="waveform-container mx-auto w-[140vw] max-w-none">
-					<svg
-						aria-hidden="true"
-						className="h-[24rem] w-full md:h-[30rem]"
-						fill="none"
-						viewBox="0 0 1600 320"
-						xmlns="http://www.w3.org/2000/svg"
-					>
-						<defs>
-							<linearGradient id="waveGlow" x1="0" x2="1" y1="0.5" y2="0.5">
-								<stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
-								<stop offset="18%" stopColor="#22d3ee" stopOpacity="0.75" />
-								<stop offset="50%" stopColor="#67e8f9" stopOpacity="1" />
-								<stop offset="82%" stopColor="#5eead4" stopOpacity="0.75" />
-								<stop offset="100%" stopColor="#5eead4" stopOpacity="0" />
-							</linearGradient>
-							<linearGradient id="waveSecondary" x1="0" x2="1" y1="0.5" y2="0.5">
-								<stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
-								<stop offset="20%" stopColor="#22d3ee" stopOpacity="0.18" />
-								<stop offset="50%" stopColor="#67e8f9" stopOpacity="0.32" />
-								<stop offset="80%" stopColor="#5eead4" stopOpacity="0.18" />
-								<stop offset="100%" stopColor="#5eead4" stopOpacity="0" />
-							</linearGradient>
-							<filter id="waveBlur" x="-10%" y="-40%" width="120%" height="180%">
-								<feGaussianBlur stdDeviation="10" />
-							</filter>
-						</defs>
+const BAR_COUNT = 220;
 
-						<path
-							d="M0 160C60 160 75 118 112 118C154 118 162 242 216 242C270 242 281 54 344 54C406 54 418 282 480 282C545 282 548 88 608 88C668 88 684 212 742 212C804 212 813 138 872 138C935 138 944 258 1004 258C1065 258 1074 72 1138 72C1200 72 1205 230 1268 230C1334 230 1331 112 1396 112C1458 112 1485 160 1600 160"
-							filter="url(#waveBlur)"
-							stroke="url(#waveSecondary)"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth="18"
-						/>
-						<path
-							d="M0 160C60 160 75 118 112 118C154 118 162 242 216 242C270 242 281 54 344 54C406 54 418 282 480 282C545 282 548 88 608 88C668 88 684 212 742 212C804 212 813 138 872 138C935 138 944 258 1004 258C1065 258 1074 72 1138 72C1200 72 1205 230 1268 230C1334 230 1331 112 1396 112C1458 112 1485 160 1600 160"
-							stroke="url(#waveGlow)"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth="8"
-						/>
-						<path
-							d="M0 160H1600"
-							stroke="url(#waveSecondary)"
-							strokeDasharray="8 24"
-							strokeOpacity="0.4"
-							strokeWidth="1.5"
-						/>
-					</svg>
+const chaoticBars = Array.from({ length: BAR_COUNT }, (_, index) => {
+	const x = index / (BAR_COUNT - 1);
+	const envelope = Math.sin(x * Math.PI) ** 1.15;
+	const turbulence = ((Math.sin(index * 0.83) + Math.cos(index * 0.37 + 0.8) + 2) / 4);
+
+	return Math.round(18 + envelope * 118 + turbulence * 62);
+});
+
+const stableBars = Array.from({ length: BAR_COUNT }, (_, index) => {
+	const x = index / (BAR_COUNT - 1);
+	const envelope = Math.sin(x * Math.PI) ** 1.45;
+	const detail = ((Math.sin(index * 0.48 + 0.6) + Math.cos(index * 0.22) + 2) / 4);
+
+	return Math.round(16 + envelope * 88 + detail * 28);
+});
+
+const Hero = () => {
+	const [isProcessingWave, setIsProcessingWave] = useState(false);
+	const [isProcessingBadge, setIsProcessingBadge] = useState(false);
+	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
+	const hasUserInteractedRef = useRef(false);
+	const badgeTimerRef = useRef<number | null>(null);
+
+	const clearPendingBadgeTimer = () => {
+		if (badgeTimerRef.current !== null) {
+			window.clearTimeout(badgeTimerRef.current);
+			badgeTimerRef.current = null;
+		}
+	};
+
+	const applyProcessingState = (nextProcessing: boolean) => {
+		clearPendingBadgeTimer();
+		setIsProcessingWave(nextProcessing);
+
+		if (nextProcessing) {
+			badgeTimerRef.current = window.setTimeout(() => {
+				setIsProcessingBadge(true);
+				badgeTimerRef.current = null;
+			}, 180);
+			return;
+		}
+
+		setIsProcessingBadge(false);
+	};
+
+	useEffect(() => {
+		const waveTimer = window.setTimeout(() => {
+			if (!hasUserInteractedRef.current) {
+				applyProcessingState(true);
+			}
+		}, 4200);
+
+		return () => {
+			window.clearTimeout(waveTimer);
+			clearPendingBadgeTimer();
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!isProcessingBadge) {
+			return;
+		}
+
+		setIsProcessingPulseActive(true);
+		const pulseTimer = window.setTimeout(() => {
+			setIsProcessingPulseActive(false);
+		}, 900);
+
+		return () => window.clearTimeout(pulseTimer);
+	}, [isProcessingBadge]);
+
+	const handleProcessingToggle = () => {
+		hasUserInteractedRef.current = true;
+		applyProcessingState(!isProcessingWave);
+	};
+
+	return (
+		<section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-28 pt-38 md:pb-40 md:pt-44" id="home">
+			{/* Background Waveform Visual */}
+			<div className="pointer-events-none absolute left-1/2 top-[56%] z-0 w-[150vw] max-w-none -translate-x-1/2 -translate-y-1/2 opacity-26 md:top-1/2 md:opacity-30">
+				<div className={`player-waveform waveform-container w-full ${isProcessingWave ? 'is-stable' : 'is-chaotic'}`}>
+					<div className="player-waveform__baseline"></div>
+					<div className="player-waveform__scan"></div>
+					<div className="player-waveform__stage">
+						<div className="player-waveform__bars player-waveform__bars--chaotic">
+							{chaoticBars.map((height, index) => (
+								<span
+									key={`chaotic-${index}`}
+									className="player-waveform__bar player-waveform__bar--chaotic"
+									style={
+										{
+											'--bar-height': `${height}px`,
+											'--bar-phase': `-${260 + index * 42}ms`,
+											'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+										} as CSSProperties
+									}
+								/>
+							))}
+						</div>
+						<div className="player-waveform__bars player-waveform__bars--stable">
+							{stableBars.map((height, index) => (
+								<span
+									key={`stable-${index}`}
+									className="player-waveform__bar player-waveform__bar--stable"
+									style={
+										{
+											'--bar-height': `${height}px`,
+											'--bar-phase': `-${260 + index * 42}ms`,
+											'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+										} as CSSProperties
+									}
+								/>
+							))}
+						</div>
+					</div>
 				</div>
 			</div>
 
-			{/* LIVE Signal Indicator */}
-			<div className="absolute right-12 top-40 z-20 flex items-center gap-2 rounded-full bg-surface-container-highest/40 px-4 py-2 backdrop-blur-xl border border-white/5">
-				<span className="relative flex h-2 w-2">
-					<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary-fixed-dim opacity-75"></span>
-					<span className="relative inline-flex rounded-full h-2 w-2 bg-secondary-fixed-dim"></span>
-				</span>
-				<span className="font-label text-[10px] uppercase tracking-[0.2em] font-medium text-on-surface-variant">Live Signal</span>
+			<div className="absolute inset-x-0 top-28 z-20 md:top-40">
+				<div className="mx-auto flex w-full max-w-360 justify-center px-6 md:px-12">
+					<button
+						aria-label={`Turn processing ${isProcessingWave ? 'off' : 'on'}`}
+						aria-pressed={isProcessingWave}
+						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/40 px-4 py-2 backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
+						onClick={handleProcessingToggle}
+						type="button"
+					>
+						<span className="status-badge__dot-wrap relative flex h-2 w-2">
+							{!isProcessingBadge && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary-fixed-dim opacity-75"></span>}
+							<span className={`status-badge__dot relative inline-flex h-2 w-2 rounded-full ${isProcessingBadge ? 'bg-primary-fixed' : 'bg-secondary-fixed-dim'}`}></span>
+						</span>
+						<span className={`font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant transition-colors duration-500 ${isProcessingBadge ? 'text-primary-fixed' : ''}`}>
+							Processing {isProcessingBadge ? 'On' : 'Off'}
+						</span>
+					</button>
+				</div>
 			</div>
 
 			{/* Hero Content */}
-			<div className="relative z-10 mx-auto max-w-5xl text-center">
-				<h1 className="font-headline mb-8 text-5xl sm:text-6xl font-bold leading-[1.1] tracking-[-0.04em] text-white md:text-7xl">
+			<div className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center text-center">
+				<h1 className="font-headline my-8 max-w-4xl text-5xl font-bold leading-[0.98] tracking-[-0.05em] text-white sm:text-6xl md:text-7xl lg:text-[6.25rem]">
 					Filter Music.<br />
 					<span className="text-primary-fixed">In Real Time.</span>
 				</h1>
-				<p className="font-body mb-12 max-w-xl mx-auto leading-relaxed text-on-surface-variant text-lg md:text-xl">
+				<p className="font-body mb-14 max-w-2xl text-balance leading-[1.55] text-on-surface-variant text-lg md:text-[1.35rem]">
 					System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
 				</p>
 
 				{/* CTA Buttons */}
-				<div className="flex flex-col items-center justify-center gap-6 sm:flex-row">
+				<div className="flex w-full flex-col items-center justify-center gap-4 sm:w-auto sm:flex-row sm:gap-6">
 					<CtaButton
-						className="neon-glow px-10 py-5 text-lg font-semibold"
+						className="neon-glow w-full max-w-[20rem] px-10 py-5 text-lg font-semibold sm:w-auto"
 						href="#downloads"
 						icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
 					>
 						Download Now
 					</CtaButton>
 					<CtaButton
-						className="px-10 py-5 text-lg font-medium"
+						className="w-full max-w-[20rem] px-10 py-5 text-lg font-medium sm:w-auto"
 						href="https://github.com/chabandou/poise-voice-isolator"
 						icon={(
 							<svg
@@ -103,10 +176,13 @@ const Hero = () => {
 						target="_blank"
 						rel="noopener noreferrer"
 						variant="secondary"
-					>
-						View Source
-					</CtaButton>
-				</div>
+						>
+							View Source
+						</CtaButton>
+					</div>
+				<p className="mt-8 text-[0.72rem] uppercase tracking-[0.24em] text-on-surface-variant/70">
+					Local AI. No cloud routing. No streaming detours.
+				</p>
 			</div>
 		</section>
 	);
