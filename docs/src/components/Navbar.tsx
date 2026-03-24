@@ -14,7 +14,7 @@ const Navbar = () => {
       <nav className="mx-auto flex w-full max-w-360 items-center justify-between px-6 py-5 md:px-12 md:py-8">
         <div className='flex gap-2 items-center justify-center'>
           <div>
-            <img src="/icon.png" className='w-8 rounded-lg' alt="" />
+            <img src={`${import.meta.env.BASE_URL}icon.png`} className='w-8 rounded-lg' alt="" />
           </div>
           <div className="font-['Space_Grotesk'] text-2xl font-medium tracking-tighter text-white">
             Poise
