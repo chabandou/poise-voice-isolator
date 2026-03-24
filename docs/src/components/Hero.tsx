@@ -1,18 +1,61 @@
+import CtaButton from './CtaButton';
+
 const Hero = () => {
 	return (
 		<section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pb-50 pt-50" id="home">
 			{/* Background Waveform Visual */}
-			<div className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center opacity-20">
-				<div className="waveform-container flex w-full items-center justify-center gap-1 h-75">
-					<div className="w-1 bg-primary-fixed-dim h-12 rounded-full"></div>
-					<div className="w-1 bg-secondary-fixed-dim h-32 rounded-full"></div>
-					<div className="w-1 bg-primary-fixed-dim h-48 rounded-full"></div>
-					<div className="w-1 bg-secondary-fixed-dim h-64 rounded-full"></div>
-					<div className="w-1 bg-primary-fixed-dim h-56 rounded-full"></div>
-					<div className="w-1 bg-secondary-fixed-dim h-80 rounded-full"></div>
-					<div className="w-1 bg-primary-fixed-dim h-40 rounded-full"></div>
-					<div className="w-1 bg-secondary-fixed-dim h-60 rounded-full"></div>
-					<div className="w-1 bg-primary-fixed-dim h-24 rounded-full"></div>
+			<div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 opacity-30">
+				<div className="waveform-container mx-auto w-[140vw] max-w-none">
+					<svg
+						aria-hidden="true"
+						className="h-[24rem] w-full md:h-[30rem]"
+						fill="none"
+						viewBox="0 0 1600 320"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<defs>
+							<linearGradient id="waveGlow" x1="0" x2="1" y1="0.5" y2="0.5">
+								<stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
+								<stop offset="18%" stopColor="#22d3ee" stopOpacity="0.75" />
+								<stop offset="50%" stopColor="#67e8f9" stopOpacity="1" />
+								<stop offset="82%" stopColor="#5eead4" stopOpacity="0.75" />
+								<stop offset="100%" stopColor="#5eead4" stopOpacity="0" />
+							</linearGradient>
+							<linearGradient id="waveSecondary" x1="0" x2="1" y1="0.5" y2="0.5">
+								<stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
+								<stop offset="20%" stopColor="#22d3ee" stopOpacity="0.18" />
+								<stop offset="50%" stopColor="#67e8f9" stopOpacity="0.32" />
+								<stop offset="80%" stopColor="#5eead4" stopOpacity="0.18" />
+								<stop offset="100%" stopColor="#5eead4" stopOpacity="0" />
+							</linearGradient>
+							<filter id="waveBlur" x="-10%" y="-40%" width="120%" height="180%">
+								<feGaussianBlur stdDeviation="10" />
+							</filter>
+						</defs>
+
+						<path
+							d="M0 160C60 160 75 118 112 118C154 118 162 242 216 242C270 242 281 54 344 54C406 54 418 282 480 282C545 282 548 88 608 88C668 88 684 212 742 212C804 212 813 138 872 138C935 138 944 258 1004 258C1065 258 1074 72 1138 72C1200 72 1205 230 1268 230C1334 230 1331 112 1396 112C1458 112 1485 160 1600 160"
+							filter="url(#waveBlur)"
+							stroke="url(#waveSecondary)"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth="18"
+						/>
+						<path
+							d="M0 160C60 160 75 118 112 118C154 118 162 242 216 242C270 242 281 54 344 54C406 54 418 282 480 282C545 282 548 88 608 88C668 88 684 212 742 212C804 212 813 138 872 138C935 138 944 258 1004 258C1065 258 1074 72 1138 72C1200 72 1205 230 1268 230C1334 230 1331 112 1396 112C1458 112 1485 160 1600 160"
+							stroke="url(#waveGlow)"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth="8"
+						/>
+						<path
+							d="M0 160H1600"
+							stroke="url(#waveSecondary)"
+							strokeDasharray="8 24"
+							strokeOpacity="0.4"
+							strokeWidth="1.5"
+						/>
+					</svg>
 				</div>
 			</div>
 
@@ -37,12 +80,32 @@ const Hero = () => {
 
 				{/* CTA Buttons */}
 				<div className="flex flex-col items-center justify-center gap-6 sm:flex-row">
-					<a href="#downloads" className="pulse-gradient neon-glow rounded-full px-10 py-5 text-lg font-semibold text-on-primary-fixed transition-all duration-300 hover:brightness-110 active:scale-95">
+					<CtaButton
+						className="neon-glow px-10 py-5 text-lg font-semibold"
+						href="#downloads"
+						icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
+					>
 						Download Now
-					</a>
-					<button className="rounded-full border border-white/10 bg-surface-container-highest/20 px-10 py-5 text-lg font-medium text-white transition-all duration-300 hover:bg-surface-container-highest/40">
+					</CtaButton>
+					<CtaButton
+						className="px-10 py-5 text-lg font-medium"
+						href="https://github.com/chabandou/poise-voice-isolator"
+						icon={(
+							<svg
+								aria-hidden="true"
+								className="h-[1.25em] w-[1.25em]"
+								fill="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path d="M12 .5C5.65.5.5 5.66.5 12.03c0 5.1 3.3 9.43 7.87 10.96.58.11.79-.25.79-.56 0-.27-.01-1.17-.02-2.13-3.2.7-3.88-1.37-3.88-1.37-.52-1.34-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.78 2.7 1.27 3.36.97.1-.75.4-1.27.73-1.56-2.55-.29-5.23-1.28-5.23-5.71 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.14 1.18a10.9 10.9 0 0 1 5.72 0c2.18-1.49 3.13-1.18 3.13-1.18.63 1.58.24 2.75.12 3.04.74.8 1.18 1.83 1.18 3.09 0 4.44-2.69 5.41-5.26 5.69.41.36.78 1.08.78 2.18 0 1.57-.01 2.83-.01 3.22 0 .31.21.68.8.56A11.54 11.54 0 0 0 23.5 12.03C23.5 5.66 18.35.5 12 .5Z" />
+							</svg>
+						)}
+						target="_blank"
+						rel="noopener noreferrer"
+						variant="secondary"
+					>
 						View Source
-					</button>
+					</CtaButton>
 				</div>
 			</div>
 		</section>

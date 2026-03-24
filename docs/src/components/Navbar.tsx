@@ -1,20 +1,68 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import CtaButton from './CtaButton';
+
+type NavLink = {
+  label: string;
+  href: string;
+  sectionIds?: string[];
+};
+
+const navLinks: NavLink[] = [
+  { label: 'Home', href: '#home', sectionIds: ['home'] },
+  { label: 'Features', href: '#how-it-works', sectionIds: ['how-it-works', 'features'] },
+  { label: 'Download', href: '#downloads', sectionIds: ['downloads'] },
+];
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState('home');
 
-  const navLinks = [
-    { label: 'Home', href: '#home' },
-    { label: 'Features', href: '#features' },
-    { label: 'Github', href: 'https://github.com/chabandou/poise-voice-isolator' },
-  ];
+  useEffect(() => {
+    const trackedSectionIds = [...new Set(navLinks.flatMap((link) => link.sectionIds ?? []))];
+    const sections = trackedSectionIds
+      .map((sectionId) => document.getElementById(sectionId))
+      .filter((section): section is HTMLElement => section !== null);
+
+    const updateActiveSection = () => {
+      if (sections.length === 0) {
+        return;
+      }
+
+      const scrollMarker = window.scrollY + window.innerHeight * 0.35;
+      let currentSection = sections[0].id;
+
+      for (const section of sections) {
+        if (section.offsetTop <= scrollMarker) {
+          currentSection = section.id;
+        }
+      }
+
+      setActiveSection(currentSection);
+    };
+
+    updateActiveSection();
+    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('resize', updateActiveSection);
+
+    return () => {
+      window.removeEventListener('scroll', updateActiveSection);
+      window.removeEventListener('resize', updateActiveSection);
+    };
+  }, []);
+
+  const getLinkClasses = (isActive: boolean) =>
+    `relative inline-block transition-[color,opacity,transform] duration-300 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-full after:bg-primary-fixed/50 after:transition-opacity after:duration-300 ${
+      isActive
+        ? '-translate-y-0.5 text-white opacity-100 after:opacity-100'
+        : 'translate-y-0 text-on-surface-variant opacity-70 after:opacity-0 hover:-translate-y-0.5 hover:text-white hover:opacity-100'
+    }`;
 
   return (
-    <header className="fixed top-0 z-50 w-full bg-[#131313]/40 backdrop-blur-2xl glassmorphism-edge">
+    <header className="fixed top-0 z-50 w-full bg-background/45 backdrop-blur-2xl glassmorphism-edge">
       <nav className="mx-auto flex w-full max-w-360 items-center justify-between px-6 py-5 md:px-12 md:py-8">
         <div className='flex gap-2 items-center justify-center'>
           <div>
-            <img src={`${import.meta.env.BASE_URL}icon.png`} className='w-8 rounded-lg' alt="" />
+            <img src={`${import.meta.env.BASE_URL}icon.png`} className='h-8 w-8 object-contain' alt="Poise logo" />
           </div>
           <div className="font-['Space_Grotesk'] text-2xl font-medium tracking-tighter text-white">
             Poise
@@ -22,15 +70,16 @@ const Navbar = () => {
         </div>
 
         <div className="hidden items-center gap-12 font-['Space_Grotesk'] font-medium tracking-[-0.02em] md:flex">
-          {navLinks.map((link, index) => (
+          {navLinks.map((link) => (
             <a
               key={link.label}
-              className={`transition-all duration-300 ${
-                index === 0
-                  ? 'border-b border-[#00FBFB]/50 pb-1 font-medium text-white'
-                  : 'text-[#B9CAC9] hover:text-white hover:opacity-80'
-              }`}
+              className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
               href={link.href}
+              onClick={() => {
+                if (link.sectionIds?.[0]) {
+                  setActiveSection(link.sectionIds[0]);
+                }
+              }}
             >
               {link.label}
             </a>
@@ -38,9 +87,13 @@ const Navbar = () => {
         </div>
 
         <div className="hidden md:block">
-          <a className="pulse-gradient rounded-full px-8 py-3 font-medium text-on-primary-fixed transition-all hover:opacity-90 active:scale-95" href='#downloads'>
+          <CtaButton
+            className="px-8 py-3 font-medium"
+            href="#downloads"
+            icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
+          >
             Download Now
-          </a>
+          </CtaButton>
         </div>
 
         <button
@@ -57,27 +110,32 @@ const Navbar = () => {
 
       {isOpen && (
         <div
-          className="mx-6 mb-4 rounded-2xl border border-white/5 bg-[#131313]/80 p-5 backdrop-blur-2xl md:hidden"
+          className="mx-6 mb-4 rounded-2xl border border-white/5 bg-background/80 p-5 backdrop-blur-2xl md:hidden"
           id="mobile-nav"
         >
           <div className="flex flex-col gap-4 font-['Space_Grotesk']">
-            {navLinks.map((link, index) => (
+            {navLinks.map((link) => (
               <a
                 key={link.label}
-                className={`transition-all duration-300 ${
-                  index === 0
-                    ? 'border-b border-[#00FBFB]/50 pb-1 font-medium text-white'
-                    : 'text-[#B9CAC9] hover:text-white hover:opacity-80'
-                }`}
+                className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
                 href={link.href}
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  if (link.sectionIds?.[0]) {
+                    setActiveSection(link.sectionIds[0]);
+                  }
+                  setIsOpen(false);
+                }}
               >
                 {link.label}
               </a>
             ))}
-            <a className="pulse-gradient mt-2 rounded-full px-8 py-3 font-medium text-on-primary-fixed transition-all hover:opacity-90 active:scale-95" href='#downloads'>
+            <CtaButton
+              className="mt-2 px-8 py-3 font-medium"
+              href="#downloads"
+              icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
+            >
               Download Now
-            </a>
+            </CtaButton>
           </div>
         </div>
       )}
