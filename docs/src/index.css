@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@400;500;600;700&display=swap");
 @import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap");
 @import "tailwindcss";
 
@@ -59,9 +59,9 @@
   --color-on-surface-variant: #94a3b8;
 
   /* Font Families */
-  --font-headline: "Space Grotesk", sans-serif;
-  --font-body: "Inter", sans-serif;
-  --font-label: "Inter", sans-serif;
+  --font-headline: "Sora", sans-serif;
+  --font-body: "IBM Plex Sans", sans-serif;
+  --font-label: "IBM Plex Sans", sans-serif;
 
   /* Border Radius */
   --radius-default: 0.25rem;
@@ -74,7 +74,11 @@ body {
 	background:
 		radial-gradient(circle at 82% 0%, rgba(45, 45, 48, 0.95) 0%, rgba(16, 19, 24, 0.92) 42%, rgba(10, 10, 10, 1) 78%);
 	color: #f8fafc;
-	font-family: "Inter", sans-serif;
+	font-family: "IBM Plex Sans", sans-serif;
+	line-height: 1.5;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
 html {
@@ -103,8 +107,48 @@ html {
 }
 
 .cta-button {
+	--cta-skew: -8deg;
+	--cta-unskew: 8deg;
+	--cta-translate-y: 0px;
 	position: relative;
 	isolation: isolate;
+	overflow: hidden;
+	border-radius: 1.75rem;
+	border-top-right-radius: 0;
+	border-bottom-left-radius: 0;
+	clip-path: none;
+	font-family: var(--font-body);
+	letter-spacing: -0.01em;
+	transform: skewX(var(--cta-skew)) translateY(var(--cta-translate-y));
+	transition:
+		transform 220ms ease,
+		box-shadow 220ms ease,
+		border-color 220ms ease,
+		background-color 220ms ease;
+}
+
+.cta-button::before {
+	content: "";
+	position: absolute;
+	inset: 1px;
+	border-radius: inherit;
+	border-top-right-radius: 0;
+	border-bottom-left-radius: 0;
+	clip-path: none;
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	pointer-events: none;
+	opacity: 0.9;
+}
+
+.navbar-cta {
+	border-radius: 1.45rem;
+	border-top-right-radius: 0;
+	border-bottom-left-radius: 0;
+}
+
+.hero-cta:hover,
+.hero-cta:focus-visible {
+	--cta-translate-y: 0px;
 }
 
 .cta-button__label,
@@ -118,20 +162,21 @@ html {
 }
 
 .cta-button__label {
-	transform: translateY(0);
+	transform: skewX(var(--cta-unskew)) translateY(0);
 }
 
 .cta-button__icon {
 	position: absolute;
 	inset: 0;
 	opacity: 0;
-	transform: translateY(0.9rem);
+	transform: skewX(var(--cta-unskew)) translateY(0.9rem);
 	pointer-events: none;
 }
 
 .pulse-gradient:hover,
 .pulse-gradient:focus-visible {
 	--pulse-overlay-opacity: 0;
+	--cta-translate-y: -1px;
 	box-shadow: 0 0 16px rgba(59, 232, 255, 0.14);
 }
 
@@ -146,19 +191,20 @@ html {
 .cta-button--secondary:focus-visible {
 	background-color: rgba(39, 39, 42, 0.85);
 	border-color: rgba(103, 232, 249, 0.24);
+	--cta-translate-y: -1px;
 	box-shadow: 0 0 12px rgba(103, 232, 249, 0.08);
 }
 
 .cta-button:hover .cta-button__label,
 .cta-button:focus-visible .cta-button__label {
 	opacity: 0;
-	transform: translateY(-0.7rem);
+	transform: skewX(var(--cta-unskew)) translateY(-0.7rem);
 }
 
 .cta-button:hover .cta-button__icon,
 .cta-button:focus-visible .cta-button__icon {
 	opacity: 1;
-	transform: translateY(0);
+	transform: skewX(var(--cta-unskew)) translateY(0);
 }
 
 .neon-glow {

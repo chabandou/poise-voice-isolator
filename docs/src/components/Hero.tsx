@@ -170,7 +170,7 @@ const Hero = () => {
 								}`}
 							></span>
 						</span>
-						<span className={`font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant transition-colors duration-500 ${isProcessingBadge ? 'text-primary-fixed' : ''}`}>
+						<span className={`font-label text-[0.69rem] font-medium uppercase tracking-[0.18em] text-on-surface-variant transition-colors duration-500 ${isProcessingBadge ? 'text-primary-fixed' : ''}`}>
 							Processing {isProcessingBadge ? 'On' : 'Off'}
 						</span>
 					</button>
@@ -179,25 +179,25 @@ const Hero = () => {
 
 			{/* Hero Content */}
 			<div className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center text-center">
-				<h1 className="font-headline my-8 max-w-4xl text-5xl font-bold leading-[0.98] tracking-[-0.05em] text-white sm:text-6xl md:text-7xl lg:text-[6.25rem]">
+				<h1 className="font-headline my-8 max-w-4xl text-[3.45rem] font-semibold leading-[0.92] tracking-[-0.065em] text-white sm:text-[4.45rem] md:text-[5.55rem] lg:text-[6rem]">
 					Filter Music.<br />
 					<span className="text-primary-fixed">In Real Time.</span>
 				</h1>
-				<p className="font-body mb-14 max-w-2xl text-balance leading-[1.55] text-on-surface-variant text-lg md:text-[1.35rem]">
+				<p className="font-body mb-14 max-w-[42rem] text-balance text-[1.04rem] leading-[1.62] text-on-surface-variant md:text-[1.22rem]">
 					System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
 				</p>
 
 				{/* CTA Buttons */}
-				<div className="flex w-full flex-col items-center justify-center gap-4 sm:w-auto sm:flex-row sm:gap-6">
+				<div className="flex w-full flex-col items-center justify-center gap-4 sm:max-w-[30rem] sm:flex-row sm:gap-6">
 					<CtaButton
-						className="neon-glow w-full max-w-[20rem] px-10 py-5 text-lg font-semibold sm:w-auto"
+						className="hero-cta neon-glow w-full max-w-[20rem] px-10 py-5 text-[1.02rem] font-semibold sm:max-w-none sm:flex-1"
 						href="#downloads"
 						icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
 					>
 						Download Now
 					</CtaButton>
 					<CtaButton
-						className="w-full max-w-[20rem] px-10 py-5 text-lg font-medium sm:w-auto"
+						className="hero-cta w-full max-w-[20rem] px-10 py-5 text-[1.02rem] font-medium sm:max-w-none sm:flex-1"
 						href="https://github.com/chabandou/poise-voice-isolator"
 						icon={(
 							<svg
@@ -216,7 +216,7 @@ const Hero = () => {
 							View Source
 						</CtaButton>
 					</div>
-				<p className="mt-8 text-[0.72rem] uppercase tracking-[0.24em] text-on-surface-variant/70">
+				<p className="mt-8 font-body text-[0.68rem] font-medium uppercase tracking-[0.18em] text-on-surface-variant/70">
 					Local AI. No cloud routing. No streaming detours.
 				</p>
 			</div>

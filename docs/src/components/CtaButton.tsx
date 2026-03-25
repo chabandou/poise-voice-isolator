@@ -17,7 +17,7 @@ const CtaButton = ({
     variant === 'secondary'
       ? 'cta-button--secondary border border-white/10 bg-surface-container-highest/20 text-white'
       : 'pulse-gradient text-on-primary-fixed';
-  const classes = `cta-button inline-flex items-center justify-center overflow-hidden rounded-full ${variantClasses} ${className}`.trim();
+  const classes = `cta-button inline-flex items-center justify-center ${variantClasses} ${className}`.trim();
 
   return (
     <a className={classes} {...props}>

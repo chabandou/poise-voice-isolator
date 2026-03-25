@@ -118,12 +118,12 @@ const Navbar = () => {
           <div>
             <img src={`${import.meta.env.BASE_URL}icon.png`} className='h-8 w-8 object-contain' alt="Poise logo" />
           </div>
-          <div className="font-['Space_Grotesk'] text-2xl font-medium tracking-tighter text-white">
+          <div className="font-headline text-[1.55rem] font-semibold tracking-[-0.06em] text-white">
             Poise
           </div>
         </div>
 
-        <div className="hidden items-center gap-12 font-['Space_Grotesk'] font-medium tracking-[-0.02em] md:flex">
+        <div className="hidden items-center gap-12 font-headline text-[0.95rem] font-medium tracking-[-0.03em] md:flex">
           {navLinks.map((link) => (
             <a
               key={link.label}
@@ -138,7 +138,7 @@ const Navbar = () => {
 
         <div className="hidden md:block">
           <CtaButton
-            className="px-8 py-3 font-medium"
+            className="navbar-cta px-8 py-3 text-[0.96rem] font-semibold"
             href="#downloads"
             icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
           >
@@ -163,7 +163,7 @@ const Navbar = () => {
           className="mx-6 mb-4 rounded-2xl border border-white/5 bg-background/80 p-5 backdrop-blur-2xl md:hidden"
           id="mobile-nav"
         >
-          <div className="flex flex-col gap-4 font-['Space_Grotesk']">
+          <div className="flex flex-col gap-4 font-headline text-[1rem] tracking-[-0.03em]">
             {navLinks.map((link) => (
               <a
                 key={link.label}
@@ -178,7 +178,7 @@ const Navbar = () => {
               </a>
             ))}
             <CtaButton
-              className="mt-2 px-8 py-3 font-medium"
+              className="navbar-cta mt-2 px-8 py-3 text-[0.96rem] font-semibold"
               href="#downloads"
               icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
             >

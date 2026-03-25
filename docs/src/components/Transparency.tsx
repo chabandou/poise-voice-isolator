@@ -6,20 +6,20 @@ const Transparency = () => {
 					{/* Left Content */}
 					<div className="space-y-8 max-w-xl">
 						{/* Badge */}
-						<div className="inline-flex items-center gap-2 bg-secondary-fixed-dim/10 text-secondary-fixed-dim px-4 py-1 rounded-full border border-secondary-fixed-dim/20">
+						<div className="inline-flex items-center gap-2 rounded-full border border-secondary-fixed-dim/20 bg-secondary-fixed-dim/10 px-4 py-1">
 							<span
 								className="material-symbols-outlined text-sm"
 								style={{ fontVariationSettings: "'FILL' 1" }}
 							>
 								verified_user
 							</span>
-							<span className="text-[10px] uppercase tracking-widest font-bold">
+							<span className="font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em]">
 								Local AI Verified
 							</span>
 						</div>
 
 						{/* Title */}
-						<h2 className="font-headline text-4xl text-white font-medium">
+						<h2 className="font-headline text-[2.5rem] font-semibold tracking-[-0.05em] text-white md:text-[3.15rem]">
 							Technically Transparent.
 						</h2>
 
@@ -31,8 +31,8 @@ const Transparency = () => {
 									memory
 								</span>
 								<div>
-									<p className="text-white font-medium">Built with local AI models</p>
-									<p className="text-on-surface-variant text-sm">
+									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">Built with local AI models</p>
+									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
 										Optimized for CPU and GPU acceleration without cloud reliance.
 									</p>
 								</div>
@@ -44,8 +44,8 @@ const Transparency = () => {
 									no_sim
 								</span>
 								<div>
-									<p className="text-white font-medium">No internet required after install</p>
-									<p className="text-on-surface-variant text-sm">
+									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">No internet required after install</p>
+									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
 										Works perfectly in airplane mode or secure offline environments.
 									</p>
 								</div>
@@ -57,8 +57,8 @@ const Transparency = () => {
 									code
 								</span>
 								<div>
-									<p className="text-white font-medium">Open-source on GitHub</p>
-									<p className="text-on-surface-variant text-sm">
+									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">Open-source on GitHub</p>
+									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
 										Audit the code, contribute to the engine, or build your own fork.
 									</p>
 								</div>
@@ -82,12 +82,12 @@ const Transparency = () => {
 							</span>
 
 							{/* Title */}
-							<span className="font-headline text-2xl text-white font-medium">
+							<span className="font-headline text-[1.75rem] font-semibold tracking-[-0.04em] text-white">
 								LOCAL AI
 							</span>
 
 							{/* Badge */}
-							<div className="flex items-center gap-2 text-on-surface-variant text-sm uppercase tracking-widest font-bold">
+							<div className="flex items-center gap-2 font-label text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
 								<span className="material-symbols-outlined text-sm">lock</span>
 								Encrypted &amp; Private
 							</div>

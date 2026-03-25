@@ -154,14 +154,14 @@ const FinalCTA = () => {
 				<div className="max-w-5xl mx-auto">
 				{/* Headline */}
 					<div className="mb-14 text-center md:mb-16">
-						<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-surface-container/80 px-4 py-2 text-[11px] font-medium uppercase tracking-[0.24em] text-on-surface-variant">
+						<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-surface-container/80 px-4 py-2 font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
 							<span className="h-1.5 w-1.5 rounded-full bg-primary-fixed"></span>
 							Choose Your Build
 						</div>
-						<h2 className="font-headline text-5xl font-bold text-white md:text-6xl">
+						<h2 className="font-headline text-[3.2rem] font-semibold tracking-[-0.06em] text-white md:text-[4.25rem]">
 							Download Poise
 						</h2>
-						<p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-on-surface-variant">
+						<p className="mx-auto mt-5 max-w-2xl font-body text-[1.04rem] leading-[1.65] text-on-surface-variant md:text-[1.16rem]">
 							Pick the version that fits your environment. Every build stays local-first and open-source.
 						</p>
 					</div>
@@ -178,15 +178,15 @@ const FinalCTA = () => {
 								<span className="material-symbols-outlined mb-4 text-5xl text-primary-container transition-all group-hover:brightness-125">
 									{option.icon}
 								</span>
-								<h3 className="mb-2 text-2xl font-bold text-white">{option.name}</h3>
+								<h3 className="mb-2 font-headline text-[1.8rem] font-semibold tracking-[-0.045em] text-white">{option.name}</h3>
 								{option.disclaimer && (
 									<div className="mb-4 rounded-full border border-secondary-fixed-dim/40 bg-secondary-fixed-dim/20 px-3 py-1">
-										<span className="text-xs font-bold uppercase tracking-wider text-secondary-fixed-dim">
+										<span className="font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-secondary-fixed-dim">
 											{option.disclaimer}
 										</span>
 									</div>
 								)}
-								<p className="text-sm text-on-surface-variant">View Install Steps</p>
+								<p className="font-body text-[0.98rem] text-on-surface-variant">View Install Steps</p>
 								<div className="pointer-events-none absolute inset-0 rounded-3xl border border-primary-container/0 transition-all duration-300 group-hover:border-primary-container/40" />
 							</button>
 						))}
@@ -194,7 +194,7 @@ const FinalCTA = () => {
 
 				{/* Subtitle */}
 					<div className="text-center mt-12">
-						<p className="text-on-surface-variant text-sm">
+						<p className="font-body text-[0.94rem] text-on-surface-variant">
 							All versions are open-source and available on GitHub
 						</p>
 					</div>
@@ -223,32 +223,32 @@ const FinalCTA = () => {
 						</button>
 
 						<div className="mb-8 pr-12">
-							<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-background/70 px-4 py-2 text-[11px] font-medium uppercase tracking-[0.22em] text-on-surface-variant">
+							<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-background/70 px-4 py-2 font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
 								<span className="material-symbols-outlined text-[1rem] text-primary-fixed">{activeGuide.icon}</span>
 								{activeGuide.label}
 							</div>
-							<h3 className="font-headline text-4xl font-bold text-white md:text-5xl" id="install-guide-title">{activeGuide.name} Install</h3>
-							<p className="mt-4 max-w-2xl text-base leading-relaxed text-on-surface-variant md:text-lg">
+							<h3 className="font-headline text-[2.75rem] font-semibold tracking-[-0.055em] text-white md:text-[3.8rem]" id="install-guide-title">{activeGuide.name} Install</h3>
+							<p className="mt-4 max-w-2xl font-body text-[1.03rem] leading-[1.68] text-on-surface-variant md:text-[1.14rem]">
 								{activeGuide.intro}
 							</p>
 						</div>
 
 						{activeGuide.note && (
-							<div className="mb-6 rounded-2xl border border-primary-fixed/20 bg-primary-fixed/8 p-4 text-sm leading-relaxed text-on-surface">
+							<div className="mb-6 rounded-2xl border border-primary-fixed/20 bg-primary-fixed/8 p-4 font-body text-[0.98rem] leading-[1.65] text-on-surface">
 								{activeGuide.note}
 							</div>
 						)}
 
 						{activeGuide.steps && (
 							<div className="mb-8">
-								<h4 className="mb-4 text-xs font-semibold uppercase tracking-[0.24em] text-on-surface-variant">Install Steps</h4>
+								<h4 className="mb-4 font-label text-[0.73rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">Install Steps</h4>
 								<ol className="space-y-4">
 									{activeGuide.steps.map((step, index) => (
 										<li key={step} className="flex gap-4 rounded-2xl border border-white/6 bg-background/45 p-4">
 											<span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-fixed/12 text-sm font-semibold text-primary-fixed">
 												{index + 1}
 											</span>
-											<p className="pt-1 text-sm leading-relaxed text-on-surface md:text-base">{step}</p>
+											<p className="pt-1 font-body text-[0.98rem] leading-[1.62] text-on-surface md:text-[1rem]">{step}</p>
 										</li>
 									))}
 								</ol>
@@ -259,7 +259,7 @@ const FinalCTA = () => {
 							<div className="mb-8 space-y-5">
 								{activeGuide.commandGroups.map((group) => (
 									<div key={group.label}>
-										<h4 className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-on-surface-variant">{group.label}</h4>
+										<h4 className="mb-3 font-label text-[0.73rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">{group.label}</h4>
 										<pre className="overflow-x-auto rounded-2xl border border-white/6 bg-background/70 p-4 text-sm leading-relaxed text-on-surface">
 											<code>{group.code}</code>
 										</pre>
