@@ -214,6 +214,22 @@ body {
 	animation: status-dot-pulse 850ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.install-modal-backdrop {
+	animation: install-modal-fade-in 220ms ease forwards;
+}
+
+.install-modal-backdrop--closing {
+	animation: install-modal-fade-out 220ms ease forwards;
+}
+
+.install-modal-panel {
+	animation: install-modal-rise-in 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.install-modal-panel--closing {
+	animation: install-modal-rise-out 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 .waveform-container {
 	mask-image: linear-gradient(to right, transparent, black, transparent);
 }
@@ -248,6 +264,50 @@ body {
 .player-waveform__stage {
 	position: relative;
 	height: 20rem;
+}
+
+@keyframes install-modal-fade-in {
+	from {
+		opacity: 0;
+	}
+
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes install-modal-fade-out {
+	from {
+		opacity: 1;
+	}
+
+	to {
+		opacity: 0;
+	}
+}
+
+@keyframes install-modal-rise-in {
+	from {
+		opacity: 0;
+		transform: translateY(1.5rem) scale(0.97);
+	}
+
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes install-modal-rise-out {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+
+	to {
+		opacity: 0;
+		transform: translateY(1.5rem) scale(0.97);
+	}
 }
 
 .player-waveform__bars {

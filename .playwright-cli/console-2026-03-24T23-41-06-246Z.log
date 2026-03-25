@@ -1,0 +1,16 @@
+[ 1432026ms] ReferenceError: Cannot access 'downloadOptions' before initialization
+    at FinalCTA (http://127.0.0.1:5174/poise-voice-isolator/src/components/FinalCTA.tsx?t=1774397097811:99:26)
+    at Object.react_stack_bottom_frame (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:12867:12)
+    at renderWithHooks (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:4212:19)
+    at updateFunctionComponent (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:5568:16)
+    at beginWork (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:6139:20)
+    at runWithFiberInDEV (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:850:66)
+    at performUnitOfWork (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:8428:92)
+    at workLoopSync (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:8324:37)
+    at renderRootSync (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:8308:6)
+    at performWorkOnRoot (http://127.0.0.1:5174/poise-voice-isolator/node_modules/.vite/deps/react-dom_client.js?v=afeed23e:7993:27)
+[ 1432024ms] [WARNING] %s
+
+%s
+ An error occurred in the <FinalCTA> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://127.0.0.1:5174/poise-voice-isolator/@vite/client:509

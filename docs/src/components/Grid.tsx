@@ -41,7 +41,7 @@ const Grid = () => {
 						<span className="material-symbols-outlined text-secondary-fixed-dim text-4xl mb-8 block">psychology</span>
 						<h4 className="font-headline text-3xl text-white mb-4 font-medium">Smart Isolation</h4>
 						<p className="text-on-surface-variant text-lg max-w-md">
-							Distinguishes between essential sound cues and background music with surgical precision.
+							Distinguishes between speech cues and background audio with extreme precision.
 						</p>
 					</div>
 				</div>
