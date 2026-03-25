@@ -23,8 +23,10 @@ const Hero = () => {
 	const [isProcessingWave, setIsProcessingWave] = useState(false);
 	const [isProcessingBadge, setIsProcessingBadge] = useState(false);
 	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
+	const [isWaveTransitioning, setIsWaveTransitioning] = useState(false);
 	const hasUserInteractedRef = useRef(false);
 	const badgeTimerRef = useRef<number | null>(null);
+	const waveTransitionTimerRef = useRef<number | null>(null);
 
 	const clearPendingBadgeTimer = () => {
 		if (badgeTimerRef.current !== null) {
@@ -33,8 +35,25 @@ const Hero = () => {
 		}
 	};
 
+	const clearPendingWaveTransitionTimer = () => {
+		if (waveTransitionTimerRef.current !== null) {
+			window.clearTimeout(waveTransitionTimerRef.current);
+			waveTransitionTimerRef.current = null;
+		}
+	};
+
 	const applyProcessingState = (nextProcessing: boolean) => {
 		clearPendingBadgeTimer();
+		clearPendingWaveTransitionTimer();
+
+		if (nextProcessing !== isProcessingWave) {
+			setIsWaveTransitioning(true);
+			waveTransitionTimerRef.current = window.setTimeout(() => {
+				setIsWaveTransitioning(false);
+				waveTransitionTimerRef.current = null;
+			}, 900);
+		}
+
 		setIsProcessingWave(nextProcessing);
 
 		if (nextProcessing) {
@@ -58,6 +77,7 @@ const Hero = () => {
 		return () => {
 			window.clearTimeout(waveTimer);
 			clearPendingBadgeTimer();
+			clearPendingWaveTransitionTimer();
 		};
 	}, []);
 
@@ -74,6 +94,12 @@ const Hero = () => {
 		return () => window.clearTimeout(pulseTimer);
 	}, [isProcessingBadge]);
 
+	useEffect(() => {
+		return () => {
+			clearPendingWaveTransitionTimer();
+		};
+	}, []);
+
 	const handleProcessingToggle = () => {
 		hasUserInteractedRef.current = true;
 		applyProcessingState(!isProcessingWave);
@@ -87,36 +113,40 @@ const Hero = () => {
 					<div className="player-waveform__baseline"></div>
 					<div className="player-waveform__scan"></div>
 					<div className="player-waveform__stage">
-						<div className="player-waveform__bars player-waveform__bars--chaotic">
-							{chaoticBars.map((height, index) => (
-								<span
-									key={`chaotic-${index}`}
-									className="player-waveform__bar player-waveform__bar--chaotic"
-									style={
-										{
-											'--bar-height': `${height}px`,
-											'--bar-phase': `-${260 + index * 42}ms`,
-											'--bar-duration': `${1120 + (index % 6) * 110}ms`,
-										} as CSSProperties
-									}
-								/>
-							))}
-						</div>
-						<div className="player-waveform__bars player-waveform__bars--stable">
-							{stableBars.map((height, index) => (
-								<span
-									key={`stable-${index}`}
-									className="player-waveform__bar player-waveform__bar--stable"
-									style={
-										{
-											'--bar-height': `${height}px`,
-											'--bar-phase': `-${260 + index * 42}ms`,
-											'--bar-duration': `${1120 + (index % 6) * 110}ms`,
-										} as CSSProperties
-									}
-								/>
-							))}
-						</div>
+						{(isWaveTransitioning || !isProcessingWave) && (
+							<div className="player-waveform__bars player-waveform__bars--chaotic">
+								{chaoticBars.map((height, index) => (
+									<span
+										key={`chaotic-${index}`}
+										className="player-waveform__bar player-waveform__bar--chaotic"
+										style={
+											{
+												'--bar-height': `${height}px`,
+												'--bar-phase': `-${260 + index * 42}ms`,
+												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+											} as CSSProperties
+										}
+									/>
+								))}
+							</div>
+						)}
+						{(isWaveTransitioning || isProcessingWave) && (
+							<div className="player-waveform__bars player-waveform__bars--stable">
+								{stableBars.map((height, index) => (
+									<span
+										key={`stable-${index}`}
+										className="player-waveform__bar player-waveform__bar--stable"
+										style={
+											{
+												'--bar-height': `${height}px`,
+												'--bar-phase': `-${260 + index * 42}ms`,
+												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+											} as CSSProperties
+										}
+									/>
+								))}
+							</div>
+						)}
 					</div>
 				</div>
 			</div>
@@ -126,13 +156,13 @@ const Hero = () => {
 					<button
 						aria-label={`Turn processing ${isProcessingWave ? 'off' : 'on'}`}
 						aria-pressed={isProcessingWave}
-						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/40 px-4 py-2 backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
+						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/40 px-4 py-2 backdrop-blur-md md:backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
 						onClick={handleProcessingToggle}
 						type="button"
 					>
 						<span className="status-badge__dot-wrap relative flex h-2 w-2">
 							{isProcessingBadge && (
-								<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-fixed opacity-75"></span>
+								<span className="status-badge__dot-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-fixed opacity-75"></span>
 							)}
 							<span
 								className={`status-badge__dot relative inline-flex h-2 w-2 rounded-full transition-colors duration-300 ${

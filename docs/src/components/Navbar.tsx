@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import CtaButton from './CtaButton';
 
 type NavLink = {
@@ -16,6 +16,60 @@ const navLinks: NavLink[] = [
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('home');
+
+  const scrollToSection = (href: string) => {
+    const targetId = href.startsWith('#') ? href.slice(1) : href;
+    const target = document.getElementById(targetId);
+
+    if (!target) {
+      return;
+    }
+
+    const targetTop = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 120);
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      window.scrollTo(0, targetTop);
+      return;
+    }
+
+    const startTop = window.scrollY;
+    const distance = targetTop - startTop;
+    const duration = 950;
+    const startTime = performance.now();
+
+    const easeInOutCubic = (progress: number) =>
+      progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    const step = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easedProgress = easeInOutCubic(progress);
+
+      window.scrollTo(0, startTop + distance * easedProgress);
+
+      if (progress < 1) {
+        window.requestAnimationFrame(step);
+      }
+    };
+
+    window.requestAnimationFrame(step);
+  };
+
+  const handleNavClick = (event: MouseEvent<HTMLAnchorElement>, href: string, sectionId?: string) => {
+    if (!href.startsWith('#')) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (sectionId) {
+      setActiveSection(sectionId);
+    }
+
+    scrollToSection(href);
+  };
 
   useEffect(() => {
     const trackedSectionIds = [...new Set(navLinks.flatMap((link) => link.sectionIds ?? []))];
@@ -75,11 +129,7 @@ const Navbar = () => {
               key={link.label}
               className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
               href={link.href}
-              onClick={() => {
-                if (link.sectionIds?.[0]) {
-                  setActiveSection(link.sectionIds[0]);
-                }
-              }}
+              onClick={(event) => handleNavClick(event, link.href, link.sectionIds?.[0])}
             >
               {link.label}
             </a>
@@ -119,10 +169,8 @@ const Navbar = () => {
                 key={link.label}
                 className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
                 href={link.href}
-                onClick={() => {
-                  if (link.sectionIds?.[0]) {
-                    setActiveSection(link.sectionIds[0]);
-                  }
+                onClick={(event) => {
+                  handleNavClick(event, link.href, link.sectionIds?.[0]);
                   setIsOpen(false);
                 }}
               >
