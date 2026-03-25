@@ -131,8 +131,14 @@ const Hero = () => {
 						type="button"
 					>
 						<span className="status-badge__dot-wrap relative flex h-2 w-2">
-							{!isProcessingBadge && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary-fixed-dim opacity-75"></span>}
-							<span className={`status-badge__dot relative inline-flex h-2 w-2 rounded-full ${isProcessingBadge ? 'bg-primary-fixed' : 'bg-secondary-fixed-dim'}`}></span>
+							{isProcessingBadge && (
+								<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-fixed opacity-75"></span>
+							)}
+							<span
+								className={`status-badge__dot relative inline-flex h-2 w-2 rounded-full transition-colors duration-300 ${
+									isProcessingBadge ? 'bg-primary-fixed' : 'bg-white/35'
+								}`}
+							></span>
 						</span>
 						<span className={`font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant transition-colors duration-500 ${isProcessingBadge ? 'text-primary-fixed' : ''}`}>
 							Processing {isProcessingBadge ? 'On' : 'Off'}
