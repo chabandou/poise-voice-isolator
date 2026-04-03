@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import CtaButton from './CtaButton';
 
 const BAR_COUNT = 220;
@@ -25,28 +25,38 @@ const Hero = () => {
 	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
 	const [isWaveTransitioning, setIsWaveTransitioning] = useState(false);
 	const hasUserInteractedRef = useRef(false);
+	const isProcessingWaveRef = useRef(false);
 	const badgeTimerRef = useRef<number | null>(null);
 	const waveTransitionTimerRef = useRef<number | null>(null);
+	const pulseTimerRef = useRef<number | null>(null);
 
-	const clearPendingBadgeTimer = () => {
+	const clearPendingBadgeTimer = useCallback(() => {
 		if (badgeTimerRef.current !== null) {
 			window.clearTimeout(badgeTimerRef.current);
 			badgeTimerRef.current = null;
 		}
-	};
+	}, []);
 
-	const clearPendingWaveTransitionTimer = () => {
+	const clearPendingWaveTransitionTimer = useCallback(() => {
 		if (waveTransitionTimerRef.current !== null) {
 			window.clearTimeout(waveTransitionTimerRef.current);
 			waveTransitionTimerRef.current = null;
 		}
-	};
+	}, []);
 
-	const applyProcessingState = (nextProcessing: boolean) => {
+	const clearPendingPulseTimer = useCallback(() => {
+		if (pulseTimerRef.current !== null) {
+			window.clearTimeout(pulseTimerRef.current);
+			pulseTimerRef.current = null;
+		}
+	}, []);
+
+	const applyProcessingState = useCallback((nextProcessing: boolean) => {
 		clearPendingBadgeTimer();
 		clearPendingWaveTransitionTimer();
+		clearPendingPulseTimer();
 
-		if (nextProcessing !== isProcessingWave) {
+		if (nextProcessing !== isProcessingWaveRef.current) {
 			setIsWaveTransitioning(true);
 			waveTransitionTimerRef.current = window.setTimeout(() => {
 				setIsWaveTransitioning(false);
@@ -54,18 +64,25 @@ const Hero = () => {
 			}, 900);
 		}
 
+		isProcessingWaveRef.current = nextProcessing;
 		setIsProcessingWave(nextProcessing);
 
 		if (nextProcessing) {
 			badgeTimerRef.current = window.setTimeout(() => {
 				setIsProcessingBadge(true);
+				setIsProcessingPulseActive(true);
+				pulseTimerRef.current = window.setTimeout(() => {
+					setIsProcessingPulseActive(false);
+					pulseTimerRef.current = null;
+				}, 900);
 				badgeTimerRef.current = null;
 			}, 180);
 			return;
 		}
 
 		setIsProcessingBadge(false);
-	};
+		setIsProcessingPulseActive(false);
+	}, [clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
 
 	useEffect(() => {
 		const waveTimer = window.setTimeout(() => {
@@ -77,32 +94,21 @@ const Hero = () => {
 		return () => {
 			window.clearTimeout(waveTimer);
 			clearPendingBadgeTimer();
+			clearPendingPulseTimer();
 			clearPendingWaveTransitionTimer();
 		};
-	}, []);
-
-	useEffect(() => {
-		if (!isProcessingBadge) {
-			return;
-		}
-
-		setIsProcessingPulseActive(true);
-		const pulseTimer = window.setTimeout(() => {
-			setIsProcessingPulseActive(false);
-		}, 900);
-
-		return () => window.clearTimeout(pulseTimer);
-	}, [isProcessingBadge]);
+	}, [applyProcessingState, clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
 
 	useEffect(() => {
 		return () => {
+			clearPendingPulseTimer();
 			clearPendingWaveTransitionTimer();
 		};
-	}, []);
+	}, [clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
 
 	const handleProcessingToggle = () => {
 		hasUserInteractedRef.current = true;
-		applyProcessingState(!isProcessingWave);
+		applyProcessingState(!isProcessingWaveRef.current);
 	};
 
 	return (
@@ -183,12 +189,12 @@ const Hero = () => {
 					Filter Music.<br />
 					<span className="text-primary-fixed">In Real Time.</span>
 				</h1>
-				<p className="font-body mb-14 max-w-[42rem] text-balance text-[1.04rem] leading-[1.62] text-on-surface-variant md:text-[1.22rem]">
+				<p className="font-body mb-14 max-w-2xl text-balance text-[1.04rem] leading-[1.62] text-on-surface-variant md:text-[1.22rem]">
 					System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
 				</p>
 
 				{/* CTA Buttons */}
-				<div className="flex w-full flex-col items-center justify-center gap-4 sm:max-w-[30rem] sm:flex-row sm:gap-6">
+				<div className="flex w-full flex-col items-center justify-center gap-4 sm:max-w-120 sm:flex-row sm:gap-6">
 					<CtaButton
 						className="hero-cta neon-glow w-full max-w-[20rem] px-10 py-5 text-[1.02rem] font-semibold sm:max-w-none sm:flex-1"
 						href="#downloads"
