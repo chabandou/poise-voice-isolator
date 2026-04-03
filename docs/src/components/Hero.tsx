@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import CtaButton from './CtaButton';
 
 const DESKTOP_BAR_COUNT = 220;
-const MOBILE_BAR_COUNT = 60;
-const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)';
+const MEDIUM_BAR_COUNT = 45;
+const SMALL_BAR_COUNT = 20;
+const SMALL_BREAKPOINT_QUERY = '(max-width: 500px)';
+const MEDIUM_BREAKPOINT_QUERY = '(min-width: 501px) and (max-width: 1023px)';
+type ViewportTier = 'small' | 'medium' | 'desktop';
 
 const createChaoticBars = (barCount: number) =>
 	Array.from({ length: barCount }, (_, index) => {
@@ -24,20 +27,30 @@ const createStableBars = (barCount: number) =>
 	});
 
 const chaoticDesktopBars = createChaoticBars(DESKTOP_BAR_COUNT);
-const chaoticMobileBars = createChaoticBars(MOBILE_BAR_COUNT);
+const chaoticMediumBars = createChaoticBars(MEDIUM_BAR_COUNT);
+const chaoticSmallBars = createChaoticBars(SMALL_BAR_COUNT);
 const stableDesktopBars = createStableBars(DESKTOP_BAR_COUNT);
-const stableMobileBars = createStableBars(MOBILE_BAR_COUNT);
+const stableMediumBars = createStableBars(MEDIUM_BAR_COUNT);
+const stableSmallBars = createStableBars(SMALL_BAR_COUNT);
 
-const getIsMobileViewport = () => {
+const getViewportTier = (): ViewportTier => {
 	if (typeof window === 'undefined') {
-		return false;
+		return 'desktop';
 	}
 
-	return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
+	if (window.matchMedia(SMALL_BREAKPOINT_QUERY).matches) {
+		return 'small';
+	}
+
+	if (window.matchMedia(MEDIUM_BREAKPOINT_QUERY).matches) {
+		return 'medium';
+	}
+
+	return 'desktop';
 };
 
 const Hero = () => {
-	const [isMobileViewport, setIsMobileViewport] = useState(getIsMobileViewport);
+	const [viewportTier, setViewportTier] = useState<ViewportTier>(getViewportTier);
 	const [isProcessingWave, setIsProcessingWave] = useState(false);
 	const [isProcessingBadge, setIsProcessingBadge] = useState(false);
 	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
@@ -69,30 +82,45 @@ const Hero = () => {
 		}
 	}, []);
 
-	const isLiteWaveMode = isMobileViewport;
-	const visibleChaoticBars = isLiteWaveMode ? chaoticMobileBars : chaoticDesktopBars;
-	const visibleStableBars = isLiteWaveMode ? stableMobileBars : stableDesktopBars;
-	const visibleBarCount = isLiteWaveMode ? MOBILE_BAR_COUNT : DESKTOP_BAR_COUNT;
-	const barPhaseStep = isLiteWaveMode ? 58 : 42;
-	const chaoticDurationBase = isLiteWaveMode ? 1480 : 1120;
-	const stableDurationBase = isLiteWaveMode ? 1680 : 1120;
-	const barDurationStep = isLiteWaveMode ? 140 : 110;
-	const barDurationModulo = isLiteWaveMode ? 5 : 6;
+	const isLiteWaveMode = viewportTier !== 'desktop';
+	const visibleChaoticBars = viewportTier === 'small'
+		? chaoticSmallBars
+		: viewportTier === 'medium'
+			? chaoticMediumBars
+			: chaoticDesktopBars;
+	const visibleStableBars = viewportTier === 'small'
+		? stableSmallBars
+		: viewportTier === 'medium'
+			? stableMediumBars
+			: stableDesktopBars;
+	const visibleBarCount = viewportTier === 'small'
+		? SMALL_BAR_COUNT
+		: viewportTier === 'medium'
+			? MEDIUM_BAR_COUNT
+			: DESKTOP_BAR_COUNT;
+	const barPhaseStep = viewportTier === 'small' ? 58 : viewportTier === 'medium' ? 50 : 42;
+	const chaoticDurationBase = viewportTier === 'small' ? 1480 : viewportTier === 'medium' ? 1320 : 1120;
+	const stableDurationBase = viewportTier === 'small' ? 1680 : viewportTier === 'medium' ? 1480 : 1120;
+	const barDurationStep = viewportTier === 'small' ? 140 : viewportTier === 'medium' ? 120 : 110;
+	const barDurationModulo = viewportTier === 'desktop' ? 6 : 5;
 
 	useEffect(() => {
 		if (typeof window === 'undefined') {
 			return;
 		}
 
-		const mediaQuery = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
-		const handleViewportChange = (event: MediaQueryListEvent) => {
-			setIsMobileViewport(event.matches);
+		const smallQuery = window.matchMedia(SMALL_BREAKPOINT_QUERY);
+		const mediumQuery = window.matchMedia(MEDIUM_BREAKPOINT_QUERY);
+		const handleViewportChange = () => {
+			setViewportTier(getViewportTier());
 		};
 
-		mediaQuery.addEventListener('change', handleViewportChange);
+		smallQuery.addEventListener('change', handleViewportChange);
+		mediumQuery.addEventListener('change', handleViewportChange);
 
 		return () => {
-			mediaQuery.removeEventListener('change', handleViewportChange);
+			smallQuery.removeEventListener('change', handleViewportChange);
+			mediumQuery.removeEventListener('change', handleViewportChange);
 		};
 	}, []);
 
