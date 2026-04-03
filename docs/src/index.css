@@ -462,27 +462,42 @@ html {
 
 @media (max-width: 767px) {
 	.player-waveform {
-		padding: 2.25rem 0;
+		padding: 1.8rem 0;
 	}
 
 	.player-waveform__scan {
-		width: 7rem;
-		height: 10rem;
-		filter: blur(12px);
-		opacity: 0.26;
+		display: none;
 	}
 
 	.player-waveform__stage {
-		height: 14rem;
+		height: 11.5rem;
 	}
 
 	.player-waveform__bars {
-		--waveform-columns: 110;
-		column-gap: 0.015rem;
+		column-gap: 0.02rem;
+		transition: opacity 360ms ease;
 	}
 
-	.player-waveform__bar:nth-child(2n) {
-		display: none;
+	.player-waveform__bar {
+		box-shadow:
+			0 0 0.5rem rgba(59, 232, 255, 0.11),
+			0 0 1rem rgba(94, 234, 212, 0.05);
+	}
+
+	.player-waveform__bar--chaotic {
+		animation-duration: calc(var(--bar-duration) * 1.35);
+		opacity: 0.9;
+	}
+
+	.player-waveform__bar--stable {
+		animation-duration: calc(var(--bar-duration) * 1.45);
+		opacity: 0.76;
+	}
+
+	.player-waveform.is-chaotic .player-waveform__bars--stable,
+	.player-waveform.is-stable .player-waveform__bars--chaotic {
+		filter: none;
+		transform: scaleY(0.98);
 	}
 
 	.status-badge {

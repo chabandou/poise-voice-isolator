@@ -1,25 +1,43 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import CtaButton from './CtaButton';
 
-const BAR_COUNT = 220;
+const DESKTOP_BAR_COUNT = 220;
+const MOBILE_BAR_COUNT = 60;
+const MOBILE_BREAKPOINT_QUERY = '(max-width: 767px)';
 
-const chaoticBars = Array.from({ length: BAR_COUNT }, (_, index) => {
-	const x = index / (BAR_COUNT - 1);
-	const envelope = Math.sin(x * Math.PI) ** 1.15;
-	const turbulence = ((Math.sin(index * 0.83) + Math.cos(index * 0.37 + 0.8) + 2) / 4);
+const createChaoticBars = (barCount: number) =>
+	Array.from({ length: barCount }, (_, index) => {
+		const x = index / (barCount - 1);
+		const envelope = Math.sin(x * Math.PI) ** 1.15;
+		const turbulence = ((Math.sin(index * 0.83) + Math.cos(index * 0.37 + 0.8) + 2) / 4);
 
-	return Math.round(18 + envelope * 118 + turbulence * 62);
-});
+		return Math.round(18 + envelope * 118 + turbulence * 62);
+	});
 
-const stableBars = Array.from({ length: BAR_COUNT }, (_, index) => {
-	const x = index / (BAR_COUNT - 1);
-	const envelope = Math.sin(x * Math.PI) ** 1.45;
-	const detail = ((Math.sin(index * 0.48 + 0.6) + Math.cos(index * 0.22) + 2) / 4);
+const createStableBars = (barCount: number) =>
+	Array.from({ length: barCount }, (_, index) => {
+		const x = index / (barCount - 1);
+		const envelope = Math.sin(x * Math.PI) ** 1.45;
+		const detail = ((Math.sin(index * 0.48 + 0.6) + Math.cos(index * 0.22) + 2) / 4);
 
-	return Math.round(16 + envelope * 88 + detail * 28);
-});
+		return Math.round(16 + envelope * 88 + detail * 28);
+	});
+
+const chaoticDesktopBars = createChaoticBars(DESKTOP_BAR_COUNT);
+const chaoticMobileBars = createChaoticBars(MOBILE_BAR_COUNT);
+const stableDesktopBars = createStableBars(DESKTOP_BAR_COUNT);
+const stableMobileBars = createStableBars(MOBILE_BAR_COUNT);
+
+const getIsMobileViewport = () => {
+	if (typeof window === 'undefined') {
+		return false;
+	}
+
+	return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
+};
 
 const Hero = () => {
+	const [isMobileViewport, setIsMobileViewport] = useState(getIsMobileViewport);
 	const [isProcessingWave, setIsProcessingWave] = useState(false);
 	const [isProcessingBadge, setIsProcessingBadge] = useState(false);
 	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
@@ -51,12 +69,43 @@ const Hero = () => {
 		}
 	}, []);
 
+	const isLiteWaveMode = isMobileViewport;
+	const visibleChaoticBars = isLiteWaveMode ? chaoticMobileBars : chaoticDesktopBars;
+	const visibleStableBars = isLiteWaveMode ? stableMobileBars : stableDesktopBars;
+	const visibleBarCount = isLiteWaveMode ? MOBILE_BAR_COUNT : DESKTOP_BAR_COUNT;
+	const barPhaseStep = isLiteWaveMode ? 58 : 42;
+	const chaoticDurationBase = isLiteWaveMode ? 1480 : 1120;
+	const stableDurationBase = isLiteWaveMode ? 1680 : 1120;
+	const barDurationStep = isLiteWaveMode ? 140 : 110;
+	const barDurationModulo = isLiteWaveMode ? 5 : 6;
+
+	useEffect(() => {
+		if (typeof window === 'undefined') {
+			return;
+		}
+
+		const mediaQuery = window.matchMedia(MOBILE_BREAKPOINT_QUERY);
+		const handleViewportChange = (event: MediaQueryListEvent) => {
+			setIsMobileViewport(event.matches);
+		};
+
+		mediaQuery.addEventListener('change', handleViewportChange);
+
+		return () => {
+			mediaQuery.removeEventListener('change', handleViewportChange);
+		};
+	}, []);
+
 	const applyProcessingState = useCallback((nextProcessing: boolean) => {
 		clearPendingBadgeTimer();
 		clearPendingWaveTransitionTimer();
 		clearPendingPulseTimer();
 
-		if (nextProcessing !== isProcessingWaveRef.current) {
+		if (isLiteWaveMode) {
+			setIsWaveTransitioning(false);
+		}
+
+		if (!isLiteWaveMode && nextProcessing !== isProcessingWaveRef.current) {
 			setIsWaveTransitioning(true);
 			waveTransitionTimerRef.current = window.setTimeout(() => {
 				setIsWaveTransitioning(false);
@@ -82,7 +131,7 @@ const Hero = () => {
 
 		setIsProcessingBadge(false);
 		setIsProcessingPulseActive(false);
-	}, [clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
+	}, [clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer, isLiteWaveMode]);
 
 	useEffect(() => {
 		const waveTimer = window.setTimeout(() => {
@@ -120,16 +169,19 @@ const Hero = () => {
 					<div className="player-waveform__scan"></div>
 					<div className="player-waveform__stage">
 						{(isWaveTransitioning || !isProcessingWave) && (
-							<div className="player-waveform__bars player-waveform__bars--chaotic">
-								{chaoticBars.map((height, index) => (
+							<div
+								className="player-waveform__bars player-waveform__bars--chaotic"
+								style={{ '--waveform-columns': `${visibleBarCount}` } as CSSProperties}
+							>
+								{visibleChaoticBars.map((height, index) => (
 									<span
 										key={`chaotic-${index}`}
 										className="player-waveform__bar player-waveform__bar--chaotic"
 										style={
 											{
 												'--bar-height': `${height}px`,
-												'--bar-phase': `-${260 + index * 42}ms`,
-												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+												'--bar-phase': `-${260 + index * barPhaseStep}ms`,
+												'--bar-duration': `${chaoticDurationBase + (index % barDurationModulo) * barDurationStep}ms`,
 											} as CSSProperties
 										}
 									/>
@@ -137,16 +189,19 @@ const Hero = () => {
 							</div>
 						)}
 						{(isWaveTransitioning || isProcessingWave) && (
-							<div className="player-waveform__bars player-waveform__bars--stable">
-								{stableBars.map((height, index) => (
+							<div
+								className="player-waveform__bars player-waveform__bars--stable"
+								style={{ '--waveform-columns': `${visibleBarCount}` } as CSSProperties}
+							>
+								{visibleStableBars.map((height, index) => (
 									<span
 										key={`stable-${index}`}
 										className="player-waveform__bar player-waveform__bar--stable"
 										style={
 											{
 												'--bar-height': `${height}px`,
-												'--bar-phase': `-${260 + index * 42}ms`,
-												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+												'--bar-phase': `-${260 + index * barPhaseStep}ms`,
+												'--bar-duration': `${stableDurationBase + (index % barDurationModulo) * barDurationStep}ms`,
 											} as CSSProperties
 										}
 									/>
@@ -162,12 +217,12 @@ const Hero = () => {
 					<button
 						aria-label={`Turn processing ${isProcessingWave ? 'off' : 'on'}`}
 						aria-pressed={isProcessingWave}
-						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/40 px-4 py-2 backdrop-blur-md md:backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
+						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/65 px-4 py-2 md:bg-surface-container-highest/40 md:backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
 						onClick={handleProcessingToggle}
 						type="button"
 					>
 						<span className="status-badge__dot-wrap relative flex h-2 w-2">
-							{isProcessingBadge && (
+							{isProcessingBadge && !isLiteWaveMode && (
 								<span className="status-badge__dot-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-fixed opacity-75"></span>
 							)}
 							<span
