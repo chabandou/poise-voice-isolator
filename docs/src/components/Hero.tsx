@@ -1,52 +1,139 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import CtaButton from './CtaButton';
 
-const BAR_COUNT = 220;
+const DESKTOP_BAR_COUNT = 220;
+const MEDIUM_BAR_COUNT = 45;
+const SMALL_BAR_COUNT = 20;
+const SMALL_BREAKPOINT_QUERY = '(max-width: 500px)';
+const MEDIUM_BREAKPOINT_QUERY = '(min-width: 501px) and (max-width: 1023px)';
+type ViewportTier = 'small' | 'medium' | 'desktop';
 
-const chaoticBars = Array.from({ length: BAR_COUNT }, (_, index) => {
-	const x = index / (BAR_COUNT - 1);
-	const envelope = Math.sin(x * Math.PI) ** 1.15;
-	const turbulence = ((Math.sin(index * 0.83) + Math.cos(index * 0.37 + 0.8) + 2) / 4);
+const createChaoticBars = (barCount: number) =>
+	Array.from({ length: barCount }, (_, index) => {
+		const x = index / (barCount - 1);
+		const envelope = Math.sin(x * Math.PI) ** 1.15;
+		const turbulence = ((Math.sin(index * 0.83) + Math.cos(index * 0.37 + 0.8) + 2) / 4);
 
-	return Math.round(18 + envelope * 118 + turbulence * 62);
-});
+		return Math.round(18 + envelope * 118 + turbulence * 62);
+	});
 
-const stableBars = Array.from({ length: BAR_COUNT }, (_, index) => {
-	const x = index / (BAR_COUNT - 1);
-	const envelope = Math.sin(x * Math.PI) ** 1.45;
-	const detail = ((Math.sin(index * 0.48 + 0.6) + Math.cos(index * 0.22) + 2) / 4);
+const createStableBars = (barCount: number) =>
+	Array.from({ length: barCount }, (_, index) => {
+		const x = index / (barCount - 1);
+		const envelope = Math.sin(x * Math.PI) ** 1.45;
+		const detail = ((Math.sin(index * 0.48 + 0.6) + Math.cos(index * 0.22) + 2) / 4);
 
-	return Math.round(16 + envelope * 88 + detail * 28);
-});
+		return Math.round(16 + envelope * 88 + detail * 28);
+	});
+
+const chaoticDesktopBars = createChaoticBars(DESKTOP_BAR_COUNT);
+const chaoticMediumBars = createChaoticBars(MEDIUM_BAR_COUNT);
+const chaoticSmallBars = createChaoticBars(SMALL_BAR_COUNT);
+const stableDesktopBars = createStableBars(DESKTOP_BAR_COUNT);
+const stableMediumBars = createStableBars(MEDIUM_BAR_COUNT);
+const stableSmallBars = createStableBars(SMALL_BAR_COUNT);
+
+const getViewportTier = (): ViewportTier => {
+	if (typeof window === 'undefined') {
+		return 'desktop';
+	}
+
+	if (window.matchMedia(SMALL_BREAKPOINT_QUERY).matches) {
+		return 'small';
+	}
+
+	if (window.matchMedia(MEDIUM_BREAKPOINT_QUERY).matches) {
+		return 'medium';
+	}
+
+	return 'desktop';
+};
 
 const Hero = () => {
+	const [viewportTier, setViewportTier] = useState<ViewportTier>(getViewportTier);
 	const [isProcessingWave, setIsProcessingWave] = useState(false);
 	const [isProcessingBadge, setIsProcessingBadge] = useState(false);
 	const [isProcessingPulseActive, setIsProcessingPulseActive] = useState(false);
 	const [isWaveTransitioning, setIsWaveTransitioning] = useState(false);
 	const hasUserInteractedRef = useRef(false);
+	const isProcessingWaveRef = useRef(false);
 	const badgeTimerRef = useRef<number | null>(null);
 	const waveTransitionTimerRef = useRef<number | null>(null);
+	const pulseTimerRef = useRef<number | null>(null);
 
-	const clearPendingBadgeTimer = () => {
+	const clearPendingBadgeTimer = useCallback(() => {
 		if (badgeTimerRef.current !== null) {
 			window.clearTimeout(badgeTimerRef.current);
 			badgeTimerRef.current = null;
 		}
-	};
+	}, []);
 
-	const clearPendingWaveTransitionTimer = () => {
+	const clearPendingWaveTransitionTimer = useCallback(() => {
 		if (waveTransitionTimerRef.current !== null) {
 			window.clearTimeout(waveTransitionTimerRef.current);
 			waveTransitionTimerRef.current = null;
 		}
-	};
+	}, []);
 
-	const applyProcessingState = (nextProcessing: boolean) => {
+	const clearPendingPulseTimer = useCallback(() => {
+		if (pulseTimerRef.current !== null) {
+			window.clearTimeout(pulseTimerRef.current);
+			pulseTimerRef.current = null;
+		}
+	}, []);
+
+	const isLiteWaveMode = viewportTier !== 'desktop';
+	const visibleChaoticBars = viewportTier === 'small'
+		? chaoticSmallBars
+		: viewportTier === 'medium'
+			? chaoticMediumBars
+			: chaoticDesktopBars;
+	const visibleStableBars = viewportTier === 'small'
+		? stableSmallBars
+		: viewportTier === 'medium'
+			? stableMediumBars
+			: stableDesktopBars;
+	const visibleBarCount = viewportTier === 'small'
+		? SMALL_BAR_COUNT
+		: viewportTier === 'medium'
+			? MEDIUM_BAR_COUNT
+			: DESKTOP_BAR_COUNT;
+	const barPhaseStep = viewportTier === 'small' ? 58 : viewportTier === 'medium' ? 50 : 42;
+	const chaoticDurationBase = viewportTier === 'small' ? 1480 : viewportTier === 'medium' ? 1320 : 1120;
+	const stableDurationBase = viewportTier === 'small' ? 1680 : viewportTier === 'medium' ? 1480 : 1120;
+	const barDurationStep = viewportTier === 'small' ? 140 : viewportTier === 'medium' ? 120 : 110;
+	const barDurationModulo = viewportTier === 'desktop' ? 6 : 5;
+
+	useEffect(() => {
+		if (typeof window === 'undefined') {
+			return;
+		}
+
+		const smallQuery = window.matchMedia(SMALL_BREAKPOINT_QUERY);
+		const mediumQuery = window.matchMedia(MEDIUM_BREAKPOINT_QUERY);
+		const handleViewportChange = () => {
+			setViewportTier(getViewportTier());
+		};
+
+		smallQuery.addEventListener('change', handleViewportChange);
+		mediumQuery.addEventListener('change', handleViewportChange);
+
+		return () => {
+			smallQuery.removeEventListener('change', handleViewportChange);
+			mediumQuery.removeEventListener('change', handleViewportChange);
+		};
+	}, []);
+
+	const applyProcessingState = useCallback((nextProcessing: boolean) => {
 		clearPendingBadgeTimer();
 		clearPendingWaveTransitionTimer();
+		clearPendingPulseTimer();
 
-		if (nextProcessing !== isProcessingWave) {
+		if (isLiteWaveMode) {
+			setIsWaveTransitioning(false);
+		}
+
+		if (!isLiteWaveMode && nextProcessing !== isProcessingWaveRef.current) {
 			setIsWaveTransitioning(true);
 			waveTransitionTimerRef.current = window.setTimeout(() => {
 				setIsWaveTransitioning(false);
@@ -54,18 +141,25 @@ const Hero = () => {
 			}, 900);
 		}
 
+		isProcessingWaveRef.current = nextProcessing;
 		setIsProcessingWave(nextProcessing);
 
 		if (nextProcessing) {
 			badgeTimerRef.current = window.setTimeout(() => {
 				setIsProcessingBadge(true);
+				setIsProcessingPulseActive(true);
+				pulseTimerRef.current = window.setTimeout(() => {
+					setIsProcessingPulseActive(false);
+					pulseTimerRef.current = null;
+				}, 900);
 				badgeTimerRef.current = null;
 			}, 180);
 			return;
 		}
 
 		setIsProcessingBadge(false);
-	};
+		setIsProcessingPulseActive(false);
+	}, [clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer, isLiteWaveMode]);
 
 	useEffect(() => {
 		const waveTimer = window.setTimeout(() => {
@@ -77,32 +171,21 @@ const Hero = () => {
 		return () => {
 			window.clearTimeout(waveTimer);
 			clearPendingBadgeTimer();
+			clearPendingPulseTimer();
 			clearPendingWaveTransitionTimer();
 		};
-	}, []);
-
-	useEffect(() => {
-		if (!isProcessingBadge) {
-			return;
-		}
-
-		setIsProcessingPulseActive(true);
-		const pulseTimer = window.setTimeout(() => {
-			setIsProcessingPulseActive(false);
-		}, 900);
-
-		return () => window.clearTimeout(pulseTimer);
-	}, [isProcessingBadge]);
+	}, [applyProcessingState, clearPendingBadgeTimer, clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
 
 	useEffect(() => {
 		return () => {
+			clearPendingPulseTimer();
 			clearPendingWaveTransitionTimer();
 		};
-	}, []);
+	}, [clearPendingPulseTimer, clearPendingWaveTransitionTimer]);
 
 	const handleProcessingToggle = () => {
 		hasUserInteractedRef.current = true;
-		applyProcessingState(!isProcessingWave);
+		applyProcessingState(!isProcessingWaveRef.current);
 	};
 
 	return (
@@ -114,16 +197,19 @@ const Hero = () => {
 					<div className="player-waveform__scan"></div>
 					<div className="player-waveform__stage">
 						{(isWaveTransitioning || !isProcessingWave) && (
-							<div className="player-waveform__bars player-waveform__bars--chaotic">
-								{chaoticBars.map((height, index) => (
+							<div
+								className="player-waveform__bars player-waveform__bars--chaotic"
+								style={{ '--waveform-columns': `${visibleBarCount}` } as CSSProperties}
+							>
+								{visibleChaoticBars.map((height, index) => (
 									<span
 										key={`chaotic-${index}`}
 										className="player-waveform__bar player-waveform__bar--chaotic"
 										style={
 											{
 												'--bar-height': `${height}px`,
-												'--bar-phase': `-${260 + index * 42}ms`,
-												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+												'--bar-phase': `-${260 + index * barPhaseStep}ms`,
+												'--bar-duration': `${chaoticDurationBase + (index % barDurationModulo) * barDurationStep}ms`,
 											} as CSSProperties
 										}
 									/>
@@ -131,16 +217,19 @@ const Hero = () => {
 							</div>
 						)}
 						{(isWaveTransitioning || isProcessingWave) && (
-							<div className="player-waveform__bars player-waveform__bars--stable">
-								{stableBars.map((height, index) => (
+							<div
+								className="player-waveform__bars player-waveform__bars--stable"
+								style={{ '--waveform-columns': `${visibleBarCount}` } as CSSProperties}
+							>
+								{visibleStableBars.map((height, index) => (
 									<span
 										key={`stable-${index}`}
 										className="player-waveform__bar player-waveform__bar--stable"
 										style={
 											{
 												'--bar-height': `${height}px`,
-												'--bar-phase': `-${260 + index * 42}ms`,
-												'--bar-duration': `${1120 + (index % 6) * 110}ms`,
+												'--bar-phase': `-${260 + index * barPhaseStep}ms`,
+												'--bar-duration': `${stableDurationBase + (index % barDurationModulo) * barDurationStep}ms`,
 											} as CSSProperties
 										}
 									/>
@@ -156,12 +245,12 @@ const Hero = () => {
 					<button
 						aria-label={`Turn processing ${isProcessingWave ? 'off' : 'on'}`}
 						aria-pressed={isProcessingWave}
-						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/40 px-4 py-2 backdrop-blur-md md:backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
+						className={`status-badge flex cursor-pointer items-center gap-2 rounded-full border border-white/5 bg-surface-container-highest/65 px-4 py-2 md:bg-surface-container-highest/40 md:backdrop-blur-xl ${isProcessingPulseActive ? 'status-badge--pulse' : ''}`}
 						onClick={handleProcessingToggle}
 						type="button"
 					>
 						<span className="status-badge__dot-wrap relative flex h-2 w-2">
-							{isProcessingBadge && (
+							{isProcessingBadge && !isLiteWaveMode && (
 								<span className="status-badge__dot-ping absolute inline-flex h-full w-full animate-ping rounded-full bg-primary-fixed opacity-75"></span>
 							)}
 							<span
@@ -183,12 +272,12 @@ const Hero = () => {
 					Filter Music.<br />
 					<span className="text-primary-fixed">In Real Time.</span>
 				</h1>
-				<p className="font-body mb-14 max-w-[42rem] text-balance text-[1.04rem] leading-[1.62] text-on-surface-variant md:text-[1.22rem]">
+				<p className="font-body mb-14 max-w-2xl text-balance text-[1.04rem] leading-[1.62] text-on-surface-variant md:text-[1.22rem]">
 					System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
 				</p>
 
 				{/* CTA Buttons */}
-				<div className="flex w-full flex-col items-center justify-center gap-4 sm:max-w-[30rem] sm:flex-row sm:gap-6">
+				<div className="flex w-full flex-col items-center justify-center gap-4 sm:max-w-120 sm:flex-row sm:gap-6">
 					<CtaButton
 						className="hero-cta neon-glow w-full max-w-[20rem] px-10 py-5 text-[1.02rem] font-semibold sm:max-w-none sm:flex-1"
 						href="#downloads"
