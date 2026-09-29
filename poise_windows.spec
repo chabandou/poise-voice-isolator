@@ -8,7 +8,8 @@ block_cipher = None
 # Define paths
 project_dir = os.getcwd()
 icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.ico')
-model_path = os.path.join(project_dir, 'denoiser_model.onnx')
+model_path = os.path.join(project_dir, 'denoiser_model_df3.onnx')
+model_states_path = os.path.join(project_dir, 'denoiser_model_df3_states.npz')
 assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
 
 a = Analysis(
@@ -17,6 +18,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (model_path, '.'),
+        (model_states_path, '.'),
         (assets_path, 'stream_denoiser/gui/assets'),
     ],
     hiddenimports=[

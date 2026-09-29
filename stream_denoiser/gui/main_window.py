@@ -9,7 +9,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QGroupBox, QSlider, QCheckBox, 
+    QLabel, QGroupBox, QSlider, QCheckBox, QComboBox,
     QMessageBox, QSystemTrayIcon, QApplication,
     QScrollArea, QFrame, QSizePolicy, QGraphicsDropShadowEffect
 )
@@ -174,6 +174,36 @@ class MainWindow(QMainWindow):
         vad_layout = QVBoxLayout(self.vad_panel)
         vad_layout.setSpacing(10)
         vad_layout.setContentsMargins(12, 12, 12, 12)
+
+        # Model selector
+        model_container = QWidget()
+        model_layout = QHBoxLayout(model_container)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+
+        model_label = QLabel("Model:")
+        self.model_combo = QComboBox()
+        try:
+            from ..engines import available_models
+            _models = available_models()
+        except Exception:
+            from ..constants import DEFAULT_MODEL as _default
+            _models = [_default]
+        self.model_combo.addItems(_models)
+        try:
+            _saved = self.settings.model
+            if _saved in _models:
+                self.model_combo.setCurrentText(_saved)
+        except Exception:
+            pass
+        self.model_combo.setToolTip(
+            "deepfilternet3 (default): music/voice isolation. "
+            "rnnoise: light noise suppression (same as EasyEffects, "
+            "Linux needs the rnnoise package)."
+        )
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combo, stretch=1)
+        vad_layout.addWidget(model_container)
         
         # VAD Enable
         self.vad_check = QCheckBox("Enable VAD (Save CPU)")
@@ -288,6 +318,13 @@ class MainWindow(QMainWindow):
         # (Implies we are capturing from VB Cable)
         self.input_selector.setEnabled(not checked)
 
+    def _on_model_changed(self, model: str):
+        """Persist selected denoising engine."""
+        try:
+            self.settings.model = model
+        except Exception:
+            pass
+
     def toggle_processing(self, start: bool):
         """Handle toggle button click."""
         if start:
@@ -321,6 +358,7 @@ class MainWindow(QMainWindow):
     def _configure_worker(self):
         """Pass current UI settings to worker."""
         self.worker.configure(
+            model=self.model_combo.currentText() if hasattr(self, 'model_combo') else self.settings.model,
             onnx_path=self.settings.onnx_model_path,
             input_device=self.input_selector.selected_device_id,
             output_device=self.output_selector.selected_device_id,
@@ -337,6 +375,8 @@ class MainWindow(QMainWindow):
         
         # Disable controls while running
         self.device_group.setEnabled(False)
+        if hasattr(self, 'model_combo'):
+            self.model_combo.setEnabled(False)
         
         # Update tray
         if self.tray:
@@ -355,6 +395,8 @@ class MainWindow(QMainWindow):
         
         # Re-enable controls
         self.device_group.setEnabled(True)
+        if hasattr(self, 'model_combo'):
+            self.model_combo.setEnabled(True)
         self.stats_panel.reset()
         
         # Update tray

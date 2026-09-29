@@ -7,6 +7,10 @@ from textual.widgets import Static, Rule
 from textual.containers import Vertical, Horizontal
 from textual.reactive import reactive
 
+from ...constants import DEFAULT_MODEL, MODEL_INFO
+
+MODEL_LABEL = MODEL_INFO.get(DEFAULT_MODEL, {}).get("label", DEFAULT_MODEL)
+
 
 class StatsPanel(Static):
     """Widget to display real-time processing statistics."""
@@ -19,10 +23,11 @@ class StatsPanel(Static):
     
     # Reactive properties for auto-update
     status: reactive[str] = reactive("Stopped")
+    model: reactive[str] = reactive(MODEL_LABEL)
+    vad_state: reactive[str] = reactive("Active")
     rtf: reactive[float] = reactive(0.0)
     avg_ms: reactive[float] = reactive(0.0)
     frames: reactive[int] = reactive(0)
-    vad_bypass: reactive[float] = reactive(0.0)
     running_time: reactive[float] = reactive(0.0)
     
     def __init__(self, **kwargs):
@@ -32,6 +37,13 @@ class StatsPanel(Static):
     
     def compose(self):
         with Vertical(id="stats-container"):
+            # Model
+            with Horizontal(classes="stat-row"):
+                yield Static("Model", classes="stat-label")
+                yield Static(MODEL_LABEL, classes="stat-value", id="val-model")
+
+            yield Rule(line_style="dashed")
+
             # RTF
             with Horizontal(classes="stat-row"):
                 yield Static("Real Time Factor (RTF)", classes="stat-label")
@@ -56,7 +68,7 @@ class StatsPanel(Static):
             # VAD Bypass
             with Horizontal(classes="stat-row"):
                 yield Static("Voice Activity Detection Bypass", classes="stat-label")
-                yield Static("0%", classes="stat-value", id="val-vad")
+                yield Static("Active", classes="stat-value", id="val-vad")
             
             yield Rule(line_style="dashed")
                 
@@ -72,6 +84,9 @@ class StatsPanel(Static):
         self._update_display()
     
     def watch_rtf(self, value: float) -> None:
+        self._update_display()
+
+    def watch_model(self, value: str) -> None:
         self._update_display()
     
     def set_running(self, running: bool) -> None:
@@ -92,8 +107,15 @@ class StatsPanel(Static):
         self.rtf = stats.get('rtf', 0.0)
         self.avg_ms = stats.get('avg_time_ms', 0.0)
         self.frames = stats.get('frame_count', 0)
-        self.vad_bypass = stats.get('vad_bypass_ratio', 0.0) * 100  # Convert to percentage
+        if 'vad_bypass_active' in stats:
+            # Bypass engaged (silence) -> Active; speech passing through -> Inactive
+            self.vad_state = "Active" if stats['vad_bypass_active'] else "Inactive"
+        else:
+            self.vad_state = "Off"
         self.running_time = running_time
+        if 'model' in stats:
+            model_id = stats['model']
+            self.model = MODEL_INFO.get(model_id, {}).get("label", model_id)
 
     def _update_display(self) -> None:
         """Update the stats display."""
@@ -102,10 +124,11 @@ class StatsPanel(Static):
         time_str = f"{mins}:{secs:02d}" if mins > 0 else f"{secs}s"
         
         try:
+            self.query_one("#val-model", Static).update(f"{self.model}")
             self.query_one("#val-rtf", Static).update(f"{self.rtf:.3f}")
             self.query_one("#val-avg", Static).update(f"{self.avg_ms:.2f} ms")
             self.query_one("#val-frames", Static).update(f"{self.frames}")
-            self.query_one("#val-vad", Static).update(f"{self.vad_bypass:.0f}%")
+            self.query_one("#val-vad", Static).update(f"{self.vad_state}")
             self.query_one("#val-time", Static).update(f"{time_str}")
         except Exception:
             pass

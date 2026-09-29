@@ -19,7 +19,16 @@ else:
     from .app import PoiseApp
 
 def main():
-    app = PoiseApp()
+    import argparse
+    try:
+        from ..constants import ALL_MODELS, DEFAULT_MODEL
+        parser = argparse.ArgumentParser(description='Poise Voice Isolator TUI')
+        parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+                            choices=list(ALL_MODELS))
+        args, _ = parser.parse_known_args()
+        app = PoiseApp(model=args.model)
+    except Exception:
+        app = PoiseApp()
     app.run()
 
 if __name__ == "__main__":

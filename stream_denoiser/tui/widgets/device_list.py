@@ -67,6 +67,18 @@ class DeviceList(Static):
                 return
             devices = sd.query_devices()
             
+            # Friendly brand names for PulseAudio devices: PortAudio reports
+            # raw sink IDs (e.g. 'alsa_output.pci-0000_00_1f.3.analog-stereo')
+            # while PulseAudio knows descriptions ('Built-in Audio Analog
+            # Stereo'). Best effort — falls back to PortAudio names.
+            sink_names = {}
+            try:
+                from ...backends.platform.linux import list_pulseaudio_sinks
+                for sink in list_pulseaudio_sinks():
+                    sink_names[sink.name] = sink.description
+            except Exception:
+                sink_names = {}
+            
             self.devices = []
             list_view = self.query_one("#device-list", ListView)
             list_view.clear()
@@ -83,17 +95,21 @@ class DeviceList(Static):
                 name_lower = name.lower()
                 
                 # Skip monitors, null sinks, and virtual devices
-                if any(skip in name_lower for skip in ['monitor', 'null', 'denoiser', 'default']):
+                if any(skip in name_lower for skip in ['monitor', 'null', 'poise', 'default']):
                     continue
                 
                 host_api = sd.query_hostapis(device['hostapi'])['name']
                 
+                # Show the brand/description name where known (selection
+                # still uses the PortAudio device ID underneath).
+                display = sink_names.get(name, name)
+                
                 if 'pulse' in host_api.lower():
-                    pulse_devices.append((i, name, host_api))
+                    pulse_devices.append((i, display, host_api))
                 elif 'alsa' in host_api.lower():
                     # Skip raw ALSA hw devices if we have PulseAudio
                     if not name.startswith('HDA ') and not name.startswith('hw:'):
-                        alsa_devices.append((i, name, host_api))
+                        alsa_devices.append((i, display, host_api))
             
             # Prefer PulseAudio, fall back to ALSA
             devices_to_show = pulse_devices if pulse_devices else alsa_devices

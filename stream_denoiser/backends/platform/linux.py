@@ -468,8 +468,8 @@ class LinuxAudioRouter:
     4. Restores original routing on exit
     """
     
-    SINK_NAME = "Denoiser_Capture"
-    SINK_DESCRIPTION = "Denoiser Audio Capture"
+    SINK_NAME = "Poise_Capture"
+    SINK_DESCRIPTION = "Poise Audio Capture"
     
     def __init__(self, auto_switch: bool = True):
         """
@@ -679,15 +679,15 @@ If automatic routing doesn't work, you can set it up manually:
 
 Option 1: Use PipeWire/PulseAudio GUI tools
   - Install 'pavucontrol' or 'helvum'
-  - Redirect application audio to "Denoiser Audio Capture"
+  - Redirect application audio to "Poise Audio Capture"
   - The denoiser captures from this sink's monitor
 
 Option 2: Manual command line setup
   # Create null sink
-  pactl load-module module-null-sink sink_name=Denoiser_Capture sink_properties=device.description="Denoiser_Capture"
+  pactl load-module module-null-sink sink_name=Poise_Capture sink_properties=device.description="Poise_Capture"
   
   # Set as default (apps will use it automatically)
-  pactl set-default-sink Denoiser_Capture
+  pactl set-default-sink Poise_Capture
   
   # Run denoiser - it will capture from the null sink's monitor
   python -m stream_denoiser

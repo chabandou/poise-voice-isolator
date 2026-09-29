@@ -16,7 +16,7 @@ class VoiceActivityDetector:
     """
     
     def __init__(self, threshold_db: float = -40.0, hang_time_ms: float = 300.0, 
-                 sample_rate: int = 48000):
+                 sample_rate: int = 48000, frame_size: int = DEFAULT_FRAME_SIZE):
         """
         Initialize VAD.
         
@@ -24,12 +24,15 @@ class VoiceActivityDetector:
             threshold_db: Energy threshold in dB (lower = more sensitive)
             hang_time_ms: How long to keep processing after speech ends (smoothing)
             sample_rate: Audio sample rate
+            frame_size: Engine frame size in samples (hang time is frame-counted)
         """
         self.threshold_db = threshold_db
         self.threshold_linear = 10 ** (threshold_db / 20)
         # Calculate hang frames based on frame size
-        self.hang_frames = int(hang_time_ms * sample_rate / 1000 / DEFAULT_FRAME_SIZE)
+        self.hang_frames = int(hang_time_ms * sample_rate / 1000 / frame_size)
         self.frames_since_active = self.hang_frames + 1
+        # Outcome of the most recent frame: True while bypassing (silence)
+        self.bypass_active = False
         
         # Statistics
         self.total_frames = 0
@@ -62,15 +65,18 @@ class VoiceActivityDetector:
         if is_active:
             self.frames_since_active = 0
             self.active_frames += 1
+            self.bypass_active = False
             return True
         else:
             self.frames_since_active += 1
             # Use hang time to smooth transitions
             if self.frames_since_active < self.hang_frames:
                 self.active_frames += 1
+                self.bypass_active = False
                 return True
             else:
                 self.bypassed_frames += 1
+                self.bypass_active = True
                 return False
     
     def get_stats(self) -> dict:
@@ -88,6 +94,7 @@ class VoiceActivityDetector:
     def reset(self):
         """Reset VAD state."""
         self.frames_since_active = self.hang_frames + 1
+        self.bypass_active = False
         self.total_frames = 0
         self.active_frames = 0
         self.bypassed_frames = 0

@@ -47,6 +47,9 @@ all = [
     "textual>=0.50.0",
     "PyQt6>=6.5.0",
 ]
+dev = [
+    "pytest>=7.0.0",
+]
 
 [project.scripts]
 poise = "stream_denoiser.tui:main"

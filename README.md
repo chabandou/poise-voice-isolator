@@ -129,9 +129,26 @@ poise
 
 #### Linux Troubleshooting
 
+Run the built-in doctor first — it detects the issues below automatically:
+
+```bash
+python -m stream_denoiser --doctor
+```
+
+Normal startup also runs a fast pre-flight for these (bypass with
+`--no-health-check` or `POISE_SKIP_HEALTH=1`).
+
 ##### Error: `cannot enable executable stack as shared object requires: Invalid argument`
 
-**Fix:**
+**Fix (automatic):**
+
+```bash
+python -m stream_denoiser --fix-execstack
+```
+
+This clears the flag with `patchelf` (installed automatically with the
+hints below if missing). Manual fallback:
+
 Clear the executable stack flag on the ONNX Runtime library using `execstack` or `patchelf`.
 
 1. Install `patchelf`:
@@ -154,6 +171,9 @@ Clear the executable stack flag on the ONNX Runtime library using `execstack` or
 ---
 
 ##### Error: `malloc(): invalid size (unsorted)` or crash on startup
+
+Poise aborts before the native crash when it detects a PortAudio build
+without PulseAudio support, printing these rebuild steps. Manual fix:
 
 **Fix - Rebuild PortAudio:**
 
@@ -199,11 +219,20 @@ Clear the executable stack flag on the ONNX Runtime library using `execstack` or
 
 The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
 
-1. **Check current default sink:**
+1. **Reset routing in one command:**
+
+   ```bash
+   python -m stream_denoiser --reset-audio
+   ```
+
+   This restores your real default sink and unloads leftover Poise sinks.
+   Manual equivalents follow.
+
+2. **Check current default sink:**
    ```bash
    pactl get-default-sink
    ```
-2. **If stuck on `Denoiser_Capture` after a crash:**
+3. **If stuck on `Poise_Capture` after a crash:**
 
    ```bash
    pactl set-default-sink alsa_output.pci-0000_00_1f.3.analog-stereo
@@ -211,7 +240,7 @@ The denoiser automatically creates a null sink to capture system audio without e
 
    (Replace with your actual sink name from `pactl list sinks short`)
 
-3. **Remove leftover null sink:**
+4. **Remove leftover null sink:**
    ```bash
    pactl unload-module module-null-sink
    ```
@@ -264,7 +293,8 @@ python -m stream_denoiser.cli
 
 ### Available Options
 
-- `--onnx`: Path to ONNX model file (default: `denoiser_model.onnx`)
+- `--model`: Denoising engine — `deepfilternet3` (default, music/voice isolation) or `rnnoise` (light noise suppression, same model as EasyEffects)
+- `--onnx`: Path to ONNX model file (deepfilternet3 only, default: `denoiser_model_df3.onnx`)
 - `--input-device`: Input device ID for system audio capture
 - `--output-device`: Output device ID for audio playback
 - `--no-vad`: Disable Voice Activity Detection
@@ -273,6 +303,24 @@ python -m stream_denoiser.cli
 - `--list-devices`: List all available audio devices and exit
 - `--no-vb-cable`: Disable automatic VB Cable switching (use current default device)
 - `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
+
+### Models
+
+- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in repo). Removes music and keeps vocals/speech, ~2x less CPU (RTF ~0.11), 512-sample frames. No extra install.
+- **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Much lower CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
+
+```bash
+# DeepFilterNet3 mode (faster)
+python -m stream_denoiser --model deepfilternet3
+
+# Light noise-suppression mode
+python -m stream_denoiser --model rnnoise
+
+# TUI with RNNoise (press `m` to switch models)
+poise --model rnnoise
+```
+
+> **Linux note:** the RNNoise engine needs the `rnnoise` package, e.g. `sudo pacman -S rnnoise` on Arch or `sudo apt install librnnoise0` on Ubuntu/Debian.
 
 ##### GUI Mode (Windows only)
 
@@ -354,7 +402,7 @@ stream_denoiser/
          │
          ▼
 ┌─────────────────┐
-│ Frame Splitter  │◄─── 480 samples (10ms @ 48kHz)
+│ Frame Splitter  │◄─── Engine frame size (deepfilternet3: 512 @ 48kHz)
 └────────┬────────┘
          │
          ▼
@@ -393,15 +441,14 @@ The ONNX model should have the following interface:
 
 ### Inputs
 
-- `input_frame`: Float32 array of shape `[480]` (480 samples @ 48kHz)
-- `states`: Float32 array of shape `[45304]` (model internal state)
-- `atten_lim_db`: Float32 scalar (attenuation limit in dB)
+- `input_frame`: Float32 array of shape `[512]` (512 samples @ 48kHz)
+- 12 state tensors (norm states, STFT overlap buffers, GRU hidden states —
+  see `denoiser_model_df3_states.npz` for shapes)
 
 ### Outputs
 
-- `enhanced_audio`: Float32 array (variable length, normalized to 480 samples)
-- `new_states`: Float32 array of shape `[45304]` (updated state for next frame)
-- `lsnr`: Float32 scalar (optional, signal-to-noise ratio estimate)
+- `enhanced_audio_frame`: Float32 array of shape `[512]`
+- 12 updated state tensors (`new_<input_name>`, in input order)
 
 ### Statistics
 
@@ -416,7 +463,7 @@ During processing, the script/GUI displays real-time statistics:
 
 On Linux, the denoiser:
 
-1. Creates a null sink (`Denoiser_Capture`)
+1. Creates a null sink (`Poise_Capture`)
 2. Sets it as the default (apps send audio there)
 3. Captures from the null sink's monitor
 4. Outputs processed audio to your real speakers

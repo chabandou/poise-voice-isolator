@@ -18,6 +18,7 @@ from textual.binding import Binding
 
 from .widgets import DeviceList, StatsPanel, StatusLine
 from .widgets.status_line import TUIStatusHandler
+from ..constants import DEFAULT_MODEL
 from ..logging_config import set_tui_mode
 from ..backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
@@ -31,18 +32,21 @@ class PoiseApp(App):
     
     BINDINGS = [
         Binding("space", "toggle_processing", "Start/Stop", priority=True),
-        Binding("q", "quit", "Quit"),
+        Binding("m", "cycle_model", "Switch model"),
         Binding("r", "refresh_devices", "Refresh"),
-        Binding("escape", "quit", "Quit", show=False),
         Binding("minus", "decrease_threshold", "VAD -"),
         Binding("plus", "increase_threshold", "VAD +"),
+        Binding("escape", "quit", "Quit", show=False),
+        Binding("q", "quit", "Quit"),
     ]
     
-    def __init__(self, **kwargs):
+    def __init__(self, model: str = DEFAULT_MODEL, **kwargs):
         super().__init__(**kwargs)
+        self.model = model
         self.is_processing = False
         self.processor = None
-        self.onnx_session = None
+        self.engine = None
+        self.onnx_session = None  # Backward-compat alias (unused for rnnoise)
         self.linux_router = None
         self.processing_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
@@ -139,16 +143,50 @@ class PoiseApp(App):
         self.set_interval(0.5, self._update_stats)
     
     def _load_model(self) -> None:
-        """Load the ONNX model."""
+        """Validate the selected denoising engine is available."""
         status_line = self.query_one("#status-line", StatusLine)
         
         try:
-            from ..processor import load_onnx_model
-            status_line.notify("Loading ONNX model...")
-            self.onnx_session = load_onnx_model()
-            status_line.notify("Model loaded successfully. Ready.", "success")
+            from ..engines import create_engine
+            status_line.notify(f"Loading {self.model} engine...")
+            engine = create_engine(self.model)
+            engine.close()
+            self.engine = True  # marker: engine validated
+            status_line.notify(f"Model '{self.model}' ready.", "success")
         except Exception as e:
-            status_line.notify(f"Failed to load model: {e}", "error")
+            self.engine = None
+            status_line.notify(f"Failed to load model '{self.model}': {e}", "error")
+
+    def action_cycle_model(self) -> None:
+        """Open the model picker (blocked while running)."""
+        status_line = self.query_one("#status-line", StatusLine)
+        if self.is_processing:
+            status_line.notify("Stop processing to change model", "warning")
+            return
+        try:
+            from .widgets import ModelPickerScreen
+            self.push_screen(
+                ModelPickerScreen(current=self.model),
+                self._on_model_picked,
+            )
+        except Exception as e:
+            status_line.notify(f"Model switch failed: {e}", "error")
+
+    def _on_model_picked(self, model_id) -> None:
+        """Validate and apply the model chosen in the picker."""
+        if not model_id or model_id == self.model:
+            return
+        status_line = self.query_one("#status-line", StatusLine)
+        self.model = model_id
+        self._load_model()
+        try:
+            from .widgets import StatsPanel
+            from ..constants import MODEL_INFO
+            panel = self.query_one("#stats-panel", StatsPanel)
+            panel.model = MODEL_INFO.get(model_id, {}).get("label", model_id)
+        except Exception:
+            pass
+        status_line.notify(f"Model: {model_id}")
     
     def action_toggle_processing(self) -> None:
         """Toggle audio processing on/off."""
@@ -193,8 +231,8 @@ class PoiseApp(App):
         """Start audio processing."""
         status_line = self.query_one("#status-line", StatusLine)
         
-        if self.onnx_session is None:
-            status_line.notify("Cannot start: Model not loaded", "error")
+        if self.engine is None:
+            status_line.notify(f"Cannot start: model '{self.model}' not loaded", "error")
             return
         
         stats_panel = self.query_one("#stats-panel", StatsPanel)
@@ -256,7 +294,12 @@ class PoiseApp(App):
         self._cleanup_done = True
         
         self.is_processing = False
-        self.processor = None
+        if self.processor is not None:
+            try:
+                self.processor.close()
+            except Exception:
+                pass
+            self.processor = None
         status_line.set_running(False)
         self.screen.remove_class("-running")
         self.query_one("#stats-panel", StatsPanel).set_running(False)
@@ -277,13 +320,16 @@ class PoiseApp(App):
             import numpy as np
             
             from ..processor import DenoiserAudioProcessor
+            from ..engines import create_engine
             from ..constants import DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE
             
-            # Create processor
+            # Create a fresh engine per run (engines hold streaming state)
+            engine = create_engine(self.model)
+            # Create processor (frame size follows the engine)
             self.processor = DenoiserAudioProcessor(
-                self.onnx_session,
+                engine,
                 target_sr=DEFAULT_SAMPLE_RATE,
-                frame_size=DEFAULT_FRAME_SIZE,
+                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
                 enable_vad=True,
                 vad_threshold_db=-40.0
             )
@@ -308,10 +354,12 @@ class PoiseApp(App):
             with sd.InputStream(device=input_device, samplerate=input_sr, channels=1, 
                               dtype='float32', blocksize=block_size) as inp, \
                  sd.OutputStream(device=output_device, samplerate=DEFAULT_SAMPLE_RATE, 
-                               channels=2, dtype='float32', blocksize=block_size) as out:
+                                channels=2, dtype='float32', blocksize=block_size) as out:
                 
                 self.processor.setup_output_resampler(DEFAULT_SAMPLE_RATE)
-                
+
+                # Reused stereo buffer: avoids one alloc per 10ms frame
+                stereo_output = np.empty((block_size, 2), dtype=np.float32)
                 while not self.stop_event.is_set():
                     # Read audio
                     audio_chunk, overflowed = inp.read(block_size)
@@ -325,7 +373,12 @@ class PoiseApp(App):
                     
                     if audio_output is not None:
                         # Duplicate mono to stereo for proper playback on both channels
-                        stereo_output = np.column_stack((audio_output, audio_output)).astype(np.float32)
+                        n = min(len(audio_output), block_size)
+                        stereo_output[:n, 0] = audio_output[:n]
+                        stereo_output[:n, 1] = audio_output[:n]
+                        if n < block_size:
+                            stereo_output[n:, 0] = 0
+                            stereo_output[n:, 1] = 0
                         out.write(stereo_output)
         
         except Exception as e:

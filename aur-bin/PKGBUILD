@@ -12,6 +12,7 @@ depends=(
 )
 provides=('poise')
 conflicts=('poise')
+optdepends=('rnnoise: RNNoise engine (same model as EasyEffects)')
 
 source=("poise-${pkgver}::${url}/releases/download/v${pkgver}/poise")
 sha256sums=('SKIP')
