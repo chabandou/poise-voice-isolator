@@ -14,11 +14,36 @@ Screen.-running {
     /* No global change needed, we target specific widgets */
 }
 
-#app-title {
-    color: $accent;
-    height: 6;
-    content-align: center top;
+#top-bar {
+    height: auto;
     margin-bottom: 1;
+}
+
+#title-row {
+    width: auto;
+    height: 3;
+}
+
+#app-title {
+    width: auto;
+    color: $accent;
+    height: 3;
+    text-style: bold;
+    content-align: left top;
+}
+
+#app-subtitle {
+    width: auto;
+    color: white;
+    height: 3;
+    content-align: left middle;
+}
+
+#title-divider {
+    width: auto;
+    height: 3;
+    color: $accent;
+    margin: 0 1;
 }
 
 /* Screen.-running #app-title {
@@ -50,6 +75,7 @@ Footer {
     dock: bottom;
     background: transparent;
     color: #888888;
+    margin-top: 1;
 }
 
 FooterKey {
@@ -98,6 +124,7 @@ DeviceList {
     border-title-color: $accent;
     border-title-background: transparent;
     border-title-style: bold;
+    padding: 1;
 }
 
 VADPanel {
@@ -108,6 +135,7 @@ VADPanel {
     border-title-color: $accent;
     border-title-background: transparent;
     border-title-style: bold;
+    padding: 1;
 }
 
 StatsPanel {
@@ -118,6 +146,7 @@ StatsPanel {
     border-title-color: $accent;
     border-title-background: transparent;
     border-title-style: bold;
+    padding: 1;
 }
 
 StatsPanel Rule {
@@ -134,7 +163,7 @@ Screen.-running StatsPanel Rule {
 */
 
 #stats-container {
-    padding: 0 1;
+    padding: 0 0;
 }
 
 .stat-row {
@@ -156,26 +185,52 @@ Screen.-running StatsPanel Rule {
     color: $accent;
 }
 
+.model-row {
+    height: auto;
+}
+
+#model-block {
+    width: 1fr;
+    height: auto;
+}
+
+#model-block Static {
+    width: 1fr;
+    height: 1;
+    content-align: right middle;
+}
+
+#val-model {
+    color: $accent;
+}
+
+.model-sub {
+    color: $accent;
+}
+
 /* Screen.-running .stat-value {
     color: $running;
 } */
 
 StatusLine {
-    dock: bottom;
     width: 1fr;
-    height: 1;
-    padding: 0 0;
-    margin-bottom: 1;
-    background: #1a1a1a;
-    transition: opacity 0.8s;
+    height: auto;
+    background: transparent;
+    align: right top;
 }
 
-StatusLine.-pulse-dim {
-    opacity: 0.3;
+#status-state {
+    width: 1fr;
+    height: 1;
+    content-align: right top;
+    background: transparent;
 }
 
 #status-text {
-    background: #1a1a1a;
+    width: 1fr;
+    height: 1;
+    content-align: right top;
+    background: transparent;
 }
 
 Scrollbar {
@@ -186,8 +241,36 @@ Scrollbar {
 
 /* Layout styles are in #panels-container grid above */
 
+/* Narrow terminals (<100 cols): stack panels vertically with page scroll,
+   drop the subtitle/divider from the title row to fit. */
+Screen.-narrow #panels-container {
+    layout: vertical;
+    overflow-y: auto;
+    grid-size: 1 1;
+}
+
+Screen.-narrow #device-panel {
+    height: 11;
+}
+
+Screen.-narrow #stats-panel {
+    height: 21;
+}
+
+Screen.-narrow #vad-panel {
+    height: 11;
+}
+
+Screen.-narrow #app-subtitle {
+    display: none;
+}
+
+Screen.-narrow #title-divider {
+    display: none;
+}
+
 #vad-container {
-    padding: 0 1;
+    padding: 0 0;
 }
 
 .vad-row {

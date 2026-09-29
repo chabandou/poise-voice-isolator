@@ -24,6 +24,10 @@ class StatsPanel(Static):
     # Reactive properties for auto-update
     status: reactive[str] = reactive("Stopped")
     model: reactive[str] = reactive(MODEL_LABEL)
+    model_blurb: reactive[str] = reactive(
+        MODEL_INFO.get(DEFAULT_MODEL, {}).get("blurb", "")
+    )
+    model_frame: reactive[str] = reactive("")
     vad_state: reactive[str] = reactive("Active")
     rtf: reactive[float] = reactive(0.0)
     avg_ms: reactive[float] = reactive(0.0)
@@ -32,15 +36,18 @@ class StatsPanel(Static):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.border_title = "\[ STATS ]"
+        self.border_title = "\[ PERFORMANCE ]"
     
     
     def compose(self):
         with Vertical(id="stats-container"):
-            # Model
-            with Horizontal(classes="stat-row"):
+            # Model (+ stacked details underneath)
+            with Horizontal(classes="stat-row model-row"):
                 yield Static("Model", classes="stat-label")
-                yield Static(MODEL_LABEL, classes="stat-value", id="val-model")
+                with Vertical(id="model-block"):
+                    yield Static(MODEL_LABEL, id="val-model")
+                    yield Static("", classes="model-sub", id="val-model-blurb")
+                    yield Static("", classes="model-sub", id="val-model-frame")
 
             yield Rule(line_style="dashed")
 
@@ -88,6 +95,12 @@ class StatsPanel(Static):
 
     def watch_model(self, value: str) -> None:
         self._update_display()
+
+    def watch_model_blurb(self, value: str) -> None:
+        self._update_display()
+
+    def watch_model_frame(self, value: str) -> None:
+        self._update_display()
     
     def set_running(self, running: bool) -> None:
         """Set the running status."""
@@ -115,7 +128,13 @@ class StatsPanel(Static):
         self.running_time = running_time
         if 'model' in stats:
             model_id = stats['model']
-            self.model = MODEL_INFO.get(model_id, {}).get("label", model_id)
+            info = MODEL_INFO.get(model_id, {})
+            self.model = info.get("label", model_id)
+            self.model_blurb = info.get("blurb", "")
+            if 'frame_size' in stats and 'target_sr' in stats:
+                khz = stats['target_sr'] / 1000
+                khz_str = f"{khz:g}kHz"
+                self.model_frame = f"{stats['frame_size']}-frame @ {khz_str}"
 
     def _update_display(self) -> None:
         """Update the stats display."""
@@ -125,6 +144,8 @@ class StatsPanel(Static):
         
         try:
             self.query_one("#val-model", Static).update(f"{self.model}")
+            self.query_one("#val-model-blurb", Static).update(f"{self.model_blurb}")
+            self.query_one("#val-model-frame", Static).update(f"{self.model_frame}")
             self.query_one("#val-rtf", Static).update(f"{self.rtf:.3f}")
             self.query_one("#val-avg", Static).update(f"{self.avg_ms:.2f} ms")
             self.query_one("#val-frames", Static).update(f"{self.frames}")

@@ -159,12 +159,12 @@ SIMPLE_BLOCK_FONT = {
 
 
 def get_block_text(text: str) -> str:
-    """Convert text to block font multiline string."""
+    """Convert text to block font multiline string (3-line simple font)."""
     text = text.upper()
     lines = ["", "", ""]
     
     for char in text:
-        block_char = BLOCK_FONT.get(char, ["   ", "   ", "   "])
+        block_char = SIMPLE_BLOCK_FONT.get(char, ["   ", "   ", "   "])
         for i in range(3):
             lines[i] += block_char[i] + " "
             

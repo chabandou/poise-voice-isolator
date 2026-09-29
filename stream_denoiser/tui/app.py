@@ -12,7 +12,7 @@ from typing import Optional
 import threading
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Static
+from textual.widgets import Header, Footer, Rule, Static
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
@@ -112,21 +112,32 @@ class PoiseApp(App):
                 pass
             self.linux_router = None
     
+    def on_resize(self, event) -> None:
+        """Toggle narrow layout below 100 columns (stack panels, trim title)."""
+        try:
+            self.screen.set_class(event.size.width < 100, "-narrow")
+        except Exception:
+            pass
+
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
         # yield Header(show_clock=False)
         
-        from .font import get_outlined_block_text
+        from .font import get_block_text
         from .widgets import VADPanel
-        # Use block text with outline/shadow effect
-        yield Static(get_outlined_block_text("POISE"), id="app-title")
+        # Top bar: logo left, two-line status block right
+        with Horizontal(id="top-bar"):
+            with Horizontal(id="title-row"):
+                yield Static(get_block_text("POISE"), id="app-title")
+                yield Rule(orientation="vertical", id="title-divider")
+                yield Static("REAL-TIME\nVOICE\nISOLATOR", id="app-subtitle")
+            yield StatusLine(id="status-line")
         
         with Vertical(id="main-container"):
             with Horizontal(id="panels-container"):
                 yield DeviceList(id="device-panel")
                 yield StatsPanel(id="stats-panel")
                 yield VADPanel(id="vad-panel")
-            yield StatusLine(id="status-line")
         
         yield Footer()
     
@@ -148,14 +159,31 @@ class PoiseApp(App):
         
         try:
             from ..engines import create_engine
+            from ..constants import DEFAULT_FRAME_SIZE
             status_line.notify(f"Loading {self.model} engine...")
             engine = create_engine(self.model)
+            frame_size = engine.required_frame_size or DEFAULT_FRAME_SIZE
             engine.close()
             self.engine = True  # marker: engine validated
+            self._show_model_on_panel(self.model, frame_size)
             status_line.notify(f"Model '{self.model}' ready.", "success")
         except Exception as e:
             self.engine = None
             status_line.notify(f"Failed to load model '{self.model}': {e}", "error")
+
+    def _show_model_on_panel(self, model_id: str, frame_size=None) -> None:
+        """Pre-fill the performance panel's model block (works idle too)."""
+        try:
+            from .widgets import StatsPanel
+            from ..constants import MODEL_INFO, DEFAULT_SAMPLE_RATE
+            panel = self.query_one("#stats-panel", StatsPanel)
+            info = MODEL_INFO.get(model_id, {})
+            panel.model = info.get("label", model_id)
+            panel.model_blurb = info.get("blurb", "")
+            if frame_size is not None:
+                panel.model_frame = f"{frame_size}-frame @ {DEFAULT_SAMPLE_RATE // 1000}kHz"
+        except Exception:
+            pass
 
     def action_cycle_model(self) -> None:
         """Open the model picker (blocked while running)."""
@@ -179,13 +207,6 @@ class PoiseApp(App):
         status_line = self.query_one("#status-line", StatusLine)
         self.model = model_id
         self._load_model()
-        try:
-            from .widgets import StatsPanel
-            from ..constants import MODEL_INFO
-            panel = self.query_one("#stats-panel", StatsPanel)
-            panel.model = MODEL_INFO.get(model_id, {}).get("label", model_id)
-        except Exception:
-            pass
         status_line.notify(f"Model: {model_id}")
     
     def action_toggle_processing(self) -> None:
@@ -252,11 +273,11 @@ class PoiseApp(App):
             from ..backends.platform.linux import LinuxAudioRouter
             self.linux_router = LinuxAudioRouter(auto_switch=True)
             if self.linux_router.get_monitor_source_name():
-                status_line.notify("Null sink routing enabled. Processing...", "success")
+                status_line.notify("Null sink routing enabled.", "success")
             else:
-                status_line.notify("Using default audio capture. Processing...", "warning")
+                status_line.notify("Using default audio capture.", "warning")
         except ImportError:
-            status_line.notify("Linux router not available. Processing...", "warning")
+            status_line.notify("Linux router not available.", "warning")
         
         # Start processing in background thread
         self.stop_event.clear()

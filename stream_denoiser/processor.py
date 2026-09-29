@@ -288,6 +288,8 @@ class DenoiserAudioProcessor:
         """Get processing statistics."""
         stats = {
             'model': self.engine.name,
+            'frame_size': self.frame_size,
+            'target_sr': self.target_sr,
             'frame_count': self.frame_count,
             'avg_time_ms': 0.0,
             'rtf': 0.0
