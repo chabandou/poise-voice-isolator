@@ -8,19 +8,23 @@ import os
 import sys
 import time
 import argparse
+import traceback
 from typing import Optional
 
-import onnxruntime
+from .engines import create_engine, available_models, DEFAULT_DF3_ONNX
+from .engines.base import DenoiseEngine
 
 from .constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_FRAME_SIZE,
     DEFAULT_VAD_THRESHOLD_DB,
     DEVICE_SWITCH_INIT_DELAY_SEC,
-    MSG_ONNX_NOT_FOUND,
     MSG_POWERSHELL_UNAVAILABLE,
+    ALL_MODELS,
+    DEFAULT_MODEL,
+    MODEL_DEEPFILTERNET3,
 )
-from .processor import DenoiserAudioProcessor, load_onnx_model
+from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import (
@@ -35,20 +39,21 @@ from .logging_config import get_logger
 _logger = get_logger(__name__)
 
 
-def process_system_audio_realtime(onnx_session: onnxruntime.InferenceSession, 
-                                   input_device: Optional[int] = None, 
-                                   output_device: Optional[int] = None, 
-                                   enable_vad: bool = True, 
-                                   vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB, 
+def process_system_audio_realtime(engine: DenoiseEngine,
+                                   input_device: Optional[int] = None,
+                                   output_device: Optional[int] = None,
+                                   enable_vad: bool = True,
+                                   vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB,
                                    atten_lim_db: float = -60.0,
                                    use_vb_cable: bool = True,
                                    vb_cable_name: Optional[str] = None) -> None:
     """
     Main entry point for real-time audio processing.
     Selects appropriate backend and uses unified DenoiserAudioProcessor.
-    
+
     Args:
-        onnx_session: ONNX inference session
+        engine: Denoising engine (created via create_engine(); a raw ONNX
+            InferenceSession is also accepted for backward compatibility)
         input_device: Input device ID (optional)
         output_device: Output device ID (optional)
         enable_vad: Enable Voice Activity Detection
@@ -94,11 +99,12 @@ def process_system_audio_realtime(onnx_session: onnxruntime.InferenceSession,
                 _logger.info("Linux routing not available - using default capture")
     
     try:
-        # Create unified audio processor
+        # Create unified audio processor (frame size follows the engine:
+        # e.g. deepfilternet3=512, rnnoise=480)
         processor = DenoiserAudioProcessor(
-            onnx_session, 
-            target_sr=DEFAULT_SAMPLE_RATE, 
-            frame_size=DEFAULT_FRAME_SIZE,
+            engine,
+            target_sr=DEFAULT_SAMPLE_RATE,
+            frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
             enable_vad=enable_vad,
             vad_threshold_db=vad_threshold_db,
             atten_lim_db=atten_lim_db
@@ -141,6 +147,12 @@ Examples:
   
   # Disable VAD:
   python -m stream_denoiser --no-vad
+
+  # Use the RNNoise engine (same model as EasyEffects, light on CPU):
+  python -m stream_denoiser --model rnnoise
+
+  # Use DeepFilterNet3 (faster, ~2x less CPU):
+  python -m stream_denoiser --model deepfilternet3
   
   # Adjust VAD sensitivity (lower = more sensitive):
   python -m stream_denoiser --vad-threshold -50
@@ -165,8 +177,14 @@ Examples:
         """
     )
     
-    parser.add_argument('--onnx', type=str, default='denoiser_model.onnx',
-                        help='Path to ONNX model (default: denoiser_model.onnx)')
+    parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+                        choices=list(ALL_MODELS),
+                        help=f'Denoising engine to use (default: {DEFAULT_MODEL}). '
+                             f'rnnoise uses the system librnnoise (same as EasyEffects).')
+    parser.add_argument('--onnx', type=str, default=DEFAULT_DF3_ONNX,
+                        help='Path to ONNX model file (deepfilternet3 only, '
+                             'default: denoiser_model_df3.onnx; a '
+                             '<stem>_states.npz sibling is loaded too)')
     parser.add_argument('--input-device', type=int, default=None,
                         help='Input device ID for system audio capture')
     parser.add_argument('--output-device', type=int, default=None,
@@ -185,8 +203,51 @@ Examples:
                         help='Custom name for VB Cable device (auto-detected if not specified)')
     parser.add_argument('--tui', action='store_true',
                         help='Launch terminal UI (Linux only)')
+    parser.add_argument('--doctor', action='store_true',
+                        help='Run startup health checks (Linux issues) and exit')
+    parser.add_argument('--fix-execstack', action='store_true',
+                        help='Clear the ONNX Runtime executable-stack flag with patchelf and exit')
+    parser.add_argument('--reset-audio', action='store_true',
+                        help='Restore the real default sink and unload leftover Poise null sinks (Linux only)')
+    parser.add_argument('--no-health-check', action='store_true',
+                        help='Skip the startup health pre-flight (or set POISE_SKIP_HEALTH=1)')
     
     args = parser.parse_args()
+
+    # One-shot maintenance commands (no audio needed)
+    if args.doctor:
+        from .health import run_doctor, format_doctor
+        ok, results = run_doctor()
+        print(format_doctor(results))
+        sys.exit(0 if ok else 1)
+    if args.fix_execstack:
+        from .health import apply_execstack_fix
+        ok, message = apply_execstack_fix()
+        print(message)
+        sys.exit(0 if ok else 1)
+    if args.reset_audio:
+        from .health import reset_audio
+        ok, message = reset_audio()
+        print(message)
+        sys.exit(0 if ok else 1)
+
+    # Startup pre-flight: fail fast with fixes instead of cryptic loader
+    # errors or native crashes. Bypass with --no-health-check.
+    if not args.no_health_check and not os.environ.get("POISE_SKIP_HEALTH"):
+        from .health import check_execstack, check_portaudio
+        if args.model == MODEL_DEEPFILTERNET3:
+            exec_check = check_execstack()
+            if not exec_check.ok:
+                _logger.error(exec_check.detail)
+                if exec_check.fix:
+                    _logger.error(exec_check.fix)
+                sys.exit(1)
+        port_check = check_portaudio()
+        if not port_check.ok:
+            _logger.error(port_check.detail)
+            if port_check.fix:
+                _logger.error(port_check.fix)
+            sys.exit(1)
     
     # Launch TUI if requested (Linux only)
     if args.tui:
@@ -195,7 +256,7 @@ Examples:
             sys.exit(1)
         try:
             from .tui import PoiseApp
-            app = PoiseApp()
+            app = PoiseApp(model=args.model)
             app.run()
             sys.exit(0)
         except ImportError as e:
@@ -258,17 +319,20 @@ Examples:
         
         sys.exit(0)
     
-    if not os.path.exists(args.onnx):
-        _logger.error(MSG_ONNX_NOT_FOUND.format(args.onnx))
-        sys.exit(1)
-    
     try:
-        # Load ONNX model
-        onnx_session = load_onnx_model(args.onnx)
+        # Create denoising engine
+        try:
+            engine = create_engine(args.model, onnx_path=args.onnx,
+                                   atten_lim_db=args.atten_lim_db)
+        except (FileNotFoundError, RuntimeError, ValueError) as e:
+            _logger.error(f"Error: {e}")
+            if args.model != DEFAULT_MODEL:
+                _logger.info(f"Available models on this machine: {', '.join(available_models())}")
+            sys.exit(1)
         
         # Process system audio
         process_system_audio_realtime(
-            onnx_session,
+            engine,
             input_device=args.input_device,
             output_device=args.output_device,
             enable_vad=not args.no_vad,

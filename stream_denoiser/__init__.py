@@ -6,7 +6,7 @@ WASAPI loopback capture, Voice Activity Detection, and VB Cable switching.
 
 Features:
 - Direct time-domain processing (no STFT/ISTFT)
-- 480-sample frames at 48kHz (10ms)
+- Engine-native frames at 48kHz (deepfilternet3: 512 samples / 10.67ms)
 - Voice Activity Detection (VAD) for 2-3x performance boost
 - Lock-free ring buffers for reduced latency
 - Streaming state management for continuous processing
@@ -20,7 +20,7 @@ from .constants import (
 from .ring_buffer import RingBuffer
 from .vad import VoiceActivityDetector
 from .resampler import StreamingResampler
-from .processor import DenoiserAudioProcessor, load_onnx_model
+from .processor import DenoiserAudioProcessor
 from .vb_cable import VB_CableSwitcher
 from .device_utils import (
     list_audio_devices,
@@ -36,7 +36,7 @@ try:
 except ImportError:
     run_gui = None
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     # Constants
@@ -50,7 +50,6 @@ __all__ = [
     "DenoiserAudioProcessor",
     "VB_CableSwitcher",
     # Functions
-    "load_onnx_model",
     "list_audio_devices",
     "find_loopback_device",
     "get_output_device_id",

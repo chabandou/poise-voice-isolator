@@ -4,18 +4,18 @@ Poise Voice Isolator - Audio Processing Worker
 QThread-based worker for non-blocking audio processing with signal-based
 communication to the GUI.
 """
-import os
 import time
 import traceback
 from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from ..processor import DenoiserAudioProcessor, load_onnx_model
+from ..processor import DenoiserAudioProcessor
+from ..engines import create_engine, DEFAULT_DF3_ONNX
 from ..vb_cable import VB_CableSwitcher
 from ..constants import (
     DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE, DEVICE_SWITCH_INIT_DELAY_SEC,
-    MSG_ONNX_NOT_FOUND, MSG_NO_BACKEND
+    MSG_NO_BACKEND, DEFAULT_MODEL
 )
 from ..backend_detection import USE_PYAUDIOWPATCH, USE_SOUNDDEVICE, pyaudio, sd
 from ..logging_config import get_logger
@@ -45,7 +45,8 @@ class AudioWorker(QThread):
         super().__init__(parent)
         
         # Configuration
-        self.onnx_path: str = "denoiser_model.onnx"
+        self.model: str = DEFAULT_MODEL
+        self.onnx_path: str = DEFAULT_DF3_ONNX
         self.input_device: Optional[int] = None
         self.output_device: Optional[int] = None
         self.vad_enabled: bool = True
@@ -60,7 +61,8 @@ class AudioWorker(QThread):
         self._vb_cable_switcher: Optional[VB_CableSwitcher] = None
     
     def configure(self, 
-                  onnx_path: str = "denoiser_model.onnx",
+                  model: str = DEFAULT_MODEL,
+                  onnx_path: str = DEFAULT_DF3_ONNX,
                   input_device: Optional[int] = None,
                   output_device: Optional[int] = None,
                   vad_enabled: bool = True,
@@ -72,7 +74,8 @@ class AudioWorker(QThread):
         Configure worker settings before starting.
         
         Args:
-            onnx_path: Path to ONNX model file
+            model: Denoising engine name ("deepfilternet3" or "rnnoise")
+            onnx_path: Path to ONNX model file (deepfilternet3 only)
             input_device: Input device ID (optional)
             output_device: Output device ID (optional)
             vad_enabled: Enable Voice Activity Detection
@@ -82,6 +85,7 @@ class AudioWorker(QThread):
             vb_cable_name: Custom VB Cable device name
         """
         self.onnx_path = onnx_path
+        self.model = model
         self.input_device = input_device
         self.output_device = output_device
         self.vad_enabled = vad_enabled
@@ -96,15 +100,19 @@ class AudioWorker(QThread):
         self.status_changed.emit("Initializing...")
         
         try:
-            # Validate ONNX model exists
-            if not os.path.exists(self.onnx_path):
-                self.error_occurred.emit(MSG_ONNX_NOT_FOUND.format(self.onnx_path))
+            # Build denoising engine (validates model availability)
+            self.status_changed.emit("Loading model...")
+            try:
+                engine = create_engine(self.model, onnx_path=self.onnx_path,
+                                       atten_lim_db=self.atten_lim_db)
+            except FileNotFoundError as e:
+                self.error_occurred.emit(f"Model file not found: {e}")
                 self.stopped_processing.emit()
                 return
-            
-            # Load ONNX model
-            self.status_changed.emit("Loading model...")
-            onnx_session = load_onnx_model(self.onnx_path)
+            except (RuntimeError, ValueError) as e:
+                self.error_occurred.emit(f"Error: {e}")
+                self.stopped_processing.emit()
+                return
             
             # Setup VB Cable switcher if enabled
             actual_vb_cable_name = None
@@ -119,11 +127,11 @@ class AudioWorker(QThread):
                 else:
                     self._vb_cable_switcher = None
             
-            # Create processor
+            # Create processor (frame size follows the engine)
             self._processor = DenoiserAudioProcessor(
-                onnx_session,
+                engine,
                 target_sr=DEFAULT_SAMPLE_RATE,
-                frame_size=DEFAULT_FRAME_SIZE,
+                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
                 enable_vad=self.vad_enabled,
                 vad_threshold_db=self.vad_threshold,
                 atten_lim_db=self.atten_lim_db
@@ -354,7 +362,12 @@ class AudioWorker(QThread):
             except Exception:
                 pass
             self._vb_cable_switcher = None
-        
+
+        if self._processor is not None:
+            try:
+                self._processor.close()
+            except Exception:
+                pass
         self._processor = None
         self.status_changed.emit("Stopped")
     

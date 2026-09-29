@@ -35,12 +35,66 @@ if ! command -v ccache &> /dev/null; then
     conda install -q ccache -y
 fi
 
-# Check for model file
-if [ ! -f "denoiser_model.onnx" ]; then
-    echo "❌ Error: denoiser_model.onnx not found!"
+# Install patchelf if not present (needed to clear a bad executable-stack
+# flag on the ONNX Runtime library, which Nuitka would otherwise bundle)
+if ! command -v patchelf &> /dev/null; then
+    echo "Installing patchelf for execstack hygiene..."
+    conda install -q patchelf -y || echo "⚠ patchelf unavailable - continuing (fails later only if the ONNX .so needs patching)"
+fi
+
+# Check for model files
+if [ ! -f "denoiser_model_df3.onnx" ] || [ ! -f "denoiser_model_df3_states.npz" ]; then
+    echo "❌ Error: DeepFilterNet3 model files not found (denoiser_model_df3.onnx + denoiser_model_df3_states.npz)!"
     exit 1
 fi
-echo "✓ ONNX model found"
+echo "✓ ONNX models found"
+echo
+
+# Execstack hygiene: Nuitka bundles the build env's onnxruntime .so byte for
+# byte, so a GNU_STACK RWE flag would break the binary on hardened systems
+# for every user. Detect via the repo's own health module and patch the
+# installed wheel in place (same operation as --fix-execstack) before bundling.
+echo "Checking ONNX Runtime executable-stack flag..."
+EXECSTACK_STATUS=$(python -c "
+from stream_denoiser.health import find_onnxruntime_so, gnu_stack_flags
+so = find_onnxruntime_so()
+if so is None:
+    print('MISSING')
+else:
+    flags = gnu_stack_flags(so)
+    if flags is None:
+        print(f'CLEAN|{so}')
+    else:
+        r, w, x = flags
+        state = 'DIRTY' if (w and x) else 'CLEAN'
+        print(f'{state}|{so}')
+")
+EXECSTACK_STATE=$(echo "$EXECSTACK_STATUS" | cut -d'|' -f1)
+ORT_SO_PATH=$(echo "$EXECSTACK_STATUS" | cut -d'|' -f2-)
+if [ "$EXECSTACK_STATE" = "MISSING" ]; then
+    echo "❌ Error: onnxruntime not installed in the build environment!"
+    exit 1
+elif [ "$EXECSTACK_STATE" = "CLEAN" ]; then
+    echo "✓ ONNX Runtime library clean ($ORT_SO_PATH)"
+else
+    echo "⚠ Executable-stack flag set on $ORT_SO_PATH - patching..."
+    if ! command -v patchelf &> /dev/null; then
+        echo "❌ Error: patchelf is required to fix this (the binary would fail on hardened systems)."
+        echo "   Install it and rebuild: conda install patchelf"
+        exit 1
+    fi
+    patchelf --clear-execstack "$ORT_SO_PATH"
+    RECHECK=$(python -c "
+from stream_denoiser.health import gnu_stack_flags
+flags = gnu_stack_flags('$ORT_SO_PATH')
+print('DIRTY' if (flags is not None and flags[1] and flags[2]) else 'CLEAN')
+")
+    if [ "$RECHECK" != "CLEAN" ]; then
+        echo "❌ Error: flag still set after patchelf - aborting build."
+        exit 1
+    fi
+    echo "✓ Executable-stack flag cleared ($ORT_SO_PATH)"
+fi
 echo
 
 # Clean previous build
@@ -59,7 +113,8 @@ python -m nuitka \
     --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
     --remove-output \
     --assume-yes-for-downloads \
-    --include-data-files=denoiser_model.onnx=denoiser_model.onnx \
+    --include-data-files=denoiser_model_df3.onnx=denoiser_model_df3.onnx \
+    --include-data-files=denoiser_model_df3_states.npz=denoiser_model_df3_states.npz \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
     --output-filename=poise \
     --output-dir=dist \

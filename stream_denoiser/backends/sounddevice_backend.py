@@ -141,7 +141,8 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 raise
         
         with input_stream, output_stream:
-            
+            # Reused stereo buffer: avoids one alloc per 10ms frame
+            stereo_output = np.empty((block_size, 2), dtype=np.float32)
             while True:
                 # Read audio chunk
                 audio_chunk, overflowed = input_stream.read(block_size)
@@ -160,7 +161,12 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 
                 if audio_output is not None:
                     # Duplicate mono to stereo for proper playback on both channels
-                    stereo_output = np.column_stack((audio_output, audio_output)).astype(np.float32)
+                    n = min(len(audio_output), block_size)
+                    stereo_output[:n, 0] = audio_output[:n]
+                    stereo_output[:n, 1] = audio_output[:n]
+                    if n < block_size:
+                        stereo_output[n:, 0] = 0
+                        stereo_output[n:, 1] = 0
                     output_stream.write(stereo_output)
                 
                 # Print stats

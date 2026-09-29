@@ -18,7 +18,7 @@ def _get_resource_path(relative_path: str) -> str:
     When not bundled, looks relative to the script location.
     
     Args:
-        relative_path: Relative path to the resource (e.g., "denoiser_model.onnx")
+        relative_path: Relative path to the resource (e.g., "denoiser_model_df3.onnx")
         
     Returns:
         Absolute path to the resource
@@ -34,7 +34,7 @@ def _get_resource_path(relative_path: str) -> str:
             base_path = os.path.dirname(sys.executable)
     else:
         # Running as script: look relative to the script location
-        # Try to find the project root (where denoiser_model.onnx should be)
+        # Try to find the project root (where denoiser_model_df3.onnx should be)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         # Go up from stream_denoiser/gui/ to project root
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
@@ -74,6 +74,7 @@ class Settings:
     KEY_SHOW_TRAY_ICON = "behavior/show_tray_icon"
     
     KEY_ONNX_MODEL_PATH = "model/onnx_path"
+    KEY_MODEL = "model/name"
     
     # Default values
     DEFAULTS = {
@@ -87,7 +88,8 @@ class Settings:
         KEY_MINIMIZE_TO_TRAY: True,
         KEY_MINIMIZE_TO_TRAY_ASKED: False,
         KEY_SHOW_TRAY_ICON: True,
-        KEY_ONNX_MODEL_PATH: "denoiser_model.onnx",
+        KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
+        KEY_MODEL: "deepfilternet3",
     }
     
     def __init__(self):
@@ -218,10 +220,14 @@ class Settings:
     @property
     def onnx_model_path(self) -> str:
         """Get ONNX model path."""
-        path = self.get(self.KEY_ONNX_MODEL_PATH, "denoiser_model.onnx")
+        path = self.get(self.KEY_ONNX_MODEL_PATH, "denoiser_model_df3.onnx")
+
+        # Migrate settings saved before the v1 model was removed.
+        if path == "denoiser_model.onnx":
+            path = "denoiser_model_df3.onnx"
         
         # If it's the default relative path, resolve it relative to executable
-        if path == "denoiser_model.onnx" or not os.path.isabs(path):
+        if path == "denoiser_model_df3.onnx" or not os.path.isabs(path):
             resolved_path = _get_resource_path(path)
             # Only use resolved path if it exists, otherwise return original
             if os.path.exists(resolved_path):
@@ -232,6 +238,16 @@ class Settings:
     @onnx_model_path.setter
     def onnx_model_path(self, value: str) -> None:
         self.set(self.KEY_ONNX_MODEL_PATH, value)
+
+    @property
+    def model(self) -> str:
+        """Get selected denoising engine name."""
+        from ..constants import DEFAULT_MODEL
+        return str(self.get(self.KEY_MODEL, DEFAULT_MODEL))
+
+    @model.setter
+    def model(self, value: str) -> None:
+        self.set(self.KEY_MODEL, value)
     
     def save_window_geometry(self, geometry: bytes) -> None:
         """Save window geometry."""

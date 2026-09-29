@@ -9,8 +9,27 @@ DEFAULT_SAMPLE_RATE = 48000
 DEFAULT_FRAME_SIZE = 480
 FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 
-# ONNX model constants
-ONNX_STATE_SIZE = 45304
+# Model / engine selection
+MODEL_DEEPFILTERNET3 = "deepfilternet3"
+MODEL_RNNOISE = "rnnoise"
+ALL_MODELS = (MODEL_DEEPFILTERNET3, MODEL_RNNOISE)
+DEFAULT_MODEL = MODEL_DEEPFILTERNET3
+
+# Display info per model (single source for TUI picker, GUI tooltips, ...).
+# Future engines only need an entry here to show up everywhere.
+MODEL_INFO = {
+    MODEL_DEEPFILTERNET3: {
+        "label": "DeepFilterNet3",
+        "blurb": "Frequency domain (STFT) · ONNX Runtime",
+    },
+    MODEL_RNNOISE: {
+        "label": "RNNoise",
+        "blurb": "Frequency domain (Bark bands) · native librnnoise",
+    },
+}
+
+# RNNoise constants (RNNoise expects float samples in 16-bit range, not [-1, 1])
+RNNOISE_SCALE = 32768.0
 
 # VAD constants
 DEFAULT_VAD_THRESHOLD_DB = -40.0
@@ -45,7 +64,11 @@ OUTPUT_STREAM_RETRY_COUNT = 3
 OUTPUT_STREAM_RETRY_DELAY_SEC = 0.5
 
 # Shared Messages
-MSG_ONNX_NOT_FOUND = "ONNX model not found: {}"
+MSG_RNNOISE_NOT_FOUND = (
+    "RNNoise library (librnnoise) not found: {}\n"
+    "Install it with your package manager, e.g. 'sudo pacman -S rnnoise' on Arch."
+)
+MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux."
 MSG_NO_BACKEND = "No audio backend available"
 MSG_POWERSHELL_UNAVAILABLE = "PowerShell not available - VB Cable switching disabled"
 MSG_DEVICE_SWITCH_ERROR = "Error switching device: {}"
