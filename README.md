@@ -88,7 +88,7 @@ Download the prebuilt binary for the TUI directly from GitHub:
 
 ```bash
 # Download the latest release
-curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.0.0/poise
+curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.1.0/poise
 
 # Make it executable
 chmod +x poise
