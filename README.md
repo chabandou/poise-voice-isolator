@@ -1,6 +1,7 @@
 <div align="center">
-<img src="stream_denoiser/gui/assets/banner.png" alt="Poise Banner"/>
+<img src="stream_denoiser/gui/assets/banner.jpg" alt="Poise Banner"/>
 </div>
+
 
 <div align="center">
 
@@ -184,7 +185,7 @@ Clear the executable stack flag on the ONNX Runtime library using `execstack` or
    ```bash
    # Find the path (example path for conda environment 'poise')
    find ~/miniforge3/envs/poise/lib/ -name "onnxruntime_pybind11_state.so"
-
+   
    # Apply the fix
    patchelf --clear-execstack /path/to/onnxruntime_pybind11_state.so
    ```
