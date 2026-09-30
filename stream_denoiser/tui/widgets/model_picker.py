@@ -108,7 +108,9 @@ class ModelPickerScreen(ModalScreen[Optional[str]]):
                 for model_id in ALL_MODELS:
                     info = MODEL_INFO.get(model_id, {})
                     label = info.get("label", model_id)
-                    blurb = info.get("blurb", "")
+                    # Picker shows the tradeoff blurb (independent of the
+                    # performance panel's pipeline description).
+                    blurb = info.get("picker_blurb", info.get("blurb", ""))
                     if model_id == self._current:
                         marker, detail = "● ", f"{blurb} (current)"
                     elif model_id in usable:

@@ -20,10 +20,14 @@ DEFAULT_MODEL = MODEL_DEEPFILTERNET3
 MODEL_INFO = {
     MODEL_DEEPFILTERNET3: {
         "label": "DeepFilterNet3",
+        # Picker modal: quality/CPU tradeoff.
+        "picker_blurb": "Music/voice isolation · medium CPU load",
+        # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",
+        "picker_blurb": "Worse isolation · lower CPU load",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
     },
 }
