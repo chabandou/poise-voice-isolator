@@ -48,7 +48,7 @@ const downloadOptions: InstallGuide[] = [
 			{
 				label: "Direct Binary",
 				code: `# Download the latest release
-curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.0.0/poise
+curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/latest/download/poise
 
 # Make it executable
 chmod +x poise

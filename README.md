@@ -45,35 +45,18 @@ A high-performance real-time system audio denoiser and voice isolator that captu
   - [Why Poise?](#why-poise)
   - [Features](#features)
   - [Installation](#installation)
-    - [Windows](#windows)
-    - [Linux Binary](#linux-binary)
   - [Troubleshooting](#troubleshooting)
-    - [No audio devices found](#no-audio-devices-found)
-    - [High latency](#high-latency)
-    - [Audio dropouts](#audio-dropouts)
-    - [Linux Troubleshooting](#linux-troubleshooting)
-      - [Executable stack error](#error-cannot-enable-executable-stack-as-shared-object-requires-invalid-argument)
-      - [malloc crash on startup](#error-malloc-invalid-size-unsorted-or-crash-on-startup)
-      - [No audio output or echo](#no-audio-output-or-echoduplicate-audio)
 - [For Developers](#for-developers)
   - [Installation from Source](#installation-from-source)
   - [Usage](#usage)
-    - [CLI Mode](#cli-mode)
   - [Available Options](#available-options)
   - [Models](#models)
-    - [GUI Mode (Windows only)](#gui-mode-windows-only)
-    - [TUI Mode (Linux only)](#tui-mode-linux-only)
   - [Package Structure](#package-structure)
   - [Processing Flow](#processing-flow)
   - [Model Requirements](#model-requirements)
-    - [Inputs](#inputs)
-    - [Outputs](#outputs)
-    - [Statistics](#statistics)
-    - [Audio routing (how it works)](#audio-routing-how-it-works)
 - [Special Thanks](#special-thanks)
 - [License](#license)
 - [Contributing](#contributing)
-  - [Made with care by Chabandou](#made-with-care-by-chabandou)
 
 ---
 
@@ -126,7 +109,7 @@ Download the prebuilt binary for the TUI directly from GitHub:
 
 ```bash
 # Download the latest release
-curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/download/v1.1.0/poise
+curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/latest/download/poise
 
 # Make it executable
 chmod +x poise
