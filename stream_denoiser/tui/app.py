@@ -5,6 +5,7 @@ Main Textual application with audio processing integration.
 """
 import asyncio
 import atexit
+import logging
 import signal
 import time
 from pathlib import Path
@@ -169,7 +170,13 @@ class PoiseApp(App):
             status_line.notify(f"Model '{self.model}' ready.", "success")
         except Exception as e:
             self.engine = None
-            status_line.notify(f"Failed to load model '{self.model}': {e}", "error")
+            # Single-line widget: show only the first line, log the rest.
+            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
+            status_line.notify(
+                f"Failed to load model '{self.model}': {first_line}", "error"
+            )
+            _logger = logging.getLogger("stream_denoiser")
+            _logger.debug(f"Model load failed: {e!r}")
 
     def _show_model_on_panel(self, model_id: str, frame_size=None) -> None:
         """Pre-fill the performance panel's model block (works idle too)."""

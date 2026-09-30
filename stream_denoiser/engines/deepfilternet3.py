@@ -44,6 +44,20 @@ def _search_model_files(onnx_name: str, states_name: Optional[str] = None):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     search_paths.append(os.path.join(script_dir, onnx_name))
     search_paths.append(os.path.join(script_dir, '..', onnx_name))
+    # Grandparent: repo root in dev checkouts, payload root in Nuitka
+    # onefile bundles (data files land next to stream_denoiser/, not in it)
+    search_paths.append(os.path.join(script_dir, '..', '..', onnx_name))
+
+    # Nuitka onefile payload root: the running binary lives next to the
+    # bundled data files (verified: /proc/self/exe -> poise.bin in the
+    # payload dir). Harmless in dev runs (points at the python binary's
+    # dir, which never contains the model).
+    if sys.platform.startswith("linux"):
+        try:
+            exe_dir = os.path.dirname(os.path.realpath("/proc/self/exe"))
+            search_paths.append(os.path.join(exe_dir, onnx_name))
+        except OSError:
+            pass
 
     if hasattr(sys, 'argv') and sys.argv[0]:
         main_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
