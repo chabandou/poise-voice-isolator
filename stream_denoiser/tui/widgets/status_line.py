@@ -65,10 +65,14 @@ class StatusLine(Static):
 
 
 class TUIStatusHandler(logging.Handler):
-    """Custom logging handler that updates the TUI status line."""
-    
+    """Custom logging handler that updates the TUI status line.
+
+    Only warnings and above reach the status line (line 2). Routine
+    INFO/DEBUG chatter is file-only; direct notify() calls are unaffected.
+    """
+
     def __init__(self, status_line: Optional[StatusLine] = None):
-        super().__init__()
+        super().__init__(level=logging.WARNING)
         self.status_line = status_line
     
     def set_widget(self, status_line: StatusLine) -> None:
@@ -77,16 +81,16 @@ class TUIStatusHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if self.status_line is None:
             return
-        
+        if record.levelno < logging.WARNING:
+            # Routine chatter stays in the file log, off the status line.
+            return
+
         try:
             msg = self.format(record)
             level = record.levelname.lower()
             if level == "critical":
                 level = "error"
-            elif level == "debug":
-                # Don't show debug messages on status line unless necessary
-                return
-            
+
             self.status_line.notify(msg, level)
         except Exception:
             pass

@@ -95,3 +95,82 @@ def test_processor_diagnostics_exposes_resampler():
     assert diag["frame_count"] == 0
     assert diag["resampler_active"] is False
     assert "vad_total" in diag
+
+
+def _import_status_line_without_textual():
+    """Import the status_line module with minimal textual stubs."""
+    import types
+    if "stream_denoiser.tui.widgets.status_line" in sys.modules:
+        return sys.modules["stream_denoiser.tui.widgets.status_line"]
+    if "textual.widgets" not in sys.modules:
+        textual = types.ModuleType("textual")
+        widgets = types.ModuleType("textual.widgets")
+
+        class Static:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        widgets.Static = Static
+        reactive_mod = types.ModuleType("textual.reactive")
+
+        class _Reactive:
+            def __new__(cls, default=None):
+                return default
+
+            def __class_getitem__(cls, item):
+                return cls
+
+        reactive_mod.reactive = _Reactive
+        textual.widgets = widgets
+        sys.modules["textual"] = textual
+        sys.modules["textual.widgets"] = widgets
+        sys.modules["textual.reactive"] = reactive_mod
+    # Load status_line.py directly by path: the real
+    # stream_denoiser.tui/__init__ imports the Textual app (not installed
+    # here), which we don't need.
+    import importlib.util
+    from pathlib import Path
+    name = "stream_denoiser.tui.widgets.status_line"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "stream_denoiser" / "tui" / "widgets" / "status_line.py"
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_status_line_shows_only_warnings_and_above():
+    mod = _import_status_line_without_textual()
+
+    class _FakeStatusLine:
+        def __init__(self):
+            self.calls = []
+
+        def notify(self, message, level="info"):
+            self.calls.append((level, message))
+
+    widget = _FakeStatusLine()
+    handler = mod.TUIStatusHandler(widget)
+    logger = logging.getLogger("test-poise-status-line")
+    logger.handlers = []
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+
+    logger.debug("debug chatter")
+    logger.info("routine info")
+    logger.warning("something odd")
+    logger.error("boom")
+    logger.critical("critical boom")
+
+    levels = [level for level, _ in widget.calls]
+    assert "info" not in levels
+    assert "debug" not in levels
+    assert "warning" in levels
+    assert levels.count("error") == 2  # error + critical mapped to error
+    assert any("boom" in msg for _, msg in widget.calls)
