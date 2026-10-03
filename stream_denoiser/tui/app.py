@@ -20,7 +20,7 @@ from textual.binding import Binding
 from .widgets import DeviceList, StatsPanel, StatusLine
 from .widgets.status_line import TUIStatusHandler
 from ..constants import DEFAULT_MODEL
-from ..logging_config import set_tui_mode
+from ..logging_config import set_tui_mode, ensure_file_logging, get_log_file_path
 from ..backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 
@@ -54,22 +54,50 @@ class PoiseApp(App):
         self.start_time = 0.0
         self.log_handler = TUIStatusHandler()
         self._cleanup_done = False
+        self._last_perf_log = 0.0
         self._setup_logging()
         self._setup_cleanup_handlers()
     
     def _setup_logging(self) -> None:
-        """Set up logging to TUI."""
+        """Set up logging to TUI (file logging on Linux is preserved)."""
         import logging
-        
-        # Enable TUI mode to suppress console logging
+        import sys
+
+        # Enable file logging first (Linux only; no-op elsewhere) so the
+        # shared file handler exists before console output is suppressed.
+        if sys.platform.startswith("linux"):
+            import os as _os
+            if _os.environ.get("POISE_DISABLE_FILE_LOG") != "1":
+                ensure_file_logging(
+                    log_file=_os.environ.get("POISE_LOG_FILE") or None,
+                    level=_os.environ.get("POISE_LOG_LEVEL", "INFO"),
+                )
+
+        # Enable TUI mode to suppress console logging (keeps file handlers)
         set_tui_mode(True)
-        
+
         # Get the stream_denoiser logger
         logger = logging.getLogger('stream_denoiser')
-        # Remove existing handlers to avoid clutter
+        # Remove existing handlers to avoid clutter, but keep file handlers
+        file_handlers = [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
         logger.handlers = []
         logger.addHandler(self.log_handler)
-        logger.setLevel(logging.INFO)
+        for h in file_handlers:
+            logger.addHandler(h)
+        # Re-attach the shared file handler in case this logger predates it
+        try:
+            from ..logging_config import _file_handler as _shared_fh
+            if _shared_fh is not None and _shared_fh not in logger.handlers:
+                logger.addHandler(_shared_fh)
+        except Exception:
+            pass
+        # Respect --verbose (file handler at DEBUG): don't filter debug out.
+        try:
+            _levels = [h.level for h in logger.handlers
+                       if isinstance(h, logging.FileHandler)]
+            logger.setLevel(min(_levels) if _levels else logging.INFO)
+        except Exception:
+            logger.setLevel(logging.INFO)
     
     def _setup_cleanup_handlers(self) -> None:
         """Set up signal handlers and atexit hook for graceful cleanup."""
@@ -147,12 +175,49 @@ class PoiseApp(App):
         # Connect log handler to status line
         status_line = self.query_one("#status-line", StatusLine)
         self.log_handler.set_widget(status_line)
-        
+
+        # Log session header to file (Linux only) for remote diagnosis
+        self._log_session_header()
+
         # Load ONNX model
         self._load_model()
-        
+
         # Start stats update timer
         self.set_interval(0.5, self._update_stats)
+
+    @staticmethod
+    def _cpu_model() -> str:
+        """Best-effort CPU model string (Linux /proc/cpuinfo)."""
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+        return "unknown"
+
+    def _log_session_header(self) -> None:
+        """Write a one-time session header to the file log."""
+        import logging
+        import sys
+        if not sys.platform.startswith("linux"):
+            return
+        logger = logging.getLogger("stream_denoiser")
+        path = get_log_file_path()
+        try:
+            from .. import __version__ as _ver
+        except Exception:
+            _ver = "unknown"
+        try:
+            from ..engines import available_models as _avail
+            models = ",".join(_avail())
+        except Exception:
+            models = "unknown"
+        logger.info(
+            "session start: poise=%s model=%s available=[%s] cpu=%s platform=%s log=%s",
+            _ver, self.model, models, self._cpu_model(), sys.platform, path,
+        )
     
     def _load_model(self) -> None:
         """Validate the selected denoising engine is available."""
@@ -168,6 +233,9 @@ class PoiseApp(App):
             self.engine = True  # marker: engine validated
             self._show_model_on_panel(self.model, frame_size)
             status_line.notify(f"Model '{self.model}' ready.", "success")
+            logging.getLogger("stream_denoiser").info(
+                "engine ready: model=%s frame_size=%s", self.model, frame_size
+            )
         except Exception as e:
             self.engine = None
             # Single-line widget: show only the first line, log the rest.
@@ -176,6 +244,7 @@ class PoiseApp(App):
                 f"Failed to load model '{self.model}': {first_line}", "error"
             )
             _logger = logging.getLogger("stream_denoiser")
+            _logger.warning(f"Model load failed: {self.model}: {first_line}")
             _logger.debug(f"Model load failed: {e!r}")
 
     def _show_model_on_panel(self, model_id: str, frame_size=None) -> None:
@@ -289,6 +358,9 @@ class PoiseApp(App):
         # Start processing in background thread
         self.stop_event.clear()
         self.start_time = time.time()
+        self._last_perf_log = 0.0
+        self._input_overflows = 0
+        self._empty_reads = 0
         self.processing_thread = threading.Thread(
             target=self._processing_loop,
             args=(output_device,),
@@ -324,6 +396,24 @@ class PoiseApp(App):
         self.is_processing = False
         if self.processor is not None:
             try:
+                import logging as _logging
+                try:
+                    _stats = self.processor.get_stats()
+                    _logging.getLogger("stream_denoiser").info(
+                        "run stop: frames=%s avg_ms=%.2f rtf=%.3f "
+                        "vad_total=%s vad_bypassed=%s bypass_ratio=%.2f "
+                        "overflows=%s empty_reads=%s elapsed=%.1fs log=%s",
+                        _stats.get("frame_count"), _stats.get("avg_time_ms", 0.0),
+                        _stats.get("rtf", 0.0), _stats.get("vad_total"),
+                        _stats.get("vad_bypassed"),
+                        _stats.get("vad_bypass_ratio", 0.0),
+                        getattr(self, "_input_overflows", 0),
+                        getattr(self, "_empty_reads", 0),
+                        time.time() - self.start_time if self.start_time else 0.0,
+                        get_log_file_path(),
+                    )
+                except Exception:
+                    pass
                 self.processor.close()
             except Exception:
                 pass
@@ -377,6 +467,21 @@ class PoiseApp(App):
             self.processor.setup_resampler(input_sr)
             
             block_size = self.processor.frame_size
+
+            import logging as _logging
+            _run_logger = _logging.getLogger('stream_denoiser')
+            try:
+                _monitor = self.linux_router.get_monitor_source_name() if self.linux_router else None
+            except Exception:
+                _monitor = None
+            _run_logger.info(
+                "run start: model=%s frame_size=%s target_sr=%s input_device=%s "
+                "input_sr=%s output_device=%s monitor=%s resampler=%s log=%s",
+                self.model, block_size, DEFAULT_SAMPLE_RATE, input_device,
+                input_sr, output_device, _monitor,
+                "active" if self.processor.resampler is not None else "off",
+                get_log_file_path(),
+            )
             
             # Open streams
             with sd.InputStream(device=input_device, samplerate=input_sr, channels=1, 
@@ -391,8 +496,12 @@ class PoiseApp(App):
                 while not self.stop_event.is_set():
                     # Read audio
                     audio_chunk, overflowed = inp.read(block_size)
+
+                    if overflowed:
+                        self._input_overflows = getattr(self, "_input_overflows", 0) + 1
                     
                     if audio_chunk is None or len(audio_chunk) == 0:
+                        self._empty_reads = getattr(self, "_empty_reads", 0) + 1
                         continue
                     
                     # Process
@@ -412,7 +521,9 @@ class PoiseApp(App):
         except Exception as e:
             # Log error (will be picked up by main thread)
             import logging
+            import traceback
             logging.getLogger('stream_denoiser').error(f"Processing error: {e}")
+            logging.getLogger('stream_denoiser').debug(traceback.format_exc())
     
     def _update_stats(self) -> None:
         """Update stats display (called periodically)."""
@@ -424,6 +535,23 @@ class PoiseApp(App):
             stats = self.processor.get_stats()
             running_time = time.time() - self.start_time
             stats_panel.update_stats(stats, running_time)
+            # Throttled file snapshot (~every 5s): distinguishes VAD-bypass
+            # zeros (silence) from genuine slow-inference RTF on weak CPUs.
+            now = time.monotonic()
+            if now - getattr(self, "_last_perf_log", 0.0) >= 5.0:
+                self._last_perf_log = now
+                import logging as _logging
+                _logging.getLogger("stream_denoiser").info(
+                    "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
+                    "vad_active=%s vad_bypassed=%s bypass_ratio=%.2f "
+                    "overflows=%s empty_reads=%s elapsed=%.1fs",
+                    stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
+                    stats.get("rtf", 0.0), stats.get("vad_total"),
+                    stats.get("vad_active"), stats.get("vad_bypassed"),
+                    stats.get("vad_bypass_ratio", 0.0),
+                    getattr(self, "_input_overflows", 0),
+                    getattr(self, "_empty_reads", 0), running_time,
+                )
         except Exception:
             pass
     

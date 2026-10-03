@@ -316,8 +316,22 @@ class DenoiserAudioProcessor:
                 'vad_bypass_ratio': vad_stats['bypass_ratio'],
                 'vad_bypass_active': self.vad.bypass_active,
             })
-        
+
         return stats
+
+    def get_diagnostics(self) -> dict:
+        """
+        Extra counters for file-log diagnosis (does not affect UI numbers).
+
+        Distinguishes "RTF=0 because VAD bypassed everything (silence)"
+        from "RTF=0 because no frames reached the engine (resampler
+        starvation / empty reads)".
+        """
+        diag = self.get_stats()
+        diag['resampler_active'] = self.resampler is not None
+        diag['output_resampler_active'] = self.output_resampler is not None
+        diag['vad_threshold_db'] = self.vad.threshold_db if self.vad else None
+        return diag
     
     def reset(self):
         """Reset processor state."""

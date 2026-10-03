@@ -15,6 +15,7 @@ except (ImportError, OSError):
 
 from ..constants import STATS_PRINT_INTERVAL_SEC
 from ..processor import DenoiserAudioProcessor
+from ..logging_config import get_logger
 from ..device_utils import (
     find_loopback_device, 
     get_output_device_id, 
@@ -83,6 +84,8 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
     
     start_time = time.time()
     last_stats_time = start_time
+    last_log_time = start_time
+    _logger = get_logger(__name__)
     
     try:
         # Try to open streams
@@ -176,6 +179,19 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                     elapsed = current_time - start_time
                     print_stats(stats, elapsed)
                     last_stats_time = current_time
+                # Throttled file snapshot for weak-PC diagnosis (~every 5s)
+                if current_time - last_log_time >= 5.0:
+                    stats = processor.get_stats()
+                    _logger.info(
+                        "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
+                        "vad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs",
+                        stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
+                        stats.get("rtf", 0.0), stats.get("vad_total"),
+                        stats.get("vad_bypassed"),
+                        stats.get("vad_bypass_ratio", 0.0),
+                        current_time - start_time,
+                    )
+                    last_log_time = current_time
     
     except KeyboardInterrupt:
         print("\n\nStopping...")
