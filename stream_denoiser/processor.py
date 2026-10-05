@@ -17,6 +17,7 @@ from .constants import (
     SOFT_LIMITER_THRESHOLD,
     AUDIO_CLIP_MIN,
     AUDIO_CLIP_MAX,
+    OUTPUT_GAIN_DB,
 )
 from .engines import DenoiseEngine
 from .vad import VoiceActivityDetector
@@ -69,6 +70,10 @@ class DenoiserAudioProcessor:
         self.frame_size = frame_size
         self.enable_vad = enable_vad
         self.atten_lim_db = atten_lim_db
+        # Fixed makeup gain (linear) applied to every output frame before
+        # the soft limiter. Not user-configurable by design.
+        self.output_gain_db = OUTPUT_GAIN_DB
+        self.output_gain = float(10.0 ** (OUTPUT_GAIN_DB / 20.0))
         
         # Resampler (created on demand)
         self.resampler: Optional[StreamingResampler] = None
@@ -312,11 +317,12 @@ class DenoiserAudioProcessor:
         
         # VAD check - bypass processing if silence detected
         if self.vad and not self.vad.is_speech(audio_chunk):
-            # Pass through unprocessed audio during silence. No copy: input
-            # chunks are freshly read each frame and not reused upstream.
-            # Still runs through the output resampler so bypassed frames keep
-            # the same length/timing as processed frames.
-            return self._resample_output(audio_chunk)
+            # Bypassed frames get the same makeup gain + limiter chain as
+            # processed frames so loudness stays consistent and the boosted
+            # signal still can't clip. Still runs through the output
+            # resampler so bypassed frames keep the same length/timing as
+            # processed frames.
+            return self._resample_output(self._postprocess_audio(audio_chunk))
         
         # Run the denoising engine
         enhanced_audio_frame, processing_time = self._run_engine(audio_chunk)
@@ -341,12 +347,17 @@ class DenoiserAudioProcessor:
         return audio
     
     def _postprocess_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Post-process audio in place: soft-limit, clip, remove DC offset."""
+        """Post-process audio: makeup gain, soft-limit, clip, remove DC offset."""
         if len(audio) == 0:
             return audio
 
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
+
+        # Makeup gain first (new array, never mutates engine buffers);
+        # the soft limiter + clip below guarantee no clipping.
+        if self.output_gain != 1.0:
+            audio = audio * self.output_gain
 
         # Soft limiter into a reusable scratch buffer (no per-frame alloc).
         # Falls back to a one-off abs() if a resampled size differs.
@@ -358,11 +369,12 @@ class DenoiserAudioProcessor:
         if max_val > SOFT_LIMITER_THRESHOLD:
             audio *= (SOFT_LIMITER_THRESHOLD / max_val)
 
-        # Clip to valid range, in place
-        np.clip(audio, AUDIO_CLIP_MIN, AUDIO_CLIP_MAX, out=audio)
-
-        # Remove DC offset, in place
+        # Remove DC offset first, in place: recentering after the clip
+        # could push peaks back outside [-1, 1].
         audio -= float(np.mean(audio))
+
+        # Final clip to valid range, in place — output never exceeds [-1, 1].
+        np.clip(audio, AUDIO_CLIP_MIN, AUDIO_CLIP_MAX, out=audio)
 
         return audio
     

@@ -436,6 +436,16 @@ class PoiseApp(App):
         except Exception:
             pass
 
+    def _abort_startup(self) -> None:
+        """Reset running state after a background-thread startup failure.
+
+        Runs on the UI thread (scheduled via call_from_thread): tears down
+        the null-sink routing and running UI state without joining the
+        current processing thread (which has already returned).
+        """
+        if self.is_processing:
+            self._stop_processing()
+
     def _processing_loop(self, output_device: Optional[int]) -> None:
         """Audio processing loop (runs in background thread)."""
         try:
@@ -468,10 +478,37 @@ class PoiseApp(App):
                 vad_threshold_db=-40.0
             )
             
-            # Get input device (null sink monitor)
+            # Get input device (null sink monitor). Fail fast when the
+            # monitor is not visible to PortAudio: opening the default
+            # input instead would capture silence while the default sink
+            # points at the null sink (100% VAD bypass, frames=0).
+            import logging as _early_logging
+            _early_run_logger = _early_logging.getLogger('stream_denoiser')
             input_device = None
             if self.linux_router:
-                input_device = self.linux_router.get_monitor_device_id()
+                try:
+                    _monitor_name = self.linux_router.get_monitor_source_name()
+                except Exception:
+                    _monitor_name = None
+                if _monitor_name:
+                    input_device = self.linux_router.get_monitor_device_id()
+                    if input_device is None:
+                        _early_run_logger.error(
+                            "Null sink monitor '%s' not visible to PortAudio. "
+                            "Not starting: capturing the default input instead would "
+                            "record silence. Fixes: run with --list-devices and pass "
+                            "the input device explicitly, check pavucontrol/PipeWire "
+                            "Pulse backend, or restart without auto-routing.",
+                            _monitor_name,
+                        )
+                        self._notify_status_from_thread(
+                            "Capture device not found. See log for fixes.", "error"
+                        )
+                        try:
+                            self.call_from_thread(self._abort_startup)
+                        except Exception:
+                            pass
+                        return
             
             # Get device info
             if input_device is not None:

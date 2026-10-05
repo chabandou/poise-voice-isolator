@@ -84,14 +84,35 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             # Linux: Use null sink routing
             try:
                 from .backends.platform.linux import LinuxAudioRouter
+                explicit_input = input_device is not None
                 linux_router = LinuxAudioRouter(auto_switch=True)
                 if linux_router.get_monitor_source_name():
                     _logger.info("Linux audio routing enabled - using null sink for capture")
-                    # Override input device to use null sink monitor
+                    # Override input device to use null sink monitor.
+                    # Fail fast when the monitor is not visible to PortAudio:
+                    # falling back to the default input would capture silence
+                    # while the default sink points at the null sink.
                     null_sink_device_id = linux_router.get_monitor_device_id()
                     if null_sink_device_id is not None:
-                        input_device = null_sink_device_id
-                        _logger.info(f"Using null sink monitor as input device: {input_device}")
+                        if not explicit_input:
+                            input_device = null_sink_device_id
+                        _logger.info(f"Using null sink monitor as input device: {null_sink_device_id}")
+                    elif explicit_input:
+                        _logger.warning(
+                            "Null sink monitor not visible to PortAudio - "
+                            f"keeping explicit --input-device {input_device}"
+                        )
+                    else:
+                        monitor = linux_router.get_monitor_source_name()
+                        linux_router.restore_original_sink()
+                        linux_router = None
+                        raise RuntimeError(
+                            f"Null sink monitor '{monitor}' not visible to PortAudio. "
+                            "Not starting: capturing the default input instead would "
+                            "record silence. Fixes: run with --list-devices and pass "
+                            "--input-device explicitly, check pavucontrol/PipeWire "
+                            "Pulse backend, or use --no-vb-cable to keep default capture."
+                        )
                 else:
                     _logger.warning("Could not set up automatic routing - using default capture")
                     linux_router = None

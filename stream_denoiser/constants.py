@@ -44,6 +44,13 @@ SOFT_LIMITER_THRESHOLD = 0.98
 AUDIO_CLIP_MIN = -1.0
 AUDIO_CLIP_MAX = 1.0
 
+# Fixed makeup gain applied to all output (voiced + VAD-bypassed frames)
+# before the soft limiter. Denoisers strip noise energy, so processed
+# speech measures quieter than the raw mix at the same sink volume.
+# 6 dB ~= x2 amplitude; the limiter + clip stage after it guarantees
+# the boosted signal still can't exceed [-1, 1].
+OUTPUT_GAIN_DB = 6.0
+
 # ONNX threading constants
 ONNX_INTRA_OP_THREADS = 2
 ONNX_INTER_OP_THREADS = 1

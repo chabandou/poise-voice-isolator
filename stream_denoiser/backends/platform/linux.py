@@ -569,51 +569,184 @@ class LinuxAudioRouter:
         """Get the name of the null sink's monitor source for capture."""
         return self._monitor_source
     
-    def get_monitor_device_id(self) -> Optional[int]:
+    def _score_monitor_device(self, device: Dict[str, Any]) -> int:
+        """
+        Score a PortAudio device against the null sink's monitor.
+
+        PulseAudio and PortAudio use different namespaces, so the null
+        sink's monitor (e.g. ``Poise_Capture.monitor``) can surface under
+        several PortAudio names (e.g. ``Monitor of Poise Audio Capture``).
+        Match on the sink name, the full monitor source name, and the
+        human-readable sink description.
+
+        Returns:
+            Match score (>0 is a candidate, higher is better).
+        """
+        if device.get('max_input_channels', 0) <= 0:
+            return 0
+        name_lower = str(device.get('name', '')).lower()
+        if not name_lower:
+            return 0
+
+        score = 0
+        sink_lower = (self._sink_name or '').lower()
+        monitor_lower = (self._monitor_source or '').lower()
+        desc_lower = self.SINK_DESCRIPTION.lower()
+
+        if sink_lower and sink_lower in name_lower:
+            score += 100
+        if monitor_lower and monitor_lower in name_lower:
+            score += 100
+        if desc_lower and desc_lower in name_lower:
+            score += 80
+        if 'poise' in name_lower:
+            score += 50
+            if 'monitor' in name_lower or 'capture' in name_lower:
+                score += 40
+        # Legacy sink name (pre-Poise rebrand); keep as a low-priority
+        # fallback so old configs still resolve.
+        if 'denoiser' in name_lower:
+            score += 10
+        return score
+
+    @staticmethod
+    def _format_portaudio_devices(devices) -> str:
+        """One-line-per-device summary for failure diagnostics."""
+        lines = []
+        try:
+            import sounddevice as sd
+        except ImportError:
+            sd = None  # type: ignore
+        for i, device in enumerate(devices):
+            try:
+                host_api = sd.query_hostapis(device['hostapi'])['name'] if sd else '?'
+            except Exception:
+                host_api = '?'
+            lines.append(
+                f"ID {i}: {device.get('name', '?')} "
+                f"(in={device.get('max_input_channels', '?')} "
+                f"out={device.get('max_output_channels', '?')} "
+                f"sr={device.get('default_samplerate', '?')} api={host_api})"
+            )
+        return '\n'.join(lines) if lines else '<no PortAudio devices>'
+
+    def _pulse_monitor_exists(self) -> Optional[bool]:
+        """
+        Check whether the monitor source exists at the PulseAudio layer.
+
+        Distinguishes "Pulse has it but PortAudio doesn't publish it"
+        (host-API/backend issue) from "Pulse doesn't have it either"
+        (sink creation/registration issue). Returns None when pulsectl
+        is unavailable or the check itself fails.
+        """
+        if not USE_PULSECTL or not self._monitor_source:
+            return None
+        try:
+            import pulsectl
+            with pulsectl.Pulse('denoiser-router-check') as pulse:
+                names = [s.name for s in pulse.source_list()]
+            return self._monitor_source in names
+        except Exception:
+            return None
+
+    def get_monitor_device_id(
+        self,
+        timeout_sec: float = 5.0,
+        retry_interval_sec: float = 0.5,
+    ) -> Optional[int]:
         """
         Get the PortAudio device ID for the null sink's monitor.
-        
+
+        PulseAudio needs a moment to publish a freshly created null sink
+        and PortAudio needs a re-enumeration to see it — on slow machines
+        (spinning Bluetooth + PipeWire stacks) a single 0.5s attempt
+        misses it. Retry until ``timeout_sec`` before giving up.
+
+        Args:
+            timeout_sec: Total time to keep retrying (default: 5s).
+            retry_interval_sec: Delay between attempts (default: 0.5s).
+
         Returns:
             PortAudio device ID, or None if not found
         """
         if not self._monitor_source:
             return None
-        
+
         try:
             import sounddevice as sd
             import time
-            
-            # Give PulseAudio time to register the new sink with PortAudio
-            time.sleep(0.5)
-            
-            # Force PortAudio to refresh device list
+        except ImportError:
+            return None
+
+        deadline = time.monotonic() + max(0.0, timeout_sec)
+        refreshed = False
+        devices = []
+        while True:
+            # Force PortAudio to refresh device list (new null sink only
+            # appears after re-enumeration).
             try:
                 sd._terminate()
                 sd._initialize()
             except Exception:
                 pass  # Ignore errors, just try to refresh
-            
-            devices = sd.query_devices()
-            
-            # Look for our null sink monitor
+            refreshed = True
+
+            try:
+                devices = sd.query_devices()
+            except Exception as e:
+                _logger.warning(f"PortAudio device query failed: {e}")
+                devices = []
+
+            best_id: Optional[int] = None
+            best_score = 0
+            best_name = ''
             for i, device in enumerate(devices):
-                device_name = device.get('name', '')
-                if self._sink_name and self._sink_name.lower() in device_name.lower():
-                    if device.get('max_input_channels', 0) > 0:
-                        _logger.info(f"Found null sink monitor: {device_name} (ID: {i})")
-                        return i
-            
-            # Also try matching by 'denoiser' in name
-            for i, device in enumerate(devices):
-                device_name = device.get('name', '').lower()
-                if 'denoiser' in device_name and device.get('max_input_channels', 0) > 0:
-                    _logger.info(f"Found Denoiser monitor: {device.get('name')} (ID: {i})")
-                    return i
-            
-            _logger.warning(f"Could not find PortAudio device for monitor: {self._monitor_source}")
-            return None
-        except ImportError:
-            return None
+                score = self._score_monitor_device(device)
+                if score > best_score:
+                    best_score = score
+                    best_id = i
+                    best_name = str(device.get('name', ''))
+            if best_id is not None:
+                _logger.info(f"Found null sink monitor: {best_name} (ID: {best_id})")
+                return best_id
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(max(0.05, retry_interval_sec))
+
+        # Exhausted retries: log everything support needs. The device dump
+        # is what distinguishes a naming mismatch from a missing backend.
+        if not refreshed:
+            devices = []
+        _logger.warning(f"Could not find PortAudio device for monitor: {self._monitor_source}")
+        try:
+            _logger.warning(
+                "PortAudio devices:\n%s", self._format_portaudio_devices(devices)
+            )
+        except Exception:
+            pass
+        pulse_state = self._pulse_monitor_exists()
+        if pulse_state is True:
+            _logger.warning(
+                "PulseAudio HAS '%s' but PortAudio does not publish it: "
+                "check the PortAudio Pulse/PipeWire backend, then retry or "
+                "pass --input-device explicitly (see --list-devices).",
+                self._monitor_source,
+            )
+        elif pulse_state is False:
+            _logger.warning(
+                "PulseAudio does NOT list '%s': the null sink may not have "
+                "registered yet — retry, or create it manually "
+                "(see LinuxAudioRouter.get_routing_instructions).",
+                self._monitor_source,
+            )
+        else:
+            _logger.warning(
+                "Run with --list-devices to see PortAudio devices, or pass "
+                "--input-device explicitly. Use --no-vb-cable to keep the "
+                "current default capture instead."
+            )
+        return None
     
     def restore_original_sink(self) -> bool:
         """Restore the original default sink and clean up null sink."""
