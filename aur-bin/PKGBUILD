@@ -1,7 +1,7 @@
 # Maintainer: chabandou <chabandou@gmail.com>
 pkgname=poise-bin
 pkgver=1.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc="Real-time system audio denoiser and voice isolator with TUI (prebuilt binary)"
 arch=('x86_64')
 url="https://github.com/chabandou/Poise-Voice-Isolator"
@@ -15,7 +15,7 @@ conflicts=('poise')
 optdepends=('rnnoise: RNNoise engine (same model as EasyEffects)')
 
 source=("poise-${pkgver}::${url}/releases/download/v${pkgver}/poise")
-sha256sums=('SKIP')
+sha256sums=('bf1a54c80d022c44bbd1f29ca4162df51dae5662b430b1380a41601443ae15a8')
 
 # Don't strip the binary - Nuitka onefile binaries get corrupted by strip
 options=('!strip')
