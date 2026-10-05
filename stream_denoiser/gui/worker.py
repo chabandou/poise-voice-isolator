@@ -219,6 +219,9 @@ class AudioWorker(QThread):
             input_channels = device_info.get('maxInputChannels', 2) or 2
             
             self._processor.setup_resampler(input_sr)
+            # Drain the input ring in rate-scaled blocks so each chunk
+            # resamples to ~one engine frame (see backends/pyaudio_backend).
+            # (Per-iteration sizes come from processor.next_input_block_size().)
             
             # Find output device
             devices = sd.query_devices()
@@ -322,7 +325,8 @@ class AudioWorker(QThread):
             with output_stream:
                 while self._running:
                     # Process audio
-                    audio_chunk = input_buffer.read(block_size)
+                    audio_chunk = input_buffer.read(
+                        self._processor.next_input_block_size())
                     
                     if audio_chunk is not None:
                         audio_output = self._processor.process_chunk(audio_chunk)

@@ -73,8 +73,15 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
     
     input_sr = int(input_device_info['default_samplerate'])
     
-    # Setup processor resampler
+    # Setup processor resampler. The input read size is rate-scaled so each
+    # read resamples to ~one engine frame; a fixed frame_size read at a
+    # non-target input rate lets the resampler backlog grow without bound
+    # (A/V desync that becomes visible after a few minutes).
     processor.setup_resampler(input_sr)
+    block_size = processor.frame_size
+    in_block_size = processor.input_block_size
+    # out_block_size is set after the output stream's sample rate is known
+    # (see setup_output_resampler below).
     
     print(f"\nStarting real-time system audio processing...")
     print(f"Input device: {input_device_info['name']} (ID: {input_dev_id})")
@@ -95,7 +102,7 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 samplerate=input_sr,
                 channels=1,
                 dtype='float32',
-                blocksize=block_size
+                blocksize=in_block_size
             )
         except sd.PortAudioError as e:
             print(f"\nError opening input stream: {e}")
@@ -104,14 +111,15 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
             raise
         
         try:
+            processor.setup_output_resampler(processor.target_sr)
+            out_block_size = processor.output_resample_size
             output_stream = sd.OutputStream(
                 device=output_dev_id,
                 samplerate=processor.target_sr,
                 channels=2,
                 dtype='float32',
-                blocksize=block_size
+                blocksize=out_block_size
             )
-            processor.setup_output_resampler(processor.target_sr)
             
         except sd.PortAudioError as e:
             # Fallback to device default sample rate
@@ -119,15 +127,16 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 device_default_sr = int(output_device_info.get('default_samplerate', 44100))
                 print(f"Warning: Failed to open output at {processor.target_sr}Hz. Retrying with device default {device_default_sr}Hz...")
                 
+                processor.setup_output_resampler(device_default_sr)
+                out_block_size = processor.output_resample_size
                 output_stream = sd.OutputStream(
                     device=output_dev_id,
                     samplerate=device_default_sr,
                     channels=2,
                     dtype='float32',
-                    blocksize=block_size
+                    blocksize=out_block_size
                 )
                 
-                processor.setup_output_resampler(device_default_sr)
                 print(f"Output opened with {device_default_sr}Hz (Resampling enabled)")
                 
             except sd.PortAudioError:
@@ -144,11 +153,14 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 raise
         
         with input_stream, output_stream:
-            # Reused stereo buffer: avoids one alloc per 10ms frame
-            stereo_output = np.empty((block_size, 2), dtype=np.float32)
+            # Reused stereo buffer with one sample of headroom: output takes
+            # dither around out_block_size (e.g. 470/471 averaging 470.4).
+            stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
             while True:
-                # Read audio chunk
-                audio_chunk, overflowed = input_stream.read(block_size)
+                # Read audio chunk. The size is dithered around the
+                # rate-scaled block so it resamples to ~one frame on average.
+                audio_chunk, overflowed = input_stream.read(
+                    processor.next_input_block_size())
                 
                 if overflowed:
                     print("\nWarning: Input buffer overflow")
@@ -163,14 +175,13 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 audio_output = processor.process_chunk(audio_chunk)
                 
                 if audio_output is not None:
-                    # Duplicate mono to stereo for proper playback on both channels
-                    n = min(len(audio_output), block_size)
+                    # Duplicate mono to stereo for proper playback on both channels.
+                    # Write exactly what the pipeline produced: padding with
+                    # zeros would insert silence and shift A/V sync.
+                    n = min(len(audio_output), len(stereo_output))
                     stereo_output[:n, 0] = audio_output[:n]
                     stereo_output[:n, 1] = audio_output[:n]
-                    if n < block_size:
-                        stereo_output[n:, 0] = 0
-                        stereo_output[n:, 1] = 0
-                    output_stream.write(stereo_output)
+                    output_stream.write(stereo_output[:n])
                 
                 # Print stats
                 current_time = time.time()
@@ -182,14 +193,19 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 # Throttled file snapshot for weak-PC diagnosis (~every 5s)
                 if current_time - last_log_time >= 5.0:
                     stats = processor.get_stats()
+                    diag = processor.get_diagnostics()
                     _logger.info(
                         "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
-                        "vad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs",
+                        "vad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs "
+                        "in_block=%s backlog=%s dropped=%s",
                         stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
                         stats.get("rtf", 0.0), stats.get("vad_total"),
                         stats.get("vad_bypassed"),
                         stats.get("vad_bypass_ratio", 0.0),
                         current_time - start_time,
+                        diag.get("input_block_size"),
+                        diag.get("resampler_backlog"),
+                        diag.get("resampler_dropped"),
                     )
                     last_log_time = current_time
     

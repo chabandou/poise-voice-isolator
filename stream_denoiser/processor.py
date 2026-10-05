@@ -74,6 +74,26 @@ class DenoiserAudioProcessor:
         self.resampler: Optional[StreamingResampler] = None
         self.output_resampler: Optional[StreamingResampler] = None
         self.output_resample_size: int = frame_size
+        # Exact (fractional) output take size, e.g. 470.4 for a 512-sample
+        # frame at a 44100Hz output device. next_output_block_size()
+        # dithers around output_resample_size so takes average exact;
+        # a fixed take would let the output backlog grow ~0.4 samples/frame
+        # until the safety cap starts dropping (periodic output gaps).
+        self._output_block_exact: float = float(frame_size)
+        self._output_block_err: float = 0.0
+        # Number of input-device samples to read per loop iteration so that,
+        # after input resampling, each read yields ~one engine frame on
+        # average. Reading a fixed `frame_size` regardless of the input rate
+        # over/under-feeds the resampler and its backlog grows unbounded
+        # (minutes-long A/V desync). Equals frame_size when no resampling.
+        self.input_sr: int = target_sr
+        self.input_block_size: int = frame_size
+        # Exact (fractional) rate-scaled read size, e.g. 470.4 for a
+        # 512-sample frame at 44100Hz. next_input_block_size() dithers
+        # around input_block_size so the long-term average is exact.
+        self._input_block_exact: float = float(frame_size)
+        self._input_block_err: float = 0.0
+        self.output_sr: int = target_sr
         
         # VAD
         self.vad = VoiceActivityDetector(
@@ -101,10 +121,42 @@ class DenoiserAudioProcessor:
         Args:
             input_sr: Input sample rate
         """
+        self.input_sr = int(input_sr)
         if input_sr != self.target_sr:
             self.resampler = StreamingResampler(input_sr, self.target_sr, channels=1)
+            # Scale the read size so each input block resamples to ~one
+            # engine frame; otherwise the resampler backlog grows linearly.
+            self._input_block_exact = self.frame_size * input_sr / self.target_sr
+            self.input_block_size = max(
+                1, int(round(self._input_block_exact)))
+            self._input_block_err = 0.0
         else:
             self.resampler = None
+            self.input_block_size = self.frame_size
+            self._input_block_exact = float(self.frame_size)
+            self._input_block_err = 0.0
+
+    def next_input_block_size(self) -> int:
+        """
+        Per-iteration input read size (in input-device samples).
+
+        Dithers around `input_block_size` so the long-term average equals
+        the exact fractional rate-scaled size. A fixed rounded size would
+        systematically over/under-feed the resampler by the rounding error
+        (e.g. 470 vs 470.4 starves one frame every ~100 reads -> a periodic
+        ~10ms output gap), which again shows up as A/V sync wobble.
+        """
+        if self.resampler is None:
+            return self.frame_size
+        self._input_block_err += self._input_block_exact - self.input_block_size
+        n = self.input_block_size
+        if self._input_block_err >= 1.0:
+            n += 1
+            self._input_block_err -= 1.0
+        elif self._input_block_err <= -1.0:
+            n -= 1
+            self._input_block_err += 1.0
+        return max(1, n)
 
     def setup_output_resampler(self, output_sr: int) -> None:
         """
@@ -113,13 +165,38 @@ class DenoiserAudioProcessor:
         Args:
             output_sr: Output sample rate
         """
+        self.output_sr = int(output_sr)
         if output_sr != self.target_sr:
             self.output_resampler = StreamingResampler(self.target_sr, output_sr, channels=1)
-            self.output_resample_size = int(self.frame_size * output_sr / self.target_sr)
+            self._output_block_exact = self.frame_size * output_sr / self.target_sr
+            self.output_resample_size = max(
+                1, int(round(self._output_block_exact)))
+            self._output_block_err = 0.0
             _logger.info(f"Output resampling enabled: {self.target_sr}Hz -> {output_sr}Hz (frame size: {self.output_resample_size})")
         else:
             self.output_resampler = None
             self.output_resample_size = self.frame_size
+            self._output_block_exact = float(self.frame_size)
+            self._output_block_err = 0.0
+
+    def next_output_block_size(self) -> int:
+        """
+        Per-iteration output take size (in output-device samples).
+
+        Dithers around `output_resample_size` so the long-term average
+        equals the exact fractional size (mirror of next_input_block_size).
+        """
+        if self.output_resampler is None:
+            return self.frame_size
+        self._output_block_err += self._output_block_exact - self.output_resample_size
+        n = self.output_resample_size
+        if self._output_block_err >= 1.0:
+            n += 1
+            self._output_block_err -= 1.0
+        elif self._output_block_err <= -1.0:
+            n -= 1
+            self._output_block_err += 1.0
+        return max(1, n)
     
     def _resample_audio(self, audio_chunk: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -237,7 +314,9 @@ class DenoiserAudioProcessor:
         if self.vad and not self.vad.is_speech(audio_chunk):
             # Pass through unprocessed audio during silence. No copy: input
             # chunks are freshly read each frame and not reused upstream.
-            return audio_chunk
+            # Still runs through the output resampler so bypassed frames keep
+            # the same length/timing as processed frames.
+            return self._resample_output(audio_chunk)
         
         # Run the denoising engine
         enhanced_audio_frame, processing_time = self._run_engine(audio_chunk)
@@ -253,10 +332,13 @@ class DenoiserAudioProcessor:
         audio_output = self._postprocess_audio(audio_output)
         
         # Output resampling
+        return self._resample_output(audio_output)
+
+    def _resample_output(self, audio: np.ndarray) -> Optional[np.ndarray]:
+        """Resample engine-rate audio to the output device rate, if needed."""
         if self.output_resampler is not None:
-            audio_output = self.output_resampler.process(audio_output, self.output_resample_size)
-        
-        return audio_output
+            return self.output_resampler.process(audio, self.next_output_block_size())
+        return audio
     
     def _postprocess_audio(self, audio: np.ndarray) -> np.ndarray:
         """Post-process audio in place: soft-limit, clip, remove DC offset."""
@@ -330,6 +412,22 @@ class DenoiserAudioProcessor:
         diag = self.get_stats()
         diag['resampler_active'] = self.resampler is not None
         diag['output_resampler_active'] = self.output_resampler is not None
+        diag['input_sr'] = self.input_sr
+        diag['input_block_size'] = self.input_block_size
+        diag['output_sr'] = self.output_sr
+        diag['output_resample_size'] = self.output_resample_size
+        diag['resampler_backlog'] = (
+            self.resampler.buffered_samples() if self.resampler else 0
+        )
+        diag['resampler_dropped'] = (
+            self.resampler.dropped_samples if self.resampler else 0
+        )
+        diag['output_resampler_backlog'] = (
+            self.output_resampler.buffered_samples() if self.output_resampler else 0
+        )
+        diag['output_resampler_dropped'] = (
+            self.output_resampler.dropped_samples if self.output_resampler else 0
+        )
         diag['vad_threshold_db'] = self.vad.threshold_db if self.vad else None
         return diag
     
@@ -344,6 +442,8 @@ class DenoiserAudioProcessor:
             self.vad.reset()
         self.frame_count = 0
         self.total_processing_time = 0.0
+        self._input_block_err = 0.0
+        self._output_block_err = 0.0
     
     def close(self):
         """Release engine resources."""

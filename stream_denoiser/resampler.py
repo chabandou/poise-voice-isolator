@@ -21,7 +21,8 @@ class StreamingResampler:
     Falls back to scipy if samplerate is not available.
     """
     
-    def __init__(self, input_sr: int, output_sr: int, channels: int = 1):
+    def __init__(self, input_sr: int, output_sr: int, channels: int = 1,
+                 max_buffered_frames: int = 4):
         """
         Initialize streaming resampler.
         
@@ -29,6 +30,12 @@ class StreamingResampler:
             input_sr: Input sample rate
             output_sr: Output sample rate
             channels: Number of audio channels
+            max_buffered_frames: Safety cap for internally buffered output
+                frames (in units of `output_size` passed to process()).
+                If clock drift between capture and playback devices lets the
+                buffer grow past this, the oldest samples are dropped (with
+                `dropped_samples` counting them) so latency stays bounded
+                instead of growing into a visible A/V desync over minutes.
         """
         if input_sr <= 0 or output_sr <= 0:
             raise ValueError(f"Invalid sample rates: input_sr={input_sr}, output_sr={output_sr}")
@@ -37,6 +44,8 @@ class StreamingResampler:
         self.output_sr = output_sr
         self.channels = channels
         self.ratio = output_sr / input_sr
+        self.max_buffered_frames = max(1, max_buffered_frames)
+        self.dropped_samples = 0
         
         if USE_SAMPLERATE:
             # Use high-quality streaming resampler
@@ -65,6 +74,7 @@ class StreamingResampler:
             
             # Accumulate in buffer
             self.buffer.extend(resampled)
+            self._enforce_cap(output_size)
             
             # Return output_size samples if available
             if len(self.buffer) >= output_size:
@@ -73,8 +83,10 @@ class StreamingResampler:
                 return output
             return None
         else:
-            # Scipy fallback - accumulate and resample
+            # Scipy fallback - accumulate and resample (buffer holds
+            # input-rate samples, so the cap is expressed in input samples).
             self.buffer.extend(data)
+            self._enforce_cap(int(output_size * self.input_sr / self.output_sr))
             
             # Calculate how many output samples we can produce
             num_output_samples = int(len(self.buffer) * self.output_sr / self.input_sr)
@@ -95,8 +107,29 @@ class StreamingResampler:
                 return output
             return None
     
+    def _enforce_cap(self, output_size: int) -> None:
+        """Drop oldest buffered samples if the backlog exceeds the cap.
+
+        Keeps at most `max_buffered_frames * output_size` samples, where
+        `output_size` is expressed in the buffer's native domain
+        (output-rate samples for the samplerate path, input-rate samples
+        for the scipy fallback). A drifting capture/playback clock pair
+        therefore cannot accumulate unbounded latency (the A/V desync).
+        Dropped samples are counted in `dropped_samples` for diagnostics.
+        """
+        limit = self.max_buffered_frames * max(1, int(output_size))
+        if len(self.buffer) > limit:
+            dropped = len(self.buffer) - limit
+            self.buffer = self.buffer[dropped:]
+            self.dropped_samples += dropped
+
+    def buffered_samples(self) -> int:
+        """Number of samples currently held in the internal buffer."""
+        return len(self.buffer)
+
     def reset(self):
         """Reset the resampler state."""
         if USE_SAMPLERATE:
             self.resampler.reset()
         self.buffer = []
+        self.dropped_samples = 0

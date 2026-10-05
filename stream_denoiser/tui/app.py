@@ -465,8 +465,18 @@ class PoiseApp(App):
                 input_sr = DEFAULT_SAMPLE_RATE
             
             self.processor.setup_resampler(input_sr)
-            
+            # Output runs at the device rate; configure its resampler BEFORE
+            # opening the stream so out_block_size matches what the pipeline
+            # actually produces (mismatched block sizes reintroduce drift).
+            self.processor.setup_output_resampler(DEFAULT_SAMPLE_RATE)
+
             block_size = self.processor.frame_size
+            # Read input in rate-scaled blocks so each read resamples to
+            # ~one engine frame; a fixed frame_size read at a non-48kHz input
+            # rate lets the resampler backlog grow without bound (A/V desync
+            # that becomes visible after a few minutes).
+            in_block_size = self.processor.input_block_size
+            out_block_size = self.processor.output_resample_size
 
             import logging as _logging
             _run_logger = _logging.getLogger('stream_denoiser')
@@ -479,23 +489,25 @@ class PoiseApp(App):
                 "input_sr=%s output_device=%s monitor=%s resampler=%s log=%s",
                 self.model, block_size, DEFAULT_SAMPLE_RATE, input_device,
                 input_sr, output_device, _monitor,
-                "active" if self.processor.resampler is not None else "off",
+                f"active(in_block={in_block_size})"
+                if self.processor.resampler is not None else "off",
                 get_log_file_path(),
             )
             
             # Open streams
-            with sd.InputStream(device=input_device, samplerate=input_sr, channels=1, 
-                              dtype='float32', blocksize=block_size) as inp, \
-                 sd.OutputStream(device=output_device, samplerate=DEFAULT_SAMPLE_RATE, 
-                                channels=2, dtype='float32', blocksize=block_size) as out:
+            with sd.InputStream(device=input_device, samplerate=input_sr, channels=1,
+                              dtype='float32', blocksize=in_block_size) as inp, \
+                  sd.OutputStream(device=output_device, samplerate=DEFAULT_SAMPLE_RATE,
+                                 channels=2, dtype='float32', blocksize=out_block_size) as out:
                 
-                self.processor.setup_output_resampler(DEFAULT_SAMPLE_RATE)
-
-                # Reused stereo buffer: avoids one alloc per 10ms frame
-                stereo_output = np.empty((block_size, 2), dtype=np.float32)
+                # Reused stereo buffer with one sample of headroom: output
+                # takes dither around out_block_size (e.g. 470/471).
+                stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
                 while not self.stop_event.is_set():
-                    # Read audio
-                    audio_chunk, overflowed = inp.read(block_size)
+                    # Read audio (dithered around the rate-scaled block so
+                    # each read resamples to ~one frame on average).
+                    audio_chunk, overflowed = inp.read(
+                        self.processor.next_input_block_size())
 
                     if overflowed:
                         self._input_overflows = getattr(self, "_input_overflows", 0) + 1
@@ -509,14 +521,13 @@ class PoiseApp(App):
                     audio_output = self.processor.process_chunk(audio_chunk)
                     
                     if audio_output is not None:
-                        # Duplicate mono to stereo for proper playback on both channels
-                        n = min(len(audio_output), block_size)
+                        # Duplicate mono to stereo for proper playback on both channels.
+                        # Write exactly what the pipeline produced: padding with
+                        # zeros would insert silence and shift A/V sync.
+                        n = min(len(audio_output), len(stereo_output))
                         stereo_output[:n, 0] = audio_output[:n]
                         stereo_output[:n, 1] = audio_output[:n]
-                        if n < block_size:
-                            stereo_output[n:, 0] = 0
-                            stereo_output[n:, 1] = 0
-                        out.write(stereo_output)
+                        out.write(stereo_output[:n])
         
         except Exception as e:
             # Log error (will be picked up by main thread)
@@ -541,16 +552,21 @@ class PoiseApp(App):
             if now - getattr(self, "_last_perf_log", 0.0) >= 5.0:
                 self._last_perf_log = now
                 import logging as _logging
+                _diag = self.processor.get_diagnostics()
                 _logging.getLogger("stream_denoiser").info(
                     "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
                     "vad_active=%s vad_bypassed=%s bypass_ratio=%.2f "
-                    "overflows=%s empty_reads=%s elapsed=%.1fs",
+                    "overflows=%s empty_reads=%s elapsed=%.1fs "
+                    "in_block=%s backlog=%s dropped=%s",
                     stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
                     stats.get("rtf", 0.0), stats.get("vad_total"),
                     stats.get("vad_active"), stats.get("vad_bypassed"),
                     stats.get("vad_bypass_ratio", 0.0),
                     getattr(self, "_input_overflows", 0),
                     getattr(self, "_empty_reads", 0), running_time,
+                    _diag.get("input_block_size"),
+                    _diag.get("resampler_backlog"),
+                    _diag.get("resampler_dropped"),
                 )
         except Exception:
             pass

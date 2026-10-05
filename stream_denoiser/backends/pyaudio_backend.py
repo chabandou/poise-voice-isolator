@@ -227,6 +227,10 @@ def process_with_pyaudiowpatch(processor: DenoiserAudioProcessor,
         input_channels = device_info.get('maxInputChannels', 2) or 2
         
         processor.setup_resampler(input_sr)
+        # Drain the input ring in rate-scaled blocks so each chunk resamples
+        # to ~one engine frame; fixed frame_size reads at a non-target input
+        # rate over-feed the resampler and its backlog grows into A/V desync.
+        # (Per-iteration sizes come from processor.next_input_block_size().)
         
         # Find output device
         devices = sd.query_devices()
@@ -287,7 +291,8 @@ def process_with_pyaudiowpatch(processor: DenoiserAudioProcessor,
             consecutive_empty_reads = 0
             while True:
                 try:
-                    audio_chunk = input_buffer.read(block_size)
+                    audio_chunk = input_buffer.read(
+                        processor.next_input_block_size())
                     
                     if audio_chunk is None:
                         consecutive_empty_reads += 1
