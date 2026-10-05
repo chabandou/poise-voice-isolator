@@ -4,12 +4,28 @@ Logging Configuration Module
 Console output only in development; file logging (Linux only) is
 always available via ensure_file_logging() so weak machines can be
 diagnosed remotely. File handlers survive set_tui_mode(True).
+
+The log file location is resolved robustly so it works in the Nuitka
+onefile binary and across Linux distros:
+
+1. Explicit ``log_file`` (CLI ``--log-file`` / ``POISE_LOG_FILE``) wins.
+2. ``~/.local/share/poise/logs/poise.log`` (legacy default, kept stable
+   so support instructions stay valid).
+3. XDG locations (``XDG_STATE_HOME``, ``XDG_DATA_HOME``,
+   ``XDG_RUNTIME_DIR``) for distros/containers with non-standard homes.
+4. A per-user ``/tmp`` fallback (``/tmp/poise-<uid>/logs``) so a
+   read-only/locked-down home or a root-owned leftover can never leave
+   the user with no log file at all.
+
+``ensure_file_logging()`` never raises: it walks the candidates in
+order and returns the first writable location, or ``None``.
 """
 import logging
 import logging.handlers
+import os
 import sys
 from pathlib import Path
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 
 # Cache configured loggers to avoid duplicate handlers
 _loggers: dict[str, logging.Logger] = {}
@@ -30,9 +46,98 @@ def _is_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
+def _is_frozen() -> bool:
+    """True inside a frozen/bundled binary (PyInstaller, cx_Freeze, Nuitka).
+
+    Nuitka does not set ``sys.frozen``; compiled modules instead carry a
+    ``__compiled__`` global, so check for that too.
+    """
+    if getattr(sys, "frozen", False):
+        return True
+    if getattr(sys, "_MEIPASS", None) is not None:
+        return True
+    return "__compiled__" in globals()
+
+
+def _safe_home() -> Path:
+    """Best-effort user home directory; never raises.
+
+    ``Path.home()`` can raise ``RuntimeError`` (no ``HOME``, no passwd
+    entry -- e.g. minimal containers, systemd DynamicUser) or resolve to
+    ``/`` when ``HOME`` is empty (desktop-file/sudo quirks on some
+    distros). Fall back gracefully so log setup never crashes.
+    """
+    home = os.environ.get("HOME")
+    if home and home.strip() and home != "/":
+        return Path(home)
+    try:
+        resolved = Path.home()
+        if str(resolved) and str(resolved) != "/":
+            return resolved
+    except Exception:
+        pass
+    try:
+        import pwd
+
+        pw_home = pwd.getpwuid(os.geteuid()).pw_dir
+        if pw_home and pw_home.strip() and pw_home != "/":
+            return Path(pw_home)
+    except Exception:
+        pass
+    return Path("/tmp")
+
+
 def default_log_dir() -> Path:
     """Default log directory: ~/.local/share/poise/logs (fixed, easy to support)."""
-    return Path.home() / ".local" / "share" / "poise" / "logs"
+    try:
+        return _safe_home() / ".local" / "share" / "poise" / "logs"
+    except Exception:
+        return Path("/tmp") / "poise-logs"
+
+
+def _per_user_tmp_dir() -> Path:
+    """Per-user /tmp dir (avoids collisions/root-owned leftovers in /tmp)."""
+    try:
+        uid = os.geteuid()
+        suffix = f"poise-{uid}"
+    except Exception:
+        try:
+            import getpass
+
+            suffix = f"poise-{getpass.getuser()}"
+        except Exception:
+            suffix = "poise-logs"
+    return Path("/tmp") / suffix / "logs"
+
+
+def candidate_log_dirs() -> list[Path]:
+    """Ordered, de-duplicated candidate log directories (first writable wins)."""
+    candidates: list[Path] = []
+    try:
+        candidates.append(default_log_dir())
+    except Exception:
+        pass
+    for env_var, sub in (
+        ("XDG_STATE_HOME", "poise/logs"),
+        ("XDG_DATA_HOME", "poise/logs"),
+        ("XDG_RUNTIME_DIR", "poise/logs"),
+    ):
+        value = os.environ.get(env_var)
+        if value and value.strip():
+            try:
+                candidates.append(Path(value) / sub)
+            except Exception:
+                continue
+    candidates.append(_per_user_tmp_dir())
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for cand in candidates:
+        key = str(cand)
+        if key not in seen:
+            seen.add(key)
+            unique.append(cand)
+    return unique
 
 
 def get_log_file_path() -> Optional[str]:
@@ -40,10 +145,91 @@ def get_log_file_path() -> Optional[str]:
     return _log_file_path
 
 
+def get_file_handler() -> Optional[logging.Handler]:
+    """The shared file handler, if file logging is active."""
+    return _file_handler
+
+
 def _coerce_level(level: Union[int, str]) -> int:
     if isinstance(level, int):
         return level
     return getattr(logging, str(level).upper(), logging.INFO)
+
+
+def _dir_writable(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
+    return os.access(str(path), os.W_OK | os.X_OK)
+
+
+def _try_attach_log_file(
+    path: Path,
+    level: Union[int, str],
+    max_bytes: int,
+    backup_count: int,
+) -> Optional[str]:
+    """Create the handler for *path* and attach it. Returns path or None."""
+    global _file_handler, _log_file_path
+    try:
+        if not _dir_writable(path.parent):
+            return None
+        if path.exists() and not path.is_file():
+            return None
+        if path.exists() and not os.access(str(path), os.W_OK):
+            return None
+        handler = logging.handlers.RotatingFileHandler(
+            str(path), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        )
+        handler.setLevel(_coerce_level(level))
+        formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        )
+        handler.setFormatter(formatter)
+
+        _file_handler = handler
+        _log_file_path = str(path)
+
+        for logger in _loggers.values():
+            if handler not in logger.handlers:
+                logger.addHandler(handler)
+            if logger.level > handler.level:
+                logger.setLevel(handler.level)
+        try:
+            handler.flush()
+        except Exception:
+            pass
+        return _log_file_path
+    except Exception:
+        try:
+            handler.close()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+        return None
+
+
+def _iter_candidate_files(
+    log_file: Optional[Union[str, Path]],
+    log_dir: Optional[Union[str, Path]],
+) -> Iterator[Path]:
+    """Yield candidate log files in priority order."""
+    if log_file is not None:
+        try:
+            yield Path(log_file)
+        except Exception:
+            pass
+    if log_dir is not None:
+        try:
+            yield (Path(log_dir) / "poise.log")
+        except Exception:
+            pass
+    # Default/XDG//tmp candidates are Linux-only (explicit paths are
+    # honoured anywhere, e.g. for tests).
+    if not _is_linux():
+        return
+    for directory in candidate_log_dirs():
+        yield directory / "poise.log"
 
 
 def ensure_file_logging(
@@ -57,7 +243,8 @@ def ensure_file_logging(
     Enable file logging (Linux only) and attach it to all known loggers.
 
     Safe to call multiple times: the first call wins (same file reused).
-    Never raises: on any failure (read-only home, /tmp fallback) returns None.
+    Never raises: walks explicit path -> default dir -> XDG dirs ->
+    per-user /tmp and returns the first writable location, or None.
 
     Args:
         log_file: Explicit file path (honoured even on non-Linux, for tests).
@@ -80,43 +267,83 @@ def ensure_file_logging(
                     logger.setLevel(wanted)
         return _log_file_path
 
-    explicit = log_file is not None
+    explicit = log_file is not None or log_dir is not None
     if not explicit and not _is_linux():
         return None
 
+    for path in _iter_candidate_files(log_file, log_dir):
+        result = _try_attach_log_file(path, level, max_bytes, backup_count)
+        if result is not None:
+            return result
+
+    _file_handler = None
+    _log_file_path = None
+    return None
+
+
+def setup_file_logging_from_env(
+    level: Union[int, str] = logging.INFO,
+) -> Optional[str]:
+    """Enable file logging from ``POISE_*`` env vars (binary/TUI entry points).
+
+    Honours ``POISE_DISABLE_FILE_LOG=1``, ``POISE_LOG_FILE``,
+    ``POISE_LOG_DIR`` and ``POISE_LOG_LEVEL``. Never raises.
+    """
     try:
-        path = Path(log_file) if explicit else (Path(log_dir) if log_dir else default_log_dir()) / "poise.log"
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # Last resort for locked-down homes (still Linux-only unless explicit).
-            if not explicit and not _is_linux():
-                return None
-            path = Path("/tmp") / "poise-logs" / "poise.log"
-            path.parent.mkdir(parents=True, exist_ok=True)
-
-        handler = logging.handlers.RotatingFileHandler(
-            str(path), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        if os.environ.get("POISE_DISABLE_FILE_LOG") == "1":
+            return None
+        log_file = os.environ.get("POISE_LOG_FILE") or None
+        log_dir = os.environ.get("POISE_LOG_DIR") or None
+        log_level = os.environ.get("POISE_LOG_LEVEL", level)
+        return ensure_file_logging(
+            log_file=log_file, log_dir=log_dir, level=log_level
         )
-        handler.setLevel(_coerce_level(level))
-        formatter = logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        )
-        handler.setFormatter(formatter)
-
-        _file_handler = handler
-        _log_file_path = str(path)
-
-        for logger in _loggers.values():
-            if handler not in logger.handlers:
-                logger.addHandler(handler)
-            if logger.level > handler.level:
-                logger.setLevel(handler.level)
-        return _log_file_path
     except Exception:
-        _file_handler = None
-        _log_file_path = None
         return None
+
+
+def add_log_args(parser):
+    """Attach ``--log-file/--log-level/--verbose/--no-file-log`` to a parser.
+
+    Shared by the CLI and the TUI/binary entry points so flags behave the
+    same everywhere.
+    """
+    parser.add_argument('--log-file', type=str, default=None,
+                        help='Write a diagnostic log file (Linux default: ~/.local/share/poise/logs/poise.log)')
+    parser.add_argument('--log-level', type=str, default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        help='File log verbosity (default: INFO; DEBUG for per-frame detail)')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Shortcut for --log-level DEBUG')
+    parser.add_argument('--no-file-log', action='store_true',
+                        help='Disable file logging')
+    return parser
+
+
+def ensure_from_log_args(args, default_level: Union[int, str] = 'INFO') -> Optional[str]:
+    """Enable file logging from parsed args (flags win, ``POISE_*`` env fills gaps)."""
+    try:
+        if getattr(args, 'no_file_log', False):
+            return None
+        if os.environ.get("POISE_DISABLE_FILE_LOG") == "1":
+            return None
+        log_file = getattr(args, 'log_file', None) or os.environ.get("POISE_LOG_FILE") or None
+        if getattr(args, 'verbose', False):
+            level: Union[int, str] = 'DEBUG'
+        else:
+            level = getattr(args, 'log_level', None) or os.environ.get("POISE_LOG_LEVEL", default_level)
+        return ensure_file_logging(log_file=log_file, level=level)
+    except Exception:
+        return None
+
+
+def announce_log_path(path: Optional[str]) -> None:
+    """Print the active log path (call before a fullscreen TUI takes over)."""
+    if path:
+        try:
+            print(f"Logging to {path}", flush=True)
+        except Exception:
+            pass
 
 
 def _reset_file_logging_for_tests() -> None:
@@ -148,7 +375,7 @@ def set_tui_mode(enabled: bool) -> None:
                 continue
             if isinstance(handler, logging.StreamHandler) and handler.stream in (sys.stdout, sys.stderr):
                 logger.removeHandler(handler)
-        if not enabled and not getattr(sys, 'frozen', False):
+        if not enabled and not _is_frozen():
             # Re-add console handler if leaving TUI mode
             handler = logging.StreamHandler(sys.stdout)
             handler.setLevel(logging.DEBUG)
@@ -189,7 +416,7 @@ def get_logger(name: str) -> logging.Logger:
     logger.propagate = False
 
     # Only add console handler in development (not frozen builds) and not in TUI mode
-    if not getattr(sys, 'frozen', False) and not _tui_mode:
+    if not _is_frozen() and not _tui_mode:
         if not logger.handlers:
             handler = logging.StreamHandler(sys.stdout)
             handler.setLevel(logging.DEBUG)

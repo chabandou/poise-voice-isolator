@@ -211,31 +211,26 @@ Examples:
                         help='Restore the real default sink and unload leftover Poise null sinks (Linux only)')
     parser.add_argument('--no-health-check', action='store_true',
                         help='Skip the startup health pre-flight (or set POISE_SKIP_HEALTH=1)')
-    parser.add_argument('--log-file', type=str, default=None,
-                        help='Write a diagnostic log file (Linux default: ~/.local/share/poise/logs/poise.log)')
-    parser.add_argument('--log-level', type=str, default='INFO',
-                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                        help='File log verbosity (default: INFO; DEBUG for per-frame detail)')
-    parser.add_argument('--verbose', action='store_true',
-                        help='Shortcut for --log-level DEBUG')
-    parser.add_argument('--no-file-log', action='store_true',
-                        help='Disable file logging')
+    from .logging_config import add_log_args
+    add_log_args(parser)
 
     args = parser.parse_args()
 
     # File logging first (Linux only inside ensure_file_logging) so health
     # checks, engine creation, and routing decisions are all captured.
-    if not args.no_file_log:
-        from .logging_config import ensure_file_logging, get_log_file_path
+    # The path is announced so users (and remote support) can find it even
+    # when the TUI takes over the console or a fallback dir was used.
+    from .logging_config import ensure_from_log_args, get_log_file_path
+    _path = ensure_from_log_args(args) or get_log_file_path()
+    if _path:
         _level = 'DEBUG' if args.verbose else args.log_level
-        _path = ensure_file_logging(log_file=args.log_file, level=_level)
-        if _path:
-            _logger.info("file log: %s (level=%s)", _path, _level)
-            if args.tui:
-                # TUI suppresses console; point the user at the file.
-                print(f"Logging to {_path}")
-    else:
-        _logger.debug("file logging disabled via --no-file-log")
+        _logger.info("file log: %s (level=%s)", _path, _level)
+        # TUI suppresses console; point the user at the file. In CLI mode
+        # the line is harmless and helps locate fallback paths.
+        print(f"Logging to {_path}", flush=True)
+    elif is_linux() and not args.no_file_log:
+        print("Warning: file logging unavailable (no writable log dir found)",
+              flush=True)
 
     # One-shot maintenance commands (no audio needed)
     if args.doctor:

@@ -3,11 +3,13 @@ Status Line Widget
 
 Two-line status block for the top-right corner:
 line 1 = processing state pill, line 2 = latest message.
+
+The status line is driven ONLY by explicit, UX-friendly notify() calls.
+Log records are never forwarded here (they go to the file log); this
+keeps the widget free of raw tracebacks and diagnostic chatter.
 """
 from textual.widgets import Static
 from textual.reactive import reactive
-from typing import Optional
-import logging
 
 
 class StatusLine(Static):
@@ -62,35 +64,3 @@ class StatusLine(Static):
     
     def clear(self) -> None:
         self.current_message = ""
-
-
-class TUIStatusHandler(logging.Handler):
-    """Custom logging handler that updates the TUI status line.
-
-    Only warnings and above reach the status line (line 2). Routine
-    INFO/DEBUG chatter is file-only; direct notify() calls are unaffected.
-    """
-
-    def __init__(self, status_line: Optional[StatusLine] = None):
-        super().__init__(level=logging.WARNING)
-        self.status_line = status_line
-    
-    def set_widget(self, status_line: StatusLine) -> None:
-        self.status_line = status_line
-    
-    def emit(self, record: logging.LogRecord) -> None:
-        if self.status_line is None:
-            return
-        if record.levelno < logging.WARNING:
-            # Routine chatter stays in the file log, off the status line.
-            return
-
-        try:
-            msg = self.format(record)
-            level = record.levelname.lower()
-            if level == "critical":
-                level = "error"
-
-            self.status_line.notify(msg, level)
-        except Exception:
-            pass

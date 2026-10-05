@@ -18,9 +18,8 @@ from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
 from .widgets import DeviceList, StatsPanel, StatusLine
-from .widgets.status_line import TUIStatusHandler
 from ..constants import DEFAULT_MODEL
-from ..logging_config import set_tui_mode, ensure_file_logging, get_log_file_path
+from ..logging_config import set_tui_mode, get_log_file_path
 from ..backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 
@@ -52,41 +51,45 @@ class PoiseApp(App):
         self.processing_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
         self.start_time = 0.0
-        self.log_handler = TUIStatusHandler()
         self._cleanup_done = False
         self._last_perf_log = 0.0
         self._setup_logging()
         self._setup_cleanup_handlers()
     
     def _setup_logging(self) -> None:
-        """Set up logging to TUI (file logging on Linux is preserved)."""
+        """File logging on Linux; the status line is never log-driven.
+
+        The status line (upper right) is updated only via explicit,
+        UX-friendly ``StatusLine.notify()`` calls. No logging handler is
+        attached to it, so raw log records can never leak into line 2.
+        """
         import logging
         import sys
 
         # Enable file logging first (Linux only; no-op elsewhere) so the
         # shared file handler exists before console output is suppressed.
+        # Entry points (poise_tui.py / cli.py) already set this up and
+        # announced the path; this is a no-op safety net for direct
+        # PoiseApp() use.
         if sys.platform.startswith("linux"):
-            import os as _os
-            if _os.environ.get("POISE_DISABLE_FILE_LOG") != "1":
-                ensure_file_logging(
-                    log_file=_os.environ.get("POISE_LOG_FILE") or None,
-                    level=_os.environ.get("POISE_LOG_LEVEL", "INFO"),
-                )
+            from ..logging_config import setup_file_logging_from_env
+            setup_file_logging_from_env()
 
         # Enable TUI mode to suppress console logging (keeps file handlers)
         set_tui_mode(True)
 
         # Get the stream_denoiser logger
         logger = logging.getLogger('stream_denoiser')
-        # Remove existing handlers to avoid clutter, but keep file handlers
-        file_handlers = [h for h in logger.handlers if isinstance(h, logging.FileHandler)]
-        logger.handlers = []
-        logger.addHandler(self.log_handler)
-        for h in file_handlers:
-            logger.addHandler(h)
-        # Re-attach the shared file handler in case this logger predates it
+        # Keep it file-only: drop console handlers, keep file handlers, and
+        # attach the shared file handler in case this logger predates it.
+        # Nothing log-driven is attached to the status line widget.
+        logger.propagate = False
+        logger.handlers = [
+            h for h in logger.handlers if isinstance(h, logging.FileHandler)
+        ]
         try:
-            from ..logging_config import _file_handler as _shared_fh
+            from ..logging_config import get_file_handler as _get_shared_fh
+            _shared_fh = _get_shared_fh()
             if _shared_fh is not None and _shared_fh not in logger.handlers:
                 logger.addHandler(_shared_fh)
         except Exception:
@@ -172,10 +175,6 @@ class PoiseApp(App):
     
     def on_mount(self) -> None:
         """Called when app is mounted."""
-        # Connect log handler to status line
-        status_line = self.query_one("#status-line", StatusLine)
-        self.log_handler.set_widget(status_line)
-
         # Log session header to file (Linux only) for remote diagnosis
         self._log_session_header()
 
@@ -423,6 +422,20 @@ class PoiseApp(App):
         self.query_one("#stats-panel", StatsPanel).set_running(False)
         status_line.notify("Processing stopped.", "info")
     
+    def _notify_status(self, message: str, level: str = "info") -> None:
+        """Explicit, UX-friendly status-line update (app thread only)."""
+        try:
+            self.query_one("#status-line", StatusLine).notify(message, level)
+        except Exception:
+            pass
+
+    def _notify_status_from_thread(self, message: str, level: str = "error") -> None:
+        """Thread-safe wrapper for background threads (never a log record)."""
+        try:
+            self.call_from_thread(self._notify_status, message, level)
+        except Exception:
+            pass
+
     def _processing_loop(self, output_device: Optional[int]) -> None:
         """Audio processing loop (runs in background thread)."""
         try:
@@ -434,6 +447,9 @@ class PoiseApp(App):
                 if SOUNDDEVICE_INSTALL_HINT:
                     msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
                 logging.getLogger('stream_denoiser').error(msg)
+                self._notify_status_from_thread(
+                    "Audio backend unavailable. See log for details.", "error"
+                )
                 return
             import numpy as np
             
@@ -530,11 +546,15 @@ class PoiseApp(App):
                         out.write(stereo_output[:n])
         
         except Exception as e:
-            # Log error (will be picked up by main thread)
+            # File log holds the full detail; the status line gets only a
+            # short UX-friendly note (never the raw record/traceback).
             import logging
             import traceback
             logging.getLogger('stream_denoiser').error(f"Processing error: {e}")
             logging.getLogger('stream_denoiser').debug(traceback.format_exc())
+            self._notify_status_from_thread(
+                "Audio error. See log for details.", "error"
+            )
     
     def _update_stats(self) -> None:
         """Update stats display (called periodically)."""
