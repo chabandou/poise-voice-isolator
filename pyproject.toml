@@ -64,4 +64,4 @@ where = ["."]
 include = ["stream_denoiser*"]
 
 [tool.setuptools.package-data]
-stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*"]
+stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*", "native/*.dll"]

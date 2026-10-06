@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Poise Voice Isolator"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Poise"
 #define MyAppExeName "Poise.exe"
 
@@ -20,7 +20,7 @@ DisableProgramGroupPage=yes
 ;PrivilegesRequired=lowest
 OutputDir=installer
 OutputBaseFilename=Poise_Setup
-SetupIconFile=c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\stream_denoiser\gui\assets\icon.ico
+SetupIconFile=stream_denoiser\gui\assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -32,8 +32,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

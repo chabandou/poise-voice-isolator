@@ -10,6 +10,7 @@ project_dir = os.getcwd()
 icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.ico')
 model_path = os.path.join(project_dir, 'denoiser_model_df3.onnx')
 model_states_path = os.path.join(project_dir, 'denoiser_model_df3_states.npz')
+rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
 assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
 
 a = Analysis(
@@ -19,6 +20,7 @@ a = Analysis(
     datas=[
         (model_path, '.'),
         (model_states_path, '.'),
+        (rnnoise_dll_path, '.'),
         (assets_path, 'stream_denoiser/gui/assets'),
     ],
     hiddenimports=[

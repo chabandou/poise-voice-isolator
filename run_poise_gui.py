@@ -13,7 +13,7 @@ if __name__ == "__main__":
     # Set App User Model ID for Windows to show correct icon
     if sys.platform == 'win32':
         try:
-            myappid = 'poise.voiceisolator.gui.1.0' # arbitrary string
+            myappid = 'poise.voiceisolator.gui.1.1' # arbitrary string
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass

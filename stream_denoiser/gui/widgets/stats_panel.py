@@ -6,6 +6,12 @@ Real-time statistics display panel.
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt
 
+from .phosphor import PhosphorIcon
+from ..scaling import isp
+
+ICON_SIZE = 26
+ROW_SPACING = 14
+
 
 class StatsPanel(QFrame):
     """
@@ -24,64 +30,72 @@ class StatsPanel(QFrame):
         self._setup_ui()
     
     def _setup_ui(self):
-        """Setup the panel UI."""
+        """Setup the panel UI (rows spread evenly, dividers between)."""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-        
-        # RTF stat
-        self._rtf_widget = self._create_stat_widget("RTF", "0.00")
-        layout.addWidget(self._rtf_widget)
-        self._add_separator(layout)
-        
-        # Processing time stat
-        self._time_widget = self._create_stat_widget("AVG TIME", "0.0 ms")
-        layout.addWidget(self._time_widget)
-        self._add_separator(layout)
-        
-        # VAD bypass stat
-        self._vad_widget = self._create_stat_widget("VAD BYPASS", "0%")
-        layout.addWidget(self._vad_widget)
-        self._add_separator(layout)
-        
-        # Buffer status
-        self._buffer_widget = self._create_stat_widget("BUFFER", "0 / 0")
-        layout.addWidget(self._buffer_widget)
-        
-        layout.addStretch()
+        layout.setContentsMargins(63, 42, 51, 42)
+        layout.setSpacing(10)
 
-    def _add_separator(self, layout):
-        """Add a horizontal separator line."""
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        line.setStyleSheet("background-color: rgba(148, 163, 184, 0.15); border: none; max-height: 1px;")
-        layout.addWidget(line)
-    
-    def _create_stat_widget(self, label: str, initial_value: str) -> QFrame:
-        """Create a single stat display widget."""
+        self._rtf_widget = self._create_stat_widget("percent", "RTF", "0.00")
+        layout.addWidget(self._rtf_widget)
+        layout.addWidget(self._make_divider())
+        layout.addStretch(1)
+
+        self._time_widget = self._create_stat_widget(
+            "clock", "AVG TIME", "0.0 ms")
+        layout.addWidget(self._time_widget)
+        layout.addWidget(self._make_divider())
+        layout.addStretch(1)
+
+        self._vad_widget = self._create_stat_widget(
+            "pulse", "VAD BYPASS", "0%")
+        layout.addWidget(self._vad_widget)
+        layout.addWidget(self._make_divider())
+        layout.addStretch(1)
+
+        self._buffer_widget = self._create_stat_widget(
+            "buffer", "BUFFER", "0 / 0")
+        layout.addWidget(self._buffer_widget)
+
+    @staticmethod
+    def _make_divider() -> QFrame:
+        """Thin divider, indented past the icon column like the design."""
+        divider = QFrame()
+        divider.setObjectName("divider")
+        divider.setFrameShape(QFrame.Shape.HLine)
+        wrap = QFrame()
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(isp(ICON_SIZE) + ROW_SPACING, 0, 0, 0)
+        wrap_layout.setSpacing(0)
+        wrap_layout.addWidget(divider)
+        return wrap
+
+    def _create_stat_widget(self, icon: str, label: str,
+                            initial_value: str) -> QFrame:
+        """Create a single stat display widget (icon + label + value)."""
         frame = QFrame()
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        
+        layout.setSpacing(ROW_SPACING)
+
+        layout.addWidget(PhosphorIcon(icon, size=ICON_SIZE))
+
         # Label
         name_label = QLabel(label)
         name_label.setObjectName("stat-label")
         name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(name_label)
-        
+
         layout.addStretch()
-        
+
         # Value label
         value_label = QLabel(initial_value)
         value_label.setObjectName("stat-value")
         value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(value_label)
-        
+
         # Store reference to value label
         frame.value_label = value_label
-        
+
         return frame
     
     def update_stats(self, stats: dict):

@@ -112,6 +112,12 @@ def run_gui():
     app = QApplication(sys.argv)
     app.setApplicationName("Poise Voice Isolator")
     app.setOrganizationName("Poise")
+
+    # Apply the persisted theme before creating anything themed
+    # (window/taskbar icons included).
+    from .settings import get_settings as _get_settings
+    from . import themes as _themes
+    _themes.set_current(_get_settings().theme)
     
     # Qt6 specific: Set desktop file name to match AppUserModelID
     # This often fixes taskbar icon issues on Windows 11

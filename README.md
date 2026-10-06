@@ -100,7 +100,7 @@ Poise is a real-time audio filter that runs in the background while you browse, 
 
 > **Important**: Make sure to download and install [VB Cable](https://vb-audio.com/Cable/index.htm) for loopback audio capture on Windows.
 
-1. Download the Poise Installer: [Poise_Setup.exe](https://github.com/chabandou/poise-voice-isolator/releases/download/launch/Poise_Setup.exe).
+1. Download the Poise Installer: [Poise_Setup.exe](https://github.com/chabandou/poise-voice-isolator/releases/latest/download/Poise_Setup.exe).
 2. Run the installer and follow the on-screen instructions.
 3. Launch **Poise Voice Isolator** from your Desktop or Start Menu.
 

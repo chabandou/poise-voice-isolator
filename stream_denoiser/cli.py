@@ -201,7 +201,9 @@ Examples:
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
                         choices=list(ALL_MODELS),
                         help=f'Denoising engine to use (default: {DEFAULT_MODEL}). '
-                             f'rnnoise uses the system librnnoise (same as EasyEffects).')
+                             f'rnnoise uses the system librnnoise on Linux '
+                             f'(same as EasyEffects) or the bundled rnnoise.dll '
+                             f'on Windows.')
     parser.add_argument('--onnx', type=str, default=DEFAULT_DF3_ONNX,
                         help='Path to ONNX model file (deepfilternet3 only, '
                              'default: denoiser_model_df3.onnx; a '

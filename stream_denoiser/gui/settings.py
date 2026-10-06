@@ -75,6 +75,8 @@ class Settings:
     
     KEY_ONNX_MODEL_PATH = "model/onnx_path"
     KEY_MODEL = "model/name"
+
+    KEY_THEME = "appearance/theme"
     
     # Default values
     DEFAULTS = {
@@ -90,6 +92,7 @@ class Settings:
         KEY_SHOW_TRAY_ICON: True,
         KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
         KEY_MODEL: "deepfilternet3",
+        KEY_THEME: "abyss",
     }
     
     def __init__(self):
@@ -248,6 +251,17 @@ class Settings:
     @model.setter
     def model(self, value: str) -> None:
         self.set(self.KEY_MODEL, value)
+
+    @property
+    def theme(self) -> str:
+        """Get selected color theme id."""
+        from .themes import DEFAULT_THEME, theme_ids
+        theme_id = str(self.get(self.KEY_THEME, DEFAULT_THEME))
+        return theme_id if theme_id in theme_ids() else DEFAULT_THEME
+
+    @theme.setter
+    def theme(self, value: str) -> None:
+        self.set(self.KEY_THEME, value)
     
     def save_window_geometry(self, geometry: bytes) -> None:
         """Save window geometry."""

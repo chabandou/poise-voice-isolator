@@ -5,6 +5,7 @@ A DenoiseEngine wraps one model (DeepFilterNet via ONNX Runtime, RNNoise via
 librnnoise) behind a common frame-based interface used by DenoiserAudioProcessor.
 """
 from typing import List, Optional
+import sys
 
 from .base import DenoiseEngine
 from .deepfilternet3 import (
@@ -41,6 +42,8 @@ def model_unavailable_reason(name: str) -> Optional[str]:
         return ("model files not found "
                 "(denoiser_model_df3.onnx + denoiser_model_df3_states.npz)")
     if key == MODEL_RNNOISE and not RNNoiseEngine.is_available():
+        if sys.platform == "win32":
+            return "rnnoise.dll not found next to the app (reinstall Poise)"
         return "librnnoise not installed (e.g. 'sudo pacman -S rnnoise' on Arch)"
     return None
 

@@ -79,7 +79,11 @@ MSG_RNNOISE_NOT_FOUND = (
     "RNNoise library (librnnoise) not found: {}\n"
     "Install it with your package manager, e.g. 'sudo pacman -S rnnoise' on Arch."
 )
-MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux."
+MSG_RNNOISE_WINDOWS_NOT_FOUND = (
+    "RNNoise library (rnnoise.dll) not found: {}\n"
+    "Reinstall Poise — rnnoise.dll should sit next to Poise.exe."
+)
+MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux and Windows."
 MSG_NO_BACKEND = "No audio backend available"
 MSG_POWERSHELL_UNAVAILABLE = "PowerShell not available - VB Cable switching disabled"
 MSG_DEVICE_SWITCH_ERROR = "Error switching device: {}"

@@ -6,7 +6,10 @@ Dropdown widget for audio device selection with refresh capability.
 from typing import Optional, List, Dict, Any
 
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QPushButton, QLabel, QVBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+
+from .phosphor import PhosphorIcon
+from ..scaling import sp
 
 try:
     import sounddevice as sd
@@ -42,19 +45,43 @@ class DeviceSelector(QWidget):
         self.refresh_devices()
     
     def _setup_ui(self, label: str):
-        """Setup the widget UI."""
+        """Setup the widget UI (icon + caption row, underline combo)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        
-        # Label
-        self._label = QLabel(label)
-        layout.addWidget(self._label)
-        
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setSpacing(20)
+        header.addWidget(PhosphorIcon(
+            "monitor" if self._device_type == "input" else "speaker", size=22))
+        self._label = QLabel(label.upper())
+        self._label.setObjectName("device-title")
+        header.addWidget(
+            self._label, alignment=Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self._label)
+        header.addStretch()
+
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setObjectName("icon-btn")
+        self._refresh_btn.setFixedSize(sp(28), sp(28))
+        refresh_layout = QHBoxLayout(self._refresh_btn)
+        refresh_layout.setContentsMargins(6, 6, 6, 6)
+        refresh_layout.addWidget(PhosphorIcon("refresh", size=15))
+        self._refresh_btn.setToolTip("Rescan audio devices")
+        self._refresh_btn.clicked.connect(self.refresh_devices)
+        header.addWidget(self._refresh_btn)
+        layout.addLayout(header)
+
         # Combo box only
         self._combo = QComboBox()
+        self._combo.setObjectName("device-combo")
         self._combo.currentIndexChanged.connect(self._on_selection_changed)
         layout.addWidget(self._combo)
+
+        # Pin header + combo to the top: extra column height (the top
+        # card stretches on tall windows) must collect below, not
+        # between the label and the dropdown.
+        layout.addStretch(1)
     
     def refresh_devices(self):
         """Refresh the list of available devices."""

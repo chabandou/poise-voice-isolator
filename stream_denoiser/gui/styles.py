@@ -1,9 +1,11 @@
 """
-Poise Voice Isolator - Modern Dark Theme Stylesheet
+Poise Voice Isolator - Dashboard Theme
 
-A sleek, modern dark theme with glassmorphism-inspired elements, 
-teal/cyan accents, and cohesive rounded styling.
-Updated for full PyQt6 compatibility (removed unsupported webkit props).
+Card-based dark theme driven by gui/themes.py palettes: every hue in
+this sheet is a {token} resolved per theme, so all colorways stay
+self-matching. Custom-painted widgets (PowerButton, ToggleSwitch) draw
+themselves from the same palette; icons come from the vendored
+Phosphor SVGs (see widgets/phosphor.py).
 """
 
 POISE_STYLESHEET = """
@@ -11,223 +13,287 @@ POISE_STYLESHEET = """
    GLOBAL SETTINGS
    ================================================================================= */
 QMainWindow {
-    /* Subtle radial gradient background - Neutral Gray, Top-Right focus */
-    background: qradialgradient(cx: 0.85, cy: 0, radius: 1.2, fx: 0.85, fy: 0, stop: 0 #2d2d30, stop: 1 #0a0a0a);
-    color: #f8fafc;
+    background-color: {bg};
+    color: {text};
 }
 
 QWidget {
     font-family: 'Segoe UI', 'Inter', sans-serif;
     font-size: 14px;
-    color: #f1f5f9;
+    color: {text};
 }
 
 /* =================================================================================
-   CONTAINERS & GROUP BOXES (Glassmorphism)
+   SIDEBAR
    ================================================================================= */
-QGroupBox {
-    background-color: transparent;
+QFrame#sidebar {
+    background-color: {sidebar};
     border: none;
-    margin-top: 0;
-    padding: 0;
+    border-right: 1px solid rgba(148, 163, 184, 0.12);
 }
 
-QGroupBox::title {
-    color: transparent;
+QLabel#logo {
+    color: {text};
+}
+
+QPushButton#nav {
     background-color: transparent;
     border: none;
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+    min-height: 44px;
+    color: {nav_muted};
+    font-size: 14px;
+    font-weight: 500;
+}
+
+QPushButton#nav:hover {
+    background-color: rgba(148, 163, 184, 0.08);
+    color: {text};
+}
+
+QPushButton#nav[active="true"] {
+    background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
+    border-left: 3px solid {accent};
+    color: {nav_active};
+}
+
+QLabel#nav-text {
+    color: {nav_muted};
+    font-size: 14px;
+    font-weight: 500;
+    background-color: transparent;
+}
+
+QPushButton#nav[active="true"] QLabel#nav-text {
+    color: {nav_active};
+}
+
+QLabel#version {
+    color: {muted};
+    font-size: 11px;
+    background-color: transparent;
+}
+
+/* =================================================================================
+   CARDS
+   ================================================================================= */
+QFrame#card {
+    background-color: {card};
+    border: {CARD_BORDER_WIDTH}px solid rgba({border_rgb}, {border_alpha});
+    border-radius: 16px;
+}
+
+QFrame#vb-pill {
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 32px;
+}
+
+QFrame#icon-circle {
+    background-color: {badge_bg};
+    border: none;
+    border-radius: 22px;
+}
+
+QFrame#divider {
+    background-color: rgba({divider_rgb}, {divider_alpha});
+    border: none;
+    max-height: 1px;
 }
 
 /* =================================================================================
    LABELS & TEXT
    ================================================================================= */
 QLabel {
-    color: #e2e8f0;
+    color: {text};
     background-color: transparent;
 }
 
-QLabel#title {
-    font-size: 36px;
-    font-weight: 800;
-    color: #a5f3fc; /* Cyan-200: Lighter & softer */
-    padding-bottom: 5px;
-    letter-spacing: 1px;
+QLabel#section {
+    color: {muted};
+    font-size: 12px;
+    font-weight: 700;
 }
 
-
-/* Status Light Indicator */
-QLabel#status-light {
-    background-color: #0f172a;
-    border-radius: 5px; /* Perfect circle for 10px size */
-    border: 2px solid #334155;
-}
-QLabel#status-light[state="ready"] {
-    background-color: #4ade80; /* Green */
-    border: 2px solid #22c55e;
-}
-QLabel#status-light[state="processing"] {
-    background-color: #22d3ee; /* Cyan */
-    border: 2px solid #06b6d4;
-}
-QLabel#status-light[state="error"] {
-    background-color: #f87171; /* Red */
-    border: 2px solid #ef4444;
+QLabel#device-title {
+    color: {device_title};
+    font-size: 14px;
+    font-weight: 700;
 }
 
-QLabel#status-text {
-    font-weight: 600;
-    color: #94a3b8;
+QLabel#page-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: {text};
 }
 
-QLabel#status-text[state="ready"] {
-    color: #4ade80; /* Green */
-}
-QLabel#status-text[state="processing"] {
-    color: #22d3ee; /* Cyan */
-}
-QLabel#status-text[state="error"] {
-    color: #f87171; /* Red */
+QLabel#page-subtitle {
+    font-size: 13px;
+    color: {muted};
 }
 
-QLabel#stat-value { font-size: 20px; font-weight: 700; color: #f8fafc; }
-QLabel#stat-label { font-size: 13px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+QLabel#card-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: {text};
+}
+
+QLabel#card-subtitle {
+    font-size: 12px;
+    color: {muted};
+}
+
+QLabel#status-line {
+    font-size: 12px;
+    color: {muted};
+}
+
+QLabel#status-line[state="processing"] {
+    color: {accent};
+}
+
+QLabel#status-line[state="error"] {
+    color: {error};
+}
+
+QLabel#stat-value { font-size: 20px; font-weight: 700; color: {text}; }
+QLabel#stat-label { font-size: 13px; font-weight: 700; color: {muted}; }
 
 /* Stat colors */
-QLabel#stat-good { color: #4ade80; } /* Green-400 */
-QLabel#stat-warning { color: #facc15; } /* Yellow-400 */
-QLabel#stat-bad { color: #f87171; } /* Red-400 */
+QLabel#stat-good { font-size: 20px; font-weight: 700; color: {success}; }
+QLabel#stat-warning { font-size: 20px; font-weight: 700; color: {warning}; }
+QLabel#stat-bad { font-size: 20px; font-weight: 700; color: {error}; }
 
+QLabel#thresh-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: {accent};
+}
 
 /* =================================================================================
-   INPUTS & DROPDOWNS
+   DEVICE DROPDOWNS (underline style)
    ================================================================================= */
-QComboBox {
-    background-color: #18181b; /* Neutral dark gray */
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 8px;
-    padding: 5px 15px; /* Reduced vertical padding */
-    min-height: 40px;  /* Force tall height */
-    max-height: 40px;  /* Restrict expansion */
-    color: #f1f5f9;
+QComboBox#device-combo {
+    background-color: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 0px;
+    padding: 0px 28px 10px 0px;
+    min-height: 30px;
+    color: {text};
     font-weight: 500;
-    font-size: 14px;
-    line-height: 40px; /* Center text vertically */
+    font-size: 17px;
 }
 
-QComboBox:hover {
-    border: 1px solid #67e8f9; /* Lighter Cyan */
-    background-color: #27272a; /* Zinc 800 */
+QComboBox#device-combo:hover {
+    border-bottom: 1px solid {accent};
 }
 
-QComboBox:on { /* shift text when menu is open */
-    border: 1px solid #5eead4; /* Lighter Teal */
-    background-color: #27272a;
+QComboBox#device-combo:disabled {
+    color: #52525b;
+    border-bottom: 1px solid rgba(82, 82, 91, 0.4);
 }
 
-QComboBox:disabled {
-    background-color: #0d0d0f; /* Very dark/black */
-    color: #52525b; /* Zinc-600 */
-    border: 1px solid #27272a;
-    opacity: 0.5; /* Note: Qt QSS opacity on widgets might not work as expected everywhere, usually rely on color modification */
-}
-
-QComboBox::drop-down {
+QComboBox#device-combo::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 35px;
-    border-left-width: 0px;
-    border-top-right-radius: 8px;
-    border-bottom-right-radius: 8px;
+    width: 24px;
+    border: none;
 }
 
-QComboBox::down-arrow {
-    image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid #94a3b8;
-    margin-right: 15px;
+QComboBox#device-combo::down-arrow {
+    image: url({ASSETS_DIR}/chevron-down.svg);
+    width: 12px;
+    height: 8px;
+    margin-right: 6px;
 }
 
-QComboBox QAbstractItemView {
-    background-color: #18181b;
-    border: 1px solid #27272a;
+QComboBox#device-combo QAbstractItemView {
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: 8px;
-    color: #f1f5f9;
+    color: {text};
     padding: 8px;
-    selection-background-color: #2dd4bf;
-    selection-color: #0f172a;
+    selection-background-color: {accent};
+    selection-color: {bg};
+    outline: none;
+}
+
+/* Settings-page dropdown (boxed style) */
+QComboBox#settings-combo {
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 8px;
+    padding: 6px 12px;
+    min-height: 32px;
+    color: {text};
+    font-size: 14px;
+}
+
+QComboBox#settings-combo:hover {
+    border: 1px solid {accent};
+}
+
+QComboBox#settings-combo::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 28px;
+    border: none;
+}
+
+QComboBox#settings-combo::down-arrow {
+    image: url({ASSETS_DIR}/chevron-down.svg);
+    width: 12px;
+    height: 8px;
+    margin-right: 8px;
+}
+
+QComboBox#settings-combo QAbstractItemView {
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: {text};
+    selection-background-color: {accent};
+    selection-color: {bg};
     outline: none;
 }
 
 /* =================================================================================
    BUTTONS
    ================================================================================= */
-QPushButton {
-    background-color: rgba(39, 39, 42, 0.6); /* Zinc 800 alpha */
-    border: 1px solid rgba(113, 113, 122, 0.2);
+QPushButton#ghost {
+    background-color: rgba(148, 163, 184, 0.08);
+    border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 8px;
-    padding: 10px 20px;
-    color: #f8fafc;
+    padding: 8px 18px;
+    color: {text};
     font-weight: 600;
+    font-size: 13px;
 }
 
-QPushButton:hover {
-    background-color: rgba(63, 63, 70, 0.8); /* Zinc 700 */
-    border-color: #a1a1aa;
+QPushButton#ghost:hover {
+    border-color: {accent};
+    color: {accent_light};
 }
 
-QPushButton:pressed {
-    background-color: #334155;
-    margin-top: 1px;
+QPushButton#ghost:pressed {
+    background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
 }
 
-/* Main Toggle Button - Big Pill Shape with Glow */
-QPushButton#start-button {
-    /* More prominent gradient: Deep Cyan to Bright Teal (Lighter) */
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #06b6d4, stop:1 #5eead4); 
-    border: 2px solid transparent; /* Invisible border that reserves space to prevent shifting */
-    border-radius: 30px; /* Safe pill radius for ~50-60px height */
-    padding: 12px 45px;
-    font-size: 25px;
-    font-weight: 700;
-    color: #0f172a; 
-    min-width: 220px;
-    min-height: 47px;
-}
-
-QPushButton#start-button:hover {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #22d3ee, stop:1 #99f6e4); /* Even Brighter hover */
-    border: 2px solid transparent; /* Keep border reserved but invisible */
-}
-
-QPushButton#start-button:pressed {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0891b2, stop:1 #2dd4bf);
-    padding-top: 14px; /* Reduced pressed offset */
-}
-
-/* Stop Button state */
-QPushButton#stop-button {
+QPushButton#icon-btn {
     background-color: transparent;
-    border: 2px solid #ef4444; /* Red border */
-    border-radius: 30px; /* Safe pill radius */
-    padding: 12px 45px;
-    font-size: 25px;
-    font-weight: 700;
-    color: #ef4444;
-    min-width: 220px;
-    min-height: 47px;
+    border: none;
+    border-radius: 6px;
+    padding: 0px;
 }
 
-QPushButton#stop-button:hover {
-    background-color: rgba(239, 68, 68, 0.1);
-    border-color: #f87171;
+QPushButton#icon-btn:hover {
+    background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
 }
 
-QPushButton#stop-button:pressed {
-    background-color: rgba(239, 68, 68, 0.2);
-}
-
-/* Refresh Button */
+/* Legacy refresh button id (kept for compatibility) */
 QPushButton#refresh-btn {
     background-color: transparent;
     border: none;
@@ -235,10 +301,10 @@ QPushButton#refresh-btn {
     color: #94a3b8;
     padding: 0;
 }
-QPushButton#refresh-btn:hover { color: #22d3ee; }
+QPushButton#refresh-btn:hover { color: {accent}; }
 
 /* =================================================================================
-   CONTROLS (SLIDERS & CHECKBOXES)
+   SLIDERS
    ================================================================================= */
 QSlider {
     min-height: 26px;
@@ -246,86 +312,81 @@ QSlider {
 
 QSlider::groove:horizontal {
     border: none;
-    height: 8px; /* Thicker groove */
-    background: rgba(39, 39, 42, 1); /* Zinc 800 */
-    border-radius: 4px;
+    height: 10px;
+    background: {groove};
+    border-radius: 5px;
 }
 
 QSlider::sub-page:horizontal {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #67e8f9, stop:1 #5eead4); /* Lighter gradient */
-    border-radius: 4px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {accent}, stop:1 {accent_light});
+    border-radius: 5px;
 }
 
 QSlider::handle:horizontal {
-    background: #f8fafc;
+    background: {text};
     width: 24px;
     height: 24px;
-    margin: -8px 0; /* center on groove */
-    border-radius: 12px;
-    border: 2px solid #a5f3fc; /* Lighter Ring */
+    margin: -7px 0;
+    border-radius: 11px;
+    border: 2px solid {accent};
 }
 
 QSlider::handle:horizontal:hover {
-    background: #a5f3fc;
+    background: {accent_light};
     width: 26px;
     height: 26px;
-    margin: -9px 0;
-    border-radius: 13px;
-    border-color: #f8fafc;
+    margin: -8px 0;
+    border-radius: 12px;
+    border-color: {text};
 }
 
 QSlider::sub-page:horizontal:disabled {
-    background: #27272a; /* Zinc-800 - hiding the active gradient */
+    background: {groove};
 }
 
 QSlider::handle:horizontal:disabled {
-    background: #3f3f46; /* Zinc-700 */
+    background: #3f3f46;
     border: 2px solid #27272a;
 }
 
-/* Checkboxes */
+/* =================================================================================
+   CHECKBOXES (settings page)
+   ================================================================================= */
 QCheckBox {
     spacing: 12px;
-    color: #e2e8f0;
+    color: {text};
     font-weight: 500;
-    min-height: 24px; /* Ensure height for text */
+    min-height: 24px;
 }
 
 QCheckBox::indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 8px; /* Circular */
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
     border: 2px solid #475569;
     background-color: transparent;
 }
 
 QCheckBox::indicator:hover {
-    border-color: #67e8f9;
-    background-color: rgba(103, 232, 249, 0.1);
+    border-color: {accent};
 }
 
-/* Checked State - Simple square fill */
 QCheckBox::indicator:checked {
-    background-color: #5eead4; /* Teal-300 */
-    border: 2px solid #5eead4; /* Maintain border width to prevent shifting */
+    background-color: {accent};
+    border: 2px solid {accent};
 }
-
 
 /* =================================================================================
-   PANELS & MISC
+   LOG VIEWER
    ================================================================================= */
-/* VAD Panel Container - Matches Dropdown Style */
-QFrame#vad-panel {
-    background-color: #18181b; /* Neutral dark gray */
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 12px; /* Slightly rounder than dropdowns for panel feel */
-}
-
-/* Stats Panel Container */
-QFrame#stats-panel {
-    background-color: #18181b; /* Neutral dark gray (Matches VAD panel) */
-    border: 1px solid rgba(148, 163, 184, 0.3);
+QTextEdit#logs {
+    background-color: {sidebar};
+    border: 1px solid rgba(148, 163, 184, 0.14);
     border-radius: 12px;
+    color: {text};
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 12px;
+    padding: 8px;
 }
 
 /* Tooltips */
@@ -336,17 +397,80 @@ QToolTip {
     padding: 5px;
     border-radius: 4px;
 }
+
+/* Page scrollbars */
+QScrollArea#page-scroll {
+    border: none;
+    background-color: transparent;
+}
+
+QWidget#page {
+    background-color: {bg};
+    border: none;
+}
+
+QScrollBar:vertical {
+    background-color: transparent;
+    width: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: rgba(148, 163, 184, 0.25);
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: rgba(148, 163, 184, 0.45);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background-color: transparent;
+}
 """
 
-# Modern Palette Accessor
-COLORS = {
-    'background': '#0a0a0a',
-    'surface': '#18181b',
-    'text': '#f8fafc',
-    'text_secondary': '#a1a1aa',
-    'accent_cyan': '#67e8f9',
-    'accent_teal': '#5eead4',
-    'success': '#4ade80',
-    'warning': '#facc15',
-    'error': '#f87171',
-}
+import os
+
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+
+
+def _card_border_width(scale: float) -> int:
+    """Outline thickness steps up with the UI scale (1px per ~0.5x)."""
+    if scale < 1.25:
+        return 1
+    if scale < 1.75:
+        return 2
+    return 3
+
+
+def get_stylesheet(scale=None, theme=None) -> str:
+    """Build the theme with substituted assets, palette, and UI scale.
+
+    Args:
+        scale: UI scale factor override. None follows the detected screen
+            scale, 1.0 returns the unscaled theme.
+        theme: Theme id (see gui/themes.py). None follows the current theme.
+    """
+    from .scaling import scale_stylesheet, ui_scale
+    from .themes import (
+        ACCENT_WASH_ALPHA,
+        KEYS,
+        get_theme,
+    )
+    from . import themes as _themes
+    factor = ui_scale() if scale is None else scale
+    palette = get_theme(_themes.current_id() if theme is None else theme)
+    css = POISE_STYLESHEET.replace("{ASSETS_DIR}", _ASSETS_DIR)
+    for key in KEYS:
+        css = css.replace("{" + key + "}", str(palette[key]))
+    css = css.replace("{ACCENT_WASH_ALPHA}", str(ACCENT_WASH_ALPHA))
+    # Substitute after px-scaling so the stepped width is not scaled twice.
+    css = scale_stylesheet(css, factor)
+    return css.replace("{CARD_BORDER_WIDTH}", str(_card_border_width(factor)))
