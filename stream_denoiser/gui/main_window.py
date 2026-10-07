@@ -10,10 +10,10 @@ import sys
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QSlider, QCheckBox, QComboBox,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QCheckBox, QComboBox,
     QMessageBox, QApplication, QFrame, QStackedWidget,
-    QTextEdit, QPushButton, QButtonGroup, QScrollArea,
+    QTextEdit, QPushButton, QButtonGroup, QScrollArea, QBoxLayout,
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QIcon, QCloseEvent, QPixmap, QDesktopServices
@@ -32,8 +32,10 @@ from .widgets.phosphor import PhosphorIcon, clear_cache as clear_icon_cache
 from .widgets.theme_tile import ThemeTile
 from .widgets.power_button import PowerButton
 from .widgets.switch import ToggleSwitch
+from .widgets.slider import HoverSlider
 from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
+from .widgets.combo import AnimatedComboBox
 from .widgets.stats_panel import StatsPanel
 from ..logging_config import get_logger, get_log_file_path
 from .utils import get_icon_path
@@ -72,8 +74,10 @@ class MainWindow(QMainWindow):
             QApplication.instance().setWindowIcon(app_icon)
 
         self.resize(*self._window_size(1180, 760))
-        self.setMinimumSize(*self._window_size(1024, 640))
+        self.setMinimumSize(*self._window_size(700, 560))
         self.setStyleSheet(get_stylesheet())
+        self._resp = None  # responsive mode: wide / compact / narrow
+        self._devices_narrow = False  # devices row order tracks this flag
 
         self.setup_ui()
 
@@ -82,6 +86,21 @@ class MainWindow(QMainWindow):
 
         # Load persistent state
         self.restore_state()
+
+        # Apple-style juice: window fade + staggered home entrance.
+        self._status_pulse = None
+        self._shown_once = False
+        try:
+            from .animations import install_press_fade
+            for btn in self.findChildren(QPushButton):
+                try:
+                    name = btn.objectName()
+                    if name in ("ghost", "icon-btn", "refresh-btn"):
+                        install_press_fade(btn)
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     @staticmethod
     def _lowered(widget: QWidget, offset: int) -> QWidget:
@@ -92,6 +111,135 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
         layout.addWidget(widget)
         return wrap
+
+    @staticmethod
+    def _set_lowered(wrap: QWidget, offset: int) -> None:
+        """Adjust a _lowered() wrapper's top offset (responsive)."""
+        lay = wrap.layout()
+        if lay is not None:
+            lay.setContentsMargins(0, offset, 0, 0)
+
+    def _layout_theme_grid(self, cols: int) -> None:
+        """Arrange theme tiles in rows of `cols` (re-parenting is safe)."""
+        for i, tile in enumerate(self.theme_tiles):
+            self.theme_grid.addWidget(tile, i // cols, i % cols)
+        for c in range(4):
+            self.theme_grid.setColumnStretch(c, 0)
+        self.theme_grid.setColumnStretch(cols, 1)
+
+    def _layout_devices_row(self, narrow: bool) -> None:
+        """Set devices row direction and order (power first when stacked).
+
+        Widgets re-add into a new position automatically, but re-adding
+        an already-managed sublayout is a no-op — so the power column
+        leaves first via takeAt (its wrapper is dropped; the layout
+        itself survives on its member ref). Runs only when the narrow
+        flag flips (see _apply_responsive).
+        """
+        self._devices_narrow = narrow
+        row = self._devices_row
+        top = Qt.AlignmentFlag.AlignTop
+        try:
+            for i in range(row.count()):
+                if row.itemAt(i).layout() is self._power_wrap:
+                    taken = row.takeAt(i)
+                    del taken
+                    break
+        except Exception:
+            pass
+        if narrow:
+            row.setDirection(QBoxLayout.Direction.TopToBottom)
+            row.addLayout(self._power_wrap, stretch=4)
+            row.addWidget(self._input_wrap, stretch=5, alignment=top)
+            row.addWidget(self._output_wrap, stretch=5, alignment=top)
+        else:
+            row.setDirection(QBoxLayout.Direction.LeftToRight)
+            row.addWidget(self._input_wrap, stretch=5, alignment=top)
+            row.addLayout(self._power_wrap, stretch=4)
+            row.addWidget(self._output_wrap, stretch=5, alignment=top)
+
+    def _rv(self, wide, compact, narrow):
+        """Pick a responsive value for the current mode."""
+        if self._resp == "narrow":
+            return narrow
+        if self._resp == "compact":
+            return compact
+        return wide
+
+    # -- responsive ----------------------------------------------------------
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self._apply_responsive()
+
+    def _apply_responsive(self) -> None:
+        """Adapt chrome density and row direction to the window width.
+
+        Wide keeps the dashboard mockup; compact tightens it; narrow
+        stacks the rows and collapses the sidebar to an icon rail.
+        Runs only on mode changes, so live resizes stay cheap. The
+        window width alone drives the mode (internal changes never feed
+        back into it), so this cannot oscillate.
+        """
+        w = self.width()
+        # Design pixels, not window pixels: content scales with the UI
+        # factor (e.g. 1.5x on HiDPI xcb), so a 1240px window can hold
+        # only ~827px of layout. Without this the modes misjudge and
+        # wide rows overflow on scaled displays.
+        try:
+            from .scaling import ui_scale
+            w = w / max(0.5, ui_scale())
+        except Exception:
+            pass
+        mode = ("narrow" if w < 850
+                else "compact" if w < 1150 else "wide")
+        if mode == self._resp:
+            return
+        self._resp = mode
+        narrow = mode == "narrow"
+        V = QBoxLayout.Direction.TopToBottom
+        H = QBoxLayout.Direction.LeftToRight
+
+        # Home
+        self._home_layout.setContentsMargins(
+            *self._rv((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._home_layout.setSpacing(self._rv(35, 24, 16))
+        self._top_layout.setContentsMargins(
+            *self._rv((78, 57, 66, 57), (40, 32, 36, 32), (20, 20, 20, 20)))
+        self._top_layout.setSpacing(self._rv(26, 18, 14))
+        if narrow != self._devices_narrow:
+            self._layout_devices_row(narrow)
+        self._devices_row.setSpacing(self._rv(24, 16, 12))
+        # The lowered label columns only align beside the tall button.
+        lowered = 0 if narrow else self._power_third
+        self._set_lowered(self._input_wrap, lowered)
+        self._set_lowered(self._output_wrap, lowered)
+        self._bottom_row.setDirection(V if narrow else H)
+        self._bottom_row.setSpacing(self._rv(35, 24, 16))
+        self._aad_layout.setContentsMargins(
+            *self._rv((69, 51, 57, 51), (36, 28, 32, 28), (20, 20, 20, 20)))
+        self._aad_layout.setSpacing(self._rv(16, 12, 10))
+
+        # Settings
+        self._settings_layout.setContentsMargins(
+            *self._rv((26, 24, 26, 24), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._settings_layout.setSpacing(self._rv(29, 20, 16))
+        for card_layout in (self._model_layout, self._audio_layout,
+                            self._appearance_layout, self._behavior_layout):
+            card_layout.setContentsMargins(
+                *self._rv((66, 45, 54, 45), (36, 28, 32, 28),
+                          (20, 20, 20, 20)))
+        self._layout_theme_grid(2 if narrow else 4)
+
+        # Logs / About
+        for page_layout in (self._logs_layout, self._about_layout):
+            page_layout.setContentsMargins(
+                *self._rv((34, 32, 34, 32), (20, 20, 20, 20),
+                          (12, 12, 12, 12)))
+        self._logs_layout.setSpacing(self._rv(14, 10, 8))
+        self._about_layout.setSpacing(self._rv(10, 8, 8))
+
+        # Sidebar rail on narrow windows.
+        self.sidebar.set_compact(narrow)
 
     @staticmethod
     def _window_size(base_w: int, base_h: int):
@@ -143,6 +291,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(26, 26, 26, 26)
         layout.setSpacing(35)
+        self._home_layout = layout
 
         # --- Top card: devices + power + VB pill ---
         top_card = QFrame()
@@ -150,22 +299,28 @@ class MainWindow(QMainWindow):
         top_layout = QVBoxLayout(top_card)
         top_layout.setContentsMargins(78, 57, 66, 57)
         top_layout.setSpacing(26)
+        self._top_layout = top_layout
 
         devices_row = QHBoxLayout()
         devices_row.setSpacing(24)
+        self._devices_row = devices_row
 
-        self.input_selector = DeviceSelector("Input", "input")
+        self.input_selector = DeviceSelector("Input Device", "input")
         self.input_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'input_device', id))
         # Labels start a third of the power button's height below its
         # top (per the design): offset the whole column downward.
+        # (Lifted again in narrow mode, where the columns stack.)
         power_third = sp(210) // 3
-        devices_row.addWidget(self._lowered(self.input_selector, power_third),
+        self._power_third = power_third
+        self._input_wrap = self._lowered(self.input_selector, power_third)
+        devices_row.addWidget(self._input_wrap,
                               stretch=5,
                               alignment=Qt.AlignmentFlag.AlignTop)
 
         power_wrap = QVBoxLayout()
         power_wrap.setSpacing(8)
+        self._power_wrap = power_wrap
         power_row = QHBoxLayout()
         power_row.addStretch()
         self.power_btn = PowerButton()
@@ -180,10 +335,11 @@ class MainWindow(QMainWindow):
         power_wrap.addWidget(self.status_label)
         devices_row.addLayout(power_wrap, stretch=4)
 
-        self.output_selector = DeviceSelector("Output", "output")
+        self.output_selector = DeviceSelector("Output Device", "output")
         self.output_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'output_device', id))
-        devices_row.addWidget(self._lowered(self.output_selector, power_third),
+        self._output_wrap = self._lowered(self.output_selector, power_third)
+        devices_row.addWidget(self._output_wrap,
                               stretch=5,
                               alignment=Qt.AlignmentFlag.AlignTop)
 
@@ -196,13 +352,18 @@ class MainWindow(QMainWindow):
         vb_layout.setContentsMargins(51, 27, 39, 27)
         vb_layout.setSpacing(14)
         vb_layout.addWidget(PhosphorIcon("gear", size=22))
-        vb_label = QLabel("Auto-switch Playback Device (VB Cable)")
-        vb_layout.addWidget(vb_label)
+        vb_label = QLabel(
+            "Auto-select VB-Cable as input device to capture system audio")
+        vb_label.setWordWrap(True)
+        # Stretch: the label takes all spare width (single line when it
+        # fits, graceful wrap only when genuinely narrow). Without it
+        # the layout starves the label and it wraps even in fullscreen.
+        vb_layout.addWidget(vb_label, stretch=1)
         vb_layout.addStretch()
         self.vb_switch = ToggleSwitch(checked=self.settings.vb_cable_enabled)
         self.vb_switch.setToolTip(
-            "Automatically switches Windows default playback device "
-            "to VB Cable input when running")
+            "Automatically selects VB-Cable as the input device "
+            "to capture system audio when running")
         self.vb_switch.toggled.connect(self._on_vb_cable_toggled)
         vb_layout.addWidget(self.vb_switch)
         top_layout.addWidget(vb_pill)
@@ -212,18 +373,20 @@ class MainWindow(QMainWindow):
         # Initial state
         self.input_selector.setEnabled(not self.settings.vb_cable_enabled)
 
-        # --- Bottom row: VAD card + stats card ---
+        # --- Bottom row: AAD card + stats card ---
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(35)
+        self._bottom_row = bottom_row
 
-        vad_card = QFrame()
-        vad_card.setObjectName("card")
-        vad_layout = QVBoxLayout(vad_card)
-        vad_layout.setContentsMargins(69, 51, 57, 51)
-        vad_layout.setSpacing(16)
+        aad_card = QFrame()
+        aad_card.setObjectName("card")
+        aad_layout = QVBoxLayout(aad_card)
+        aad_layout.setContentsMargins(69, 51, 57, 51)
+        aad_layout.setSpacing(16)
+        self._aad_layout = aad_layout
 
-        vad_header = QHBoxLayout()
-        vad_header.setSpacing(14)
+        aad_header = QHBoxLayout()
+        aad_header.setSpacing(14)
         icon_circle = QFrame()
         icon_circle.setObjectName("icon-circle")
         icon_circle.setFixedSize(sp(44), sp(44))
@@ -231,52 +394,52 @@ class MainWindow(QMainWindow):
         icon_layout.setContentsMargins(0, 0, 0, 0)
         self._badge_icon = self._make_badge_icon()
         icon_layout.addWidget(self._badge_icon)
-        vad_header.addWidget(icon_circle)
+        aad_header.addWidget(icon_circle)
 
-        vad_titles = QVBoxLayout()
-        vad_titles.setSpacing(2)
-        vad_title = QLabel("VAD")
-        vad_title.setObjectName("card-title")
-        vad_titles.addWidget(vad_title)
-        vad_sub = QLabel("Voice Activity Detection")
-        vad_sub.setObjectName("card-subtitle")
-        vad_titles.addWidget(vad_sub)
-        vad_header.addLayout(vad_titles)
-        vad_header.addStretch()
+        aad_titles = QVBoxLayout()
+        aad_titles.setSpacing(2)
+        aad_title = QLabel("AAD")
+        aad_title.setObjectName("card-title")
+        aad_titles.addWidget(aad_title)
+        aad_sub = QLabel("Audio Activity detection")
+        aad_sub.setObjectName("card-subtitle")
+        aad_titles.addWidget(aad_sub)
+        aad_header.addLayout(aad_titles)
+        aad_header.addStretch()
 
-        self.vad_switch = ToggleSwitch(checked=self.settings.vad_enabled)
-        vad_header.addWidget(self.vad_switch)
-        vad_layout.addLayout(vad_header)
+        self.aad_switch = ToggleSwitch(checked=self.settings.aad_enabled)
+        aad_header.addWidget(self.aad_switch)
+        aad_layout.addLayout(aad_header)
 
         divider = QFrame()
         divider.setObjectName("divider")
         divider.setFrameShape(QFrame.Shape.HLine)
-        vad_layout.addWidget(divider)
+        aad_layout.addWidget(divider)
 
-        vad_layout.addStretch(1)
+        aad_layout.addStretch(1)
 
         thresh_title = QLabel("Threshold")
         thresh_title.setObjectName("section")
-        vad_layout.addWidget(thresh_title)
+        aad_layout.addWidget(thresh_title)
 
         thresh_row = QHBoxLayout()
         thresh_row.setSpacing(14)
-        self.thresh_slider = QSlider(Qt.Orientation.Horizontal)
+        self.thresh_slider = HoverSlider(Qt.Orientation.Horizontal)
         self.thresh_slider.setRange(-80, -10)
-        self.thresh_slider.setValue(int(self.settings.vad_threshold))
+        self.thresh_slider.setValue(int(self.settings.aad_threshold))
         self.thresh_slider.valueChanged.connect(self._on_threshold_changed)
-        self.thresh_slider.setEnabled(self.settings.vad_enabled)
+        self.thresh_slider.setEnabled(self.settings.aad_enabled)
         thresh_row.addWidget(self.thresh_slider, stretch=1)
-        self.thresh_val_label = QLabel(f"{self.settings.vad_threshold:.0f} dB")
+        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
         self.thresh_val_label.setObjectName("thresh-value")
         self.thresh_val_label.setFixedWidth(sp(64))
         self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         thresh_row.addWidget(self.thresh_val_label)
-        vad_layout.addLayout(thresh_row)
+        aad_layout.addLayout(thresh_row)
 
-        self.vad_switch.toggled.connect(self._on_vad_toggled)
-        vad_layout.addStretch(1)
-        bottom_row.addWidget(vad_card, stretch=3)
+        self.aad_switch.toggled.connect(self._on_aad_toggled)
+        aad_layout.addStretch(1)
+        bottom_row.addWidget(aad_card, stretch=3)
 
         stats_card = QFrame()
         stats_card.setObjectName("card")
@@ -295,6 +458,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(26, 24, 26, 24)
         layout.setSpacing(29)
+        self._settings_layout = layout
 
         title = QLabel("Settings")
         title.setObjectName("page-title")
@@ -310,6 +474,7 @@ class MainWindow(QMainWindow):
         model_layout = QVBoxLayout(model_card)
         model_layout.setContentsMargins(66, 45, 54, 45)
         model_layout.setSpacing(10)
+        self._model_layout = model_layout
         model_title = QLabel("Denoising model")
         model_title.setObjectName("card-title")
         model_head = QHBoxLayout()
@@ -321,7 +486,7 @@ class MainWindow(QMainWindow):
 
         model_row = QHBoxLayout()
         model_row.setSpacing(14)
-        self.model_combo = QComboBox()
+        self.model_combo = AnimatedComboBox()
         self.model_combo.setObjectName("settings-combo")
         try:
             from ..engines import available_models
@@ -354,6 +519,7 @@ class MainWindow(QMainWindow):
         audio_layout = QVBoxLayout(audio_card)
         audio_layout.setContentsMargins(66, 45, 54, 45)
         audio_layout.setSpacing(10)
+        self._audio_layout = audio_layout
         audio_title = QLabel("Audio")
         audio_title.setObjectName("card-title")
         audio_head = QHBoxLayout()
@@ -368,7 +534,7 @@ class MainWindow(QMainWindow):
         atten_label = QLabel("Max attenuation")
         atten_row.addWidget(atten_label)
         atten_row.addStretch()
-        self.atten_slider = QSlider(Qt.Orientation.Horizontal)
+        self.atten_slider = HoverSlider(Qt.Orientation.Horizontal)
         self.atten_slider.setRange(-80, -20)
         try:
             atten_val = int(self.settings.atten_lim_db)
@@ -394,6 +560,7 @@ class MainWindow(QMainWindow):
         appearance_layout = QVBoxLayout(appearance_card)
         appearance_layout.setContentsMargins(66, 45, 54, 45)
         appearance_layout.setSpacing(10)
+        self._appearance_layout = appearance_layout
         appearance_title = QLabel("Appearance")
         appearance_title.setObjectName("card-title")
         appearance_head = QHBoxLayout()
@@ -403,8 +570,11 @@ class MainWindow(QMainWindow):
         appearance_layout.addLayout(appearance_head)
         appearance_layout.addSpacing(10)
 
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(14)
+        theme_grid = QGridLayout()
+        theme_grid.setContentsMargins(0, 0, 0, 0)
+        theme_grid.setSpacing(14)
+        self.theme_grid = theme_grid
+        self.theme_tiles = []
         self.theme_group = QButtonGroup(self)
         self.theme_group.setExclusive(True)
         for index, theme_id in enumerate(theme_store.theme_ids()):
@@ -417,9 +587,9 @@ class MainWindow(QMainWindow):
                 parent=self,
             )
             self.theme_group.addButton(tile, index)
-            theme_row.addWidget(tile)
-        theme_row.addStretch()
-        appearance_layout.addLayout(theme_row)
+            self.theme_tiles.append(tile)
+        appearance_layout.addLayout(theme_grid)
+        self._layout_theme_grid(4)
         try:
             saved = theme_store.theme_ids().index(self.settings.theme)
         except ValueError:
@@ -442,6 +612,7 @@ class MainWindow(QMainWindow):
         behavior_layout = QVBoxLayout(behavior_card)
         behavior_layout.setContentsMargins(66, 45, 54, 45)
         behavior_layout.setSpacing(12)
+        self._behavior_layout = behavior_layout
         behavior_title = QLabel("Behavior")
         behavior_title.setObjectName("card-title")
         behavior_head = QHBoxLayout()
@@ -473,6 +644,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 32, 34, 32)
         layout.setSpacing(14)
+        self._logs_layout = layout
 
         title = QLabel("Logs")
         title.setObjectName("page-title")
@@ -535,6 +707,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(34, 32, 34, 32)
         layout.setSpacing(10)
+        self._about_layout = layout
         layout.addStretch()
 
         icon_path = get_icon_path()
@@ -591,9 +764,37 @@ class MainWindow(QMainWindow):
     # -- navigation ------------------------------------------------------------
     def _on_page_requested(self, index: int):
         self.sidebar.set_active_page(index)
-        self.stack.setCurrentIndex(index)
+        try:
+            from .animations import slide_stack
+            slide_stack(self.stack, index)
+        except Exception:
+            self.stack.setCurrentIndex(index)
         if index == 2:  # Logs
             self._refresh_logs()
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        if self._shown_once:
+            return
+        self._shown_once = True
+        try:
+            from .animations import motion_ok
+            from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+            # Window fade-in (Apple launch feel).
+            if motion_ok():
+                try:
+                    self.setWindowOpacity(0.0)
+                    anim = QPropertyAnimation(self, b"windowOpacity", self)
+                    anim.setDuration(220)
+                    anim.setStartValue(0.0)
+                    anim.setEndValue(1.0)
+                    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                    anim.start()
+                    self._window_fade = anim  # keep alive
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # -- worker / tray / state (unchanged behavior) ------------------------------
     def setup_worker(self):
@@ -641,7 +842,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _make_badge_icon() -> PhosphorIcon:
-        """VAD badge glyph in the active theme's badge color."""
+        """AAD badge glyph in the active theme's badge color."""
         return PhosphorIcon(
             "waveform", color=theme_store.current()["badge_fg"], size=24)
 
@@ -754,8 +955,8 @@ class MainWindow(QMainWindow):
             onnx_path=self.settings.onnx_model_path,
             input_device=self.input_selector.selected_device_id,
             output_device=self.output_selector.selected_device_id,
-            vad_enabled=self.vad_switch.isChecked(),
-            vad_threshold=self.thresh_slider.value(),
+            aad_enabled=self.aad_switch.isChecked(),
+            aad_threshold=self.thresh_slider.value(),
             atten_lim_db=self.settings.atten_lim_db,
             vb_cable_enabled=self.vb_switch.isChecked()
         )
@@ -773,6 +974,7 @@ class MainWindow(QMainWindow):
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(True)
         self.update_status("Isolating audio")
+        self._start_status_pulse()
 
         # Disable controls while running
         self._set_controls_enabled(False)
@@ -791,6 +993,7 @@ class MainWindow(QMainWindow):
         """Called when worker stops."""
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(False)
+        self._stop_status_pulse()
 
         # Re-enable controls
         self._set_controls_enabled(True)
@@ -806,16 +1009,16 @@ class MainWindow(QMainWindow):
         _logger.info(MSG_PROCESSING_STOPPED)
 
     def _on_threshold_changed(self, value):
-        """Handle VAD threshold slider change."""
+        """Handle AAD threshold slider change."""
         self.thresh_val_label.setText(f"{value} dB")
         if not self.worker.is_running:
-            self.settings.vad_threshold = float(value)
+            self.settings.aad_threshold = float(value)
         # TODO: Support live updates to worker
 
-    def _on_vad_toggled(self, checked):
-        """Handle VAD switch toggle."""
+    def _on_aad_toggled(self, checked):
+        """Handle AAD switch toggle."""
         self.thresh_slider.setEnabled(checked)
-        self.settings.vad_enabled = checked
+        self.settings.aad_enabled = checked
 
     def update_status(self, message: str):
         """Update status line message."""
@@ -835,10 +1038,55 @@ class MainWindow(QMainWindow):
 
         _logger.info(f"Status update: {message}")
 
+    def _start_status_pulse(self) -> None:
+        """Breathe the status line while isolating (live-indicator feel)."""
+        try:
+            from .animations import cancel_fade, motion_ok
+            from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
+            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            self._stop_status_pulse()
+            if not motion_ok():
+                return
+            # The pulse owns the label's effect exclusively: void any
+            # entrance fade first so two animations never fight over it
+            # (that replaces the effect mid-paint -> QPainter errors).
+            cancel_fade(self.status_label)
+            eff = QGraphicsOpacityEffect(self.status_label)
+            self.status_label.setGraphicsEffect(eff)
+            eff.setOpacity(1.0)
+            anim = QPropertyAnimation(eff, b"opacity", self)
+            anim.setDuration(1400)
+            anim.setStartValue(1.0)
+            anim.setKeyValueAt(0.5, 0.55)
+            anim.setEndValue(1.0)
+            anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+            anim.setLoopCount(-1)
+            anim.start()
+            self._status_pulse = anim
+        except Exception:
+            pass
+
+    def _stop_status_pulse(self) -> None:
+        try:
+            if self._status_pulse is not None:
+                try:
+                    self._status_pulse.stop()
+                except Exception:
+                    pass
+                self._status_pulse = None
+            if hasattr(self, "status_label"):
+                try:
+                    self.status_label.setGraphicsEffect(None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def handle_error(self, message: str):
         """Handle error from worker."""
         self._error_state = True
         self.power_btn.set_error(True)
+        self._stop_status_pulse()
         self.update_status(f"Error: {message}")
         if self.tray:
             self.tray.notify("Poise Error", message, is_error=True)

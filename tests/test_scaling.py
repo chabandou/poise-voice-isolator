@@ -67,8 +67,19 @@ def test_sp_math():
     assert sp(1) >= 1
 
 
-def test_sp_defaults_to_one_without_qapp():
+def _hide_qapp(monkeypatch):
+    """Simulate 'no QApplication' even with the session app running."""
+    try:
+        import PyQt6.QtWidgets as _W
+    except ImportError:
+        return  # No Qt here at all: already "without qapp".
+    monkeypatch.setattr(
+        _W.QApplication, "instance", staticmethod(lambda: None))
+
+
+def test_sp_defaults_to_one_without_qapp(monkeypatch):
     # No QApplication here and no env override -> factor 1.0.
+    _hide_qapp(monkeypatch)
     assert ui_scale() == 1.0
     assert sp(216) == 216
 
@@ -80,6 +91,7 @@ def test_env_override(monkeypatch):
 
 
 def test_env_override_invalid_falls_back(monkeypatch):
+    _hide_qapp(monkeypatch)
     monkeypatch.setenv("POISE_UI_SCALE", "not-a-number")
     assert ui_scale() == 1.0
 

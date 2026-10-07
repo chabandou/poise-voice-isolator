@@ -98,7 +98,7 @@ class PhosphorIcon(QLabel):
     """A single-color Phosphor icon drawn by logical name.
 
     With color=None (default) the icon follows the active theme accent;
-    pass an explicit color to pin it (e.g. the VAD badge glyph).
+    pass an explicit color to pin it (e.g. the AAD badge glyph).
     """
 
     NAMES = tuple(FILES)

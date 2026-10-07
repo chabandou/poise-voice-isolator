@@ -7,7 +7,7 @@ active indicator, and a version label pinned to the bottom.
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
 )
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import QPoint, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QPixmap
 
 from .phosphor import PhosphorIcon
@@ -26,16 +26,42 @@ class NavButton(QPushButton):
         self.setObjectName("nav")
         self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip(text)
+        try:
+            from ..cursors import apply_link_cursor
+            apply_link_cursor(self)
+        except Exception:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(26, 0, 8, 0)
-        layout.setSpacing(12)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(26, 0, 8, 0)
+        self._layout.setSpacing(12)
         self._icon = PhosphorIcon(
             icon, color=current_theme()["nav_muted"], size=20)
-        layout.addWidget(self._icon)
+        self._layout.addWidget(self._icon)
         self._label = QLabel(text)
         self._label.setObjectName("nav-text")
-        layout.addWidget(self._label, stretch=1)
+        self._layout.addWidget(self._label, stretch=1)
+
+        # Apple-style press dip (opacity only — layout-safe).
+        try:
+            from ..animations import install_press_fade
+            install_press_fade(self, pressed_opacity=0.6)
+        except Exception:
+            pass
+
+    def set_compact(self, compact: bool) -> None:
+        """Icon-rail mode: hide the label, center the icon."""
+        self._label.setVisible(not compact)
+        if compact:
+            self._layout.setContentsMargins(0, 0, 0, 0)
+            self._layout.setAlignment(
+                self._icon, Qt.AlignmentFlag.AlignCenter)
+        else:
+            self._layout.setContentsMargins(26, 0, 8, 0)
+            self._layout.setAlignment(
+                self._icon,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     @property
     def index(self) -> int:
@@ -66,50 +92,80 @@ class Sidebar(QFrame):
         ("About", "info"),
     )
 
+    FULL_W = 216
+    RAIL_W = 68
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(sp(216))
+        self._compact = False
+        self.setFixedWidth(sp(self.FULL_W))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 24, 16, 22)
         layout.setSpacing(8)
 
         # Logo row (keeps its 16px from the edge via its own margins).
-        logo_widget = QWidget()
-        logo_widget_layout = QHBoxLayout(logo_widget)
+        self._logo_widget = QWidget()
+        logo_widget_layout = QHBoxLayout(self._logo_widget)
         logo_widget_layout.setContentsMargins(16, 0, 0, 0)
         logo_widget_layout.setSpacing(12)
+        self._logo_layout = logo_widget_layout
+        self._logo_spacer = False
         self._logo_icon = self._make_logo_icon()
         logo_widget_layout.addWidget(self._logo_icon)
-        logo_label = QLabel("POISE")
-        logo_label.setObjectName("logo")
-        font = logo_label.font()
+        self._logo_label = QLabel("POISE")
+        self._logo_label.setObjectName("logo")
+        font = self._logo_label.font()
         font.setPointSize(sp(19))
         font.setWeight(QFont.Weight.DemiBold)
         font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 135)
-        logo_label.setFont(font)
-        logo_widget_layout.addWidget(logo_label)
+        self._logo_label.setFont(font)
+        logo_widget_layout.addWidget(self._logo_label)
         logo_widget_layout.addStretch()
-        layout.addWidget(logo_widget)
+        layout.addWidget(self._logo_widget)
         layout.addSpacing(30)
+
+        # Nav cluster: rows touch (no inter-button gap — the old 8px
+        # spacing lives on as 4px + 4px internal padding per button, so
+        # the rhythm is unchanged). Kept in its own container so the
+        # outer layout's spacing still breathes around logo/version.
+        self._nav_wrap = QWidget()
+        self._nav_wrap.setObjectName("nav-wrap")
+        nav_layout = QVBoxLayout(self._nav_wrap)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(0)
 
         # Nav buttons.
         self._buttons = []
         for i, (text, icon) in enumerate(self.PAGES):
             btn = NavButton(i, icon, text)
             btn.clicked.connect(self._on_nav_clicked)
-            layout.addWidget(btn)
+            nav_layout.addWidget(btn)
             self._buttons.append(btn)
         self._buttons[0].set_active(True)
+        layout.addWidget(self._nav_wrap)
 
         layout.addStretch()
 
         # Version footer.
-        version = QLabel(f"POISE v{__version__}")
-        version.setObjectName("version")
-        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(version)
+        self._version = QLabel(f"POISE v{__version__}")
+        self._version.setObjectName("version")
+        self._version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._version)
+
+        # Sliding active indicator: thin accent bar at the left edge that
+        # glides between buttons (Apple sidebar feel). Absolutely
+        # positioned — never in the layout — so it animates for free.
+        self._indicator = QFrame(self)
+        self._indicator.setObjectName("nav-indicator")
+        self._indicator.setFixedWidth(max(2, sp(3)))
+        self._indicator_anim = None
+        self._active_index = 0
+        self._refresh_indicator_style()
+        # Snap into place once layout has run.
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._snap_indicator())
 
     @staticmethod
     def _make_logo_icon() -> QLabel:
@@ -136,12 +192,110 @@ class Sidebar(QFrame):
     def set_active_page(self, index: int) -> None:
         for i, btn in enumerate(self._buttons):
             btn.set_active(i == index)
+        self._active_index = index
+        self._slide_indicator(animated=True)
+
+    @property
+    def is_compact(self) -> bool:
+        return self._compact
+
+    def set_compact(self, compact: bool) -> None:
+        """Collapse to an icon rail (narrow windows) or back."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.setFixedWidth(sp(self.RAIL_W if compact else self.FULL_W))
+        for btn in self._buttons:
+            btn.set_compact(compact)
+        # Logo mark stays (no text); center it with a balancing spacer.
+        self._logo_label.setVisible(not compact)
+        if compact and not self._logo_spacer:
+            self._logo_layout.insertStretch(0, 1)
+            self._logo_spacer = True
+        elif not compact and self._logo_spacer:
+            taken = self._logo_layout.takeAt(0)
+            del taken
+            self._logo_spacer = False
+        self._version.setVisible(not compact)
+        # Geometry changed: re-snap the indicator without animating.
+        self._snap_indicator()
 
     def refresh_theme(self) -> None:
         """Re-apply state colors after a theme switch."""
         for btn in self._buttons:
             btn.set_active(btn.isChecked())
+        self._refresh_indicator_style()
+        self._snap_indicator()
         self._reload_logo()
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        self._snap_indicator()
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self._snap_indicator()
+
+    # -- sliding indicator ---------------------------------------------------
+    def _refresh_indicator_style(self) -> None:
+        try:
+            accent = current_theme()["accent"]
+            radius = max(1, sp(3) // 2)
+            self._indicator.setStyleSheet(
+                f"QFrame#nav-indicator {{ background-color: {accent}; "
+                f"border: none; border-radius: {radius}px; }}")
+        except Exception:
+            pass
+
+    def _indicator_target(self):
+        try:
+            btn = self._buttons[self._active_index]
+            # Buttons live in the nav cluster: map to sidebar coords.
+            # The strip spans the full row height like a left border.
+            top_left = btn.mapTo(self, QPoint(0, 0))
+            w = self._indicator.width() or max(2, sp(3))
+            return 0, top_left.y(), w, btn.height()
+        except Exception:
+            return 0, 0, max(2, sp(3)), 24
+
+    def _snap_indicator(self) -> None:
+        try:
+            if self._indicator_anim is not None:
+                try:
+                    self._indicator_anim.stop()
+                except Exception:
+                    pass
+            x, y, w, h = self._indicator_target()
+            self._indicator.setGeometry(x, y, w, h)
+            self._indicator.show()
+            self._indicator.raise_()
+        except Exception:
+            pass
+
+    def _slide_indicator(self, animated: bool = True) -> None:
+        try:
+            from ..animations import motion_ok
+            x, y, w, h = self._indicator_target()
+            self._indicator.show()
+            self._indicator.raise_()
+            if not animated or not motion_ok():
+                self._indicator.setGeometry(x, y, w, h)
+                return
+            from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QRect
+            if self._indicator_anim is not None:
+                try:
+                    self._indicator_anim.stop()
+                except Exception:
+                    pass
+            self._indicator_anim = QPropertyAnimation(
+                self._indicator, b"geometry", self)
+            self._indicator_anim.setDuration(220)
+            self._indicator_anim.setStartValue(self._indicator.geometry())
+            self._indicator_anim.setEndValue(QRect(x, y, w, h))
+            self._indicator_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._indicator_anim.start()
+        except Exception:
+            pass
 
     def _reload_logo(self) -> None:
         """Reload the logo pixmap for the active theme's icon variant."""

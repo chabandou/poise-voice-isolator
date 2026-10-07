@@ -43,7 +43,7 @@ QPushButton#nav {
     border-bottom-left-radius: 0px;
     border-top-right-radius: 10px;
     border-bottom-right-radius: 10px;
-    min-height: 44px;
+    min-height: 52px;
     color: {nav_muted};
     font-size: 14px;
     font-weight: 500;
@@ -56,7 +56,6 @@ QPushButton#nav:hover {
 
 QPushButton#nav[active="true"] {
     background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
-    border-left: 3px solid {accent};
     color: {nav_active};
 }
 
@@ -192,6 +191,14 @@ QComboBox#device-combo:hover {
     border-bottom: 1px solid {accent};
 }
 
+QComboBox#device-combo:on {
+    border-bottom: 1px solid {accent};
+}
+
+QComboBox#device-combo:focus {
+    outline: none;
+}
+
 QComboBox#device-combo:disabled {
     color: #52525b;
     border-bottom: 1px solid rgba(82, 82, 91, 0.4);
@@ -211,15 +218,24 @@ QComboBox#device-combo::down-arrow {
     margin-right: 6px;
 }
 
-QComboBox#device-combo QAbstractItemView {
+/* Dropdown popups (shared list styling for both combo styles).
+   NOTE: QSS ::item subcontrols never reach combo popup views, so row
+   height, dividers, and row states are painted by PopupItemDelegate
+   (see widgets/combo.py) — only the frame itself is styled here.
+   The popup's outer frame is styled in code (AnimatedComboBox): style-
+   sheets don't cascade into top-level popup windows, so it carries its
+   own tiny sheet. */
+QComboBox#device-combo QAbstractItemView,
+QComboBox#settings-combo QAbstractItemView {
     background-color: {pill};
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 8px;
     color: {text};
-    padding: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 10px;
+    padding: 6px;
+    outline: none;
+    font-size: 15px;
     selection-background-color: {accent};
     selection-color: {bg};
-    outline: none;
 }
 
 /* Settings-page dropdown (boxed style) */
@@ -237,6 +253,14 @@ QComboBox#settings-combo:hover {
     border: 1px solid {accent};
 }
 
+QComboBox#settings-combo:on {
+    border: 1px solid {accent};
+}
+
+QComboBox#settings-combo:focus {
+    outline: none;
+}
+
 QComboBox#settings-combo::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
@@ -249,15 +273,6 @@ QComboBox#settings-combo::down-arrow {
     width: 12px;
     height: 8px;
     margin-right: 8px;
-}
-
-QComboBox#settings-combo QAbstractItemView {
-    background-color: {pill};
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    color: {text};
-    selection-background-color: {accent};
-    selection-color: {bg};
-    outline: none;
 }
 
 /* =================================================================================
@@ -307,7 +322,7 @@ QPushButton#refresh-btn:hover { color: {accent}; }
    SLIDERS
    ================================================================================= */
 QSlider {
-    min-height: 26px;
+    min-height: 30px;
 }
 
 QSlider::groove:horizontal {
@@ -324,8 +339,8 @@ QSlider::sub-page:horizontal {
 
 QSlider::handle:horizontal {
     background: {text};
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     margin: -7px 0;
     border-radius: 11px;
     border: 2px solid {accent};
@@ -333,10 +348,7 @@ QSlider::handle:horizontal {
 
 QSlider::handle:horizontal:hover {
     background: {accent_light};
-    width: 26px;
-    height: 26px;
-    margin: -8px 0;
-    border-radius: 12px;
+    border-radius: 11px;
     border-color: {text};
 }
 
@@ -389,13 +401,16 @@ QTextEdit#logs {
     padding: 8px;
 }
 
-/* Tooltips */
-QToolTip {
-    background-color: #1e293b;
-    border: 1px solid #334155;
-    color: #f8fafc;
-    padding: 5px;
-    border-radius: 4px;
+/* Tooltips: native (tray icons — fallback only) and the app-managed
+   animated tooltip (see gui/tooltip.py) share one look, fully themed. */
+QToolTip,
+QLabel#poise-tip {
+    background-color: {sidebar};
+    border: 1px solid rgba({border_rgb}, {border_alpha});
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: {text};
+    font-size: 14px;
 }
 
 /* Page scrollbars */

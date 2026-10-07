@@ -127,7 +127,7 @@ DeviceList {
     padding: 1;
 }
 
-VADPanel {
+AADPanel {
     column-span: 1;
     row-span: 1;
     background: transparent;
@@ -257,7 +257,7 @@ Screen.-narrow #stats-panel {
     height: 21;
 }
 
-Screen.-narrow #vad-panel {
+Screen.-narrow #aad-panel {
     height: 11;
 }
 
@@ -269,39 +269,39 @@ Screen.-narrow #title-divider {
     display: none;
 }
 
-#vad-container {
+#aad-container {
     padding: 0 0;
 }
 
-.vad-row {
+.aad-row {
     height: 1;
     width: 1fr;
 }
 
-.vad-label {
+.aad-label {
     width: auto;
     color: $dim;
 }
 
-.vad-value {
+.aad-value {
     width: 1fr;
     content-align: right middle;
     color: $accent;
 }
 
-.vad-status {
+.aad-status {
     width: 1fr;
     content-align: right middle;
     color: $accent;
 }
 
-.vad-hint {
+.aad-hint {
     width: 1fr;
     content-align: center middle;
     color: #888888;
 }
 
-.vad-bar {
+.aad-bar {
     width: 1fr;
     content-align: center middle;
     color: $accent;

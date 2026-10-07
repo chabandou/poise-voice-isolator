@@ -410,8 +410,8 @@ def print_stats(stats: Dict[str, Any], elapsed: float, buffer_info: Optional[Tup
     else:
         stats_str = f"\rFrames: {stats['frame_count']} | RTF: {stats['rtf']:.3f} | Avg: {stats['avg_time_ms']:.2f}ms"
     
-    if 'vad_bypass_ratio' in stats:
-        stats_str += f" | VAD bypass: {stats['vad_bypass_ratio']*100:.0f}%"
+    if 'aad_bypass_ratio' in stats:
+        stats_str += f" | AAD bypass: {stats['aad_bypass_ratio']*100:.0f}%"
     
     stats_str += f" | Running: {elapsed:.1f}s"
     print(stats_str, end='', flush=True)
@@ -425,12 +425,12 @@ def print_final_stats(stats: Dict[str, Any]) -> None:
         stats: Statistics dictionary from processor.get_stats()
     """
     print(f"\n\nProcessing complete. Processed {stats['frame_count']} frames")
-    if 'vad_bypass_ratio' in stats:
-        bypass_ratio = stats['vad_bypass_ratio']
+    if 'aad_bypass_ratio' in stats:
+        bypass_ratio = stats['aad_bypass_ratio']
         if bypass_ratio >= 1.0:
-            print(f"VAD bypassed {bypass_ratio*100:.1f}% of frames (all frames bypassed)")
+            print(f"AAD bypassed {bypass_ratio*100:.1f}% of frames (all frames bypassed)")
         elif bypass_ratio > 0:
             performance_boost = 1 / (1 - bypass_ratio)
-            print(f"VAD bypassed {bypass_ratio*100:.1f}% of frames (performance boost: ~{performance_boost:.1f}x)")
+            print(f"AAD bypassed {bypass_ratio*100:.1f}% of frames (performance boost: ~{performance_boost:.1f}x)")
         else:
-            print(f"VAD bypassed {bypass_ratio*100:.1f}% of frames (no bypass)")
+            print(f"AAD bypassed {bypass_ratio*100:.1f}% of frames (no bypass)")

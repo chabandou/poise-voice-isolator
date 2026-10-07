@@ -20,7 +20,7 @@ class StatsPanel(QFrame):
     Shows:
     - RTF (Real-Time Factor)
     - Average processing time
-    - VAD bypass percentage
+    - AAD bypass percentage
     """
     
     def __init__(self, parent=None):
@@ -46,9 +46,9 @@ class StatsPanel(QFrame):
         layout.addWidget(self._make_divider())
         layout.addStretch(1)
 
-        self._vad_widget = self._create_stat_widget(
-            "pulse", "VAD BYPASS", "0%")
-        layout.addWidget(self._vad_widget)
+        self._aad_widget = self._create_stat_widget(
+            "pulse", "AAD BYPASS", "0%")
+        layout.addWidget(self._aad_widget)
         layout.addWidget(self._make_divider())
         layout.addStretch(1)
 
@@ -124,9 +124,9 @@ class StatsPanel(QFrame):
         avg_time = stats.get('avg_time_ms', 0)
         self._time_widget.value_label.setText(f"{avg_time:.1f} ms")
         
-        # Update VAD bypass
-        bypass_ratio = stats.get('vad_bypass_ratio', 0)
-        self._vad_widget.value_label.setText(f"{bypass_ratio * 100:.0f}%")
+        # Update AAD bypass
+        bypass_ratio = stats.get('aad_bypass_ratio', 0)
+        self._aad_widget.value_label.setText(f"{bypass_ratio * 100:.0f}%")
         
         # Update buffer status
         input_buf = stats.get('input_buffer', 0)
@@ -138,10 +138,10 @@ class StatsPanel(QFrame):
         self._rtf_widget.value_label.setText("0.00")
         self._rtf_widget.value_label.setObjectName("stat-value")
         self._time_widget.value_label.setText("0.0 ms")
-        self._vad_widget.value_label.setText("0%")
+        self._aad_widget.value_label.setText("0%")
         self._buffer_widget.value_label.setText("0 / 0")
         
         # Refresh styles
-        for widget in [self._rtf_widget, self._time_widget, self._vad_widget, self._buffer_widget]:
+        for widget in [self._rtf_widget, self._time_widget, self._aad_widget, self._buffer_widget]:
             widget.value_label.style().unpolish(widget.value_label)
             widget.value_label.style().polish(widget.value_label)

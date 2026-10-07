@@ -1,7 +1,7 @@
 """
-Voice Activity Detection (VAD)
+Audio Activity Detection (AAD)
 
-Simple energy-based VAD for skipping processing during silence,
+Simple energy-based AAD for skipping processing during silence,
 providing 2-3x performance boost.
 """
 import numpy as np
@@ -9,20 +9,20 @@ import numpy as np
 from .constants import DEFAULT_FRAME_SIZE
 
 
-class VoiceActivityDetector:
+class AudioActivityDetector:
     """
-    Simple energy-based Voice Activity Detection (VAD).
+    Simple energy-based Audio Activity Detection (AAD).
     Skips processing during silence for 2-3x performance boost.
     """
     
     def __init__(self, threshold_db: float = -40.0, hang_time_ms: float = 300.0, 
                  sample_rate: int = 48000, frame_size: int = DEFAULT_FRAME_SIZE):
         """
-        Initialize VAD.
+        Initialize AAD.
         
         Args:
             threshold_db: Energy threshold in dB (lower = more sensitive)
-            hang_time_ms: How long to keep processing after speech ends (smoothing)
+            hang_time_ms: How long to keep processing after activity ends (smoothing)
             sample_rate: Audio sample rate
             frame_size: Engine frame size in samples (hang time is frame-counted)
         """
@@ -40,19 +40,19 @@ class VoiceActivityDetector:
         self.bypassed_frames = 0
     
     def set_threshold(self, threshold_db: float) -> None:
-        """Update the VAD threshold at runtime."""
+        """Update the AAD threshold at runtime."""
         self.threshold_db = threshold_db
         self.threshold_linear = 10 ** (threshold_db / 20)
     
-    def is_speech(self, audio: np.ndarray) -> bool:
+    def is_audio(self, audio: np.ndarray) -> bool:
         """
-        Determine if audio contains speech.
+        Determine if audio contains activity.
         
         Args:
             audio: Audio samples
         
         Returns:
-            True if speech detected, False if silence
+            True if activity detected, False if silence
         """
         self.total_frames += 1
         
@@ -80,7 +80,7 @@ class VoiceActivityDetector:
                 return False
     
     def get_stats(self) -> dict:
-        """Get VAD statistics."""
+        """Get AAD statistics."""
         if self.total_frames == 0:
             return {'total': 0, 'active': 0, 'bypassed': 0, 'bypass_ratio': 0.0}
         
@@ -92,7 +92,7 @@ class VoiceActivityDetector:
         }
     
     def reset(self):
-        """Reset VAD state."""
+        """Reset AAD state."""
         self.frames_since_active = self.hang_frames + 1
         self.bypass_active = False
         self.total_frames = 0

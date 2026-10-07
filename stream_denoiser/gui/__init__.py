@@ -109,6 +109,15 @@ def run_gui():
             # This might be a stale lock, so we'll continue anyway
             _logger.warning("Could not connect to existing instance, but shared memory indicates one may be running.")
     
+    # Point Qt at the OS cursor theme before it resolves link/hand
+    # cursors (XCURSOR_THEME unset == ugly built-in fallback glyphs).
+    try:
+        from .cursors import ensure_cursor_env
+        for _k, _v in ensure_cursor_env().items():
+            _logger.info(f"Cursor env default applied: {_k}={_v}")
+    except Exception as _e:
+        _logger.warning(f"Cursor theme bootstrap skipped: {_e}")
+
     app = QApplication(sys.argv)
     app.setApplicationName("Poise Voice Isolator")
     app.setOrganizationName("Poise")
@@ -147,6 +156,13 @@ def run_gui():
 
     _main_window = MainWindow()
     _main_window.show()
+
+    # Animated, themed tooltips for every widget tip in the window.
+    try:
+        from .tooltip import install_tooltips
+        install_tooltips(app, _main_window)
+    except Exception as _e:
+        _logger.warning(f"Animated tooltips unavailable: {_e}")
     
     # Setup local server to receive messages from other instances
     _setup_local_server(_main_window)

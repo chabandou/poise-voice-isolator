@@ -35,16 +35,16 @@ MODEL_INFO = {
 # RNNoise constants (RNNoise expects float samples in 16-bit range, not [-1, 1])
 RNNOISE_SCALE = 32768.0
 
-# VAD constants
-DEFAULT_VAD_THRESHOLD_DB = -40.0
-DEFAULT_VAD_HANG_TIME_MS = 300.0
+# AAD constants
+DEFAULT_AAD_THRESHOLD_DB = -40.0
+DEFAULT_AAD_HANG_TIME_MS = 300.0
 
 # Audio processing constants
 SOFT_LIMITER_THRESHOLD = 0.98
 AUDIO_CLIP_MIN = -1.0
 AUDIO_CLIP_MAX = 1.0
 
-# Fixed makeup gain applied to all output (voiced + VAD-bypassed frames)
+# Fixed makeup gain applied to all output (voiced + AAD-bypassed frames)
 # before the soft limiter. Denoisers strip noise energy, so processed
 # speech measures quieter than the raw mix at the same sink volume.
 # 6 dB ~= x2 amplitude; the limiter + clip stage after it guarantees

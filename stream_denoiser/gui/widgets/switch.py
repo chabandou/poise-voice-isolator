@@ -17,15 +17,25 @@ class ToggleSwitch(QAbstractButton):
     def __init__(self, parent=None, checked: bool = False):
         super().__init__(parent)
         self.setCheckable(True)
-        self.setChecked(checked)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        try:
+            from ..cursors import apply_link_cursor
+            apply_link_cursor(self)
+        except Exception:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setMinimumSize(self.sizeHint())
 
         self._knob = 1.0 if checked else 0.0
         self._anim = QPropertyAnimation(self, b"knob")
-        self._anim.setDuration(120)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setDuration(200)
+        spring = QEasingCurve(QEasingCurve.Type.OutBack)
+        spring.setAmplitude(0.9)
+        self._anim.setEasingCurve(spring)
+        # Block signals so __init__ doesn't animate from 0.
+        self.blockSignals(True)
+        self.setChecked(checked)
+        self.blockSignals(False)
         self.toggled.connect(self._on_toggled)
 
     def sizeHint(self):  # noqa: N802 (Qt override)
@@ -42,13 +52,25 @@ class ToggleSwitch(QAbstractButton):
     knob = pyqtProperty(float, _get_knob, _set_knob)
 
     def _on_toggled(self, checked: bool) -> None:
+        try:
+            from ..animations import motion_ok
+            if not motion_ok():
+                self._knob = 1.0 if checked else 0.0
+                self.update()
+                return
+        except Exception:
+            pass
         self._anim.stop()
         self._anim.setStartValue(self._knob)
         self._anim.setEndValue(1.0 if checked else 0.0)
         self._anim.start()
 
     def setChecked(self, checked: bool) -> None:  # noqa: N802 (Qt override)
-        self._knob = 1.0 if checked else 0.0
+        # NOTE: never snap _knob here — the toggled handler tweens it,
+        # which is what makes the switch slide instead of jumping.
+        # While signals are blocked (init / restore) snap instantly.
+        if self.signalsBlocked():
+            self._knob = 1.0 if checked else 0.0
         super().setChecked(checked)
         self.update()
 
@@ -63,11 +85,14 @@ class ToggleSwitch(QAbstractButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
 
-        # Track: theme accent when on, groove tone when off.
+        # Track: theme accent when on, groove tone when off. The blend
+        # factor is clamped: the knob rides an overshooting spring curve,
+        # but the color must never extrapolate past either endpoint
+        # (that reads as a flicker/flash at the end of the slide).
         palette = current_theme()
         on = QColor(palette["accent"])
         off = QColor(palette["groove"])
-        t = self._knob
+        t = max(0.0, min(1.0, self._knob))
         track = QColor(
             int(off.red() + (on.red() - off.red()) * t),
             int(off.green() + (on.green() - off.green()) * t),

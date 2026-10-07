@@ -346,6 +346,62 @@ def announce_log_path(path: Optional[str]) -> None:
             pass
 
 
+# Crash-traceback state (Linux only). faulthandler writes straight to the
+# file descriptor from its signal handler, so the file object must stay
+# alive for the whole process lifetime.
+CRASH_LOG_NAME = "poise-crash.log"
+CRASH_LOG_MAX_BYTES = 256_000
+_crash_file = None
+
+
+def enable_crash_traceback() -> Optional[str]:
+    """Dump the Python stack of every thread to ``poise-crash.log`` on a fatal signal.
+
+    Native crashes (glibc heap-corruption aborts, segfaults inside
+    ONNX Runtime/PortAudio/numpy, ...) normally leave only a core dump with
+    no Python context. ``faulthandler`` prints the Python traceback of all
+    threads on SIGSEGV/SIGABRT/SIGFPE/SIGBUS/SIGILL, then re-raises the
+    signal, so the core dump (systemd-coredump) is still produced.
+
+    The file sits next to ``poise.log`` and is only enabled while file
+    logging is on (Linux; honours ``--no-file-log`` / ``POISE_DISABLE_FILE_LOG``).
+    Each start appends a ``--- poise start ... pid=N ---`` header, so a
+    traceback belongs to the nearest header above it. Never raises.
+
+    Returns:
+        Path of the crash log, or None if not enabled.
+    """
+    global _crash_file
+    try:
+        if _log_file_path is None:
+            return None
+        if _crash_file is not None:
+            return _crash_file.name
+
+        import datetime
+        import faulthandler
+
+        path = Path(_log_file_path).with_name(CRASH_LOG_NAME)
+        mode = "a"
+        try:
+            if path.exists() and path.stat().st_size > CRASH_LOG_MAX_BYTES:
+                mode = "w"  # keep the file bounded; headers restart it
+        except OSError:
+            pass
+        handle = open(path, mode, buffering=1, encoding="utf-8")
+        handle.write(
+            f"--- poise start "
+            f"{datetime.datetime.now().isoformat(timespec='seconds')} "
+            f"pid={os.getpid()} ---\n"
+        )
+        handle.flush()
+        faulthandler.enable(file=handle, all_threads=True)
+        _crash_file = handle
+        return str(path)
+    except Exception:
+        return None
+
+
 def _reset_file_logging_for_tests() -> None:
     """Detach and close the shared file handler (tests only)."""
     global _file_handler, _log_file_path

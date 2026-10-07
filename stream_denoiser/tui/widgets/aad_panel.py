@@ -1,24 +1,24 @@
 """
-VAD Panel Widget
+AAD Panel Widget
 
-Displays Voice Activity Detector status and controls.
+Displays Audio Activity Detector status and controls.
 """
 from textual.widgets import Static, Switch, Label
 from textual.containers import Vertical, Horizontal
 from textual.reactive import reactive
 
 
-class VADPanel(Static):
-    """Widget to display and control Voice Activity Detector settings."""
+class AADPanel(Static):
+    """Widget to display and control Audio Activity Detector settings."""
     
     DEFAULT_CSS = """
-    VADPanel {
+    AADPanel {
         border: heavy $border;
     }
     """
     
     # Reactive properties
-    vad_enabled: reactive[bool] = reactive(True)
+    aad_enabled: reactive[bool] = reactive(True)
     threshold_db: reactive[float] = reactive(-40.0)
     
     # Bar configuration
@@ -28,29 +28,29 @@ class VADPanel(Static):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.border_title = "\[ VOICE DETECTOR ]"
+        self.border_title = "\[ AUDIO DETECTOR ]"
     
     def compose(self):
-        with Vertical(id="vad-container"):
+        with Vertical(id="aad-container"):
             # Enabled status row
-            with Horizontal(classes="vad-row"):
-                yield Static("Status", classes="vad-label")
-                yield Static("● ENABLED", classes="vad-status", id="vad-status-indicator")
+            with Horizontal(classes="aad-row"):
+                yield Static("Status", classes="aad-label")
+                yield Static("● ENABLED", classes="aad-status", id="aad-status-indicator")
             
             # Threshold row with value
-            with Horizontal(classes="vad-row"):
-                yield Static("Threshold", classes="vad-label")
-                yield Static("-40.0 dB", classes="vad-value", id="vad-threshold-value")
+            with Horizontal(classes="aad-row"):
+                yield Static("Threshold", classes="aad-label")
+                yield Static("-40.0 dB", classes="aad-value", id="aad-threshold-value")
             
             # Visual bar
-            with Horizontal(classes="vad-row"):
-                yield Static("", classes="vad-label")  # spacer
-                yield Static(self._render_bar(-40.0), classes="vad-bar", id="vad-threshold-bar")
+            with Horizontal(classes="aad-row"):
+                yield Static("", classes="aad-label")  # spacer
+                yield Static(self._render_bar(-40.0), classes="aad-bar", id="aad-threshold-bar")
             
             # Key hints
-            with Horizontal(classes="vad-row"):
-                yield Static("", classes="vad-label")  # spacer
-                yield Static("[-] Quiet ←→ Loud [+]", classes="vad-hint")
+            with Horizontal(classes="aad-row"):
+                yield Static("", classes="aad-label")  # spacer
+                yield Static("[-] Quiet ←→ Loud [+]", classes="aad-hint")
     
     def _render_bar(self, threshold_db: float) -> str:
         """Render a visual bar for the threshold level."""
@@ -64,9 +64,9 @@ class VADPanel(Static):
     
     def set_enabled(self, enabled: bool) -> None:
         """Update the enabled status display."""
-        self.vad_enabled = enabled
+        self.aad_enabled = enabled
         try:
-            indicator = self.query_one("#vad-status-indicator", Static)
+            indicator = self.query_one("#aad-status-indicator", Static)
             if enabled:
                 indicator.update("[#3be8ff]● ENABLED[/]")
             else:
@@ -78,7 +78,7 @@ class VADPanel(Static):
         """Update the threshold display and bar."""
         self.threshold_db = threshold_db
         try:
-            self.query_one("#vad-threshold-value", Static).update(f"{threshold_db:.1f} dB")
-            self.query_one("#vad-threshold-bar", Static).update(self._render_bar(threshold_db))
+            self.query_one("#aad-threshold-value", Static).update(f"{threshold_db:.1f} dB")
+            self.query_one("#aad-threshold-bar", Static).update(self._render_bar(threshold_db))
         except Exception:
             pass

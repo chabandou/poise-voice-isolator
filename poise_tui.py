@@ -27,6 +27,7 @@ def main(argv=None):
         ensure_from_log_args,
         announce_log_path,
         get_log_file_path,
+        enable_crash_traceback,
     )
 
     # File logging must be set up BEFORE the fullscreen TUI takes over
@@ -41,6 +42,8 @@ def main(argv=None):
         if path is None:
             path = get_log_file_path()
         announce_log_path(path)
+        # Python stacks of all threads on SIGABRT/SIGSEGV (core dump is kept)
+        enable_crash_traceback()
     except Exception:
         args = None
         pass

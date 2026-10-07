@@ -49,8 +49,8 @@ class AudioWorker(QThread):
         self.onnx_path: str = DEFAULT_DF3_ONNX
         self.input_device: Optional[int] = None
         self.output_device: Optional[int] = None
-        self.vad_enabled: bool = True
-        self.vad_threshold: float = -40.0
+        self.aad_enabled: bool = True
+        self.aad_threshold: float = -40.0
         self.atten_lim_db: float = -60.0
         self.vb_cable_enabled: bool = True
         self.vb_cable_name: Optional[str] = None
@@ -65,8 +65,8 @@ class AudioWorker(QThread):
                   onnx_path: str = DEFAULT_DF3_ONNX,
                   input_device: Optional[int] = None,
                   output_device: Optional[int] = None,
-                  vad_enabled: bool = True,
-                  vad_threshold: float = -40.0,
+                  aad_enabled: bool = True,
+                  aad_threshold: float = -40.0,
                   atten_lim_db: float = -60.0,
                   vb_cable_enabled: bool = True,
                   vb_cable_name: Optional[str] = None) -> None:
@@ -78,8 +78,8 @@ class AudioWorker(QThread):
             onnx_path: Path to ONNX model file (deepfilternet3 only)
             input_device: Input device ID (optional)
             output_device: Output device ID (optional)
-            vad_enabled: Enable Voice Activity Detection
-            vad_threshold: VAD threshold in dB
+            aad_enabled: Enable Audio Activity detection
+            aad_threshold: AAD threshold in dB
             atten_lim_db: Attenuation limit in dB
             vb_cable_enabled: Enable VB Cable auto-switching
             vb_cable_name: Custom VB Cable device name
@@ -88,8 +88,8 @@ class AudioWorker(QThread):
         self.model = model
         self.input_device = input_device
         self.output_device = output_device
-        self.vad_enabled = vad_enabled
-        self.vad_threshold = vad_threshold
+        self.aad_enabled = aad_enabled
+        self.aad_threshold = aad_threshold
         self.atten_lim_db = atten_lim_db
         self.vb_cable_enabled = vb_cable_enabled
         self.vb_cable_name = vb_cable_name
@@ -132,8 +132,8 @@ class AudioWorker(QThread):
                 engine,
                 target_sr=DEFAULT_SAMPLE_RATE,
                 frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_vad=self.vad_enabled,
-                vad_threshold_db=self.vad_threshold,
+                enable_aad=self.aad_enabled,
+                aad_threshold_db=self.aad_threshold,
                 atten_lim_db=self.atten_lim_db
             )
             

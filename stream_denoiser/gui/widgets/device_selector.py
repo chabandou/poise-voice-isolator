@@ -5,10 +5,11 @@ Dropdown widget for audio device selection with refresh capability.
 """
 from typing import Optional, List, Dict, Any
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QPushButton, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from .phosphor import PhosphorIcon
+from .combo import AnimatedComboBox
 from ..scaling import sp
 
 try:
@@ -56,8 +57,8 @@ class DeviceSelector(QWidget):
             "monitor" if self._device_type == "input" else "speaker", size=22))
         self._label = QLabel(label.upper())
         self._label.setObjectName("device-title")
-        header.addWidget(
-            self._label, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         header.addWidget(self._label)
         header.addStretch()
 
@@ -73,7 +74,7 @@ class DeviceSelector(QWidget):
         layout.addLayout(header)
 
         # Combo box only
-        self._combo = QComboBox()
+        self._combo = AnimatedComboBox()
         self._combo.setObjectName("device-combo")
         self._combo.currentIndexChanged.connect(self._on_selection_changed)
         layout.addWidget(self._combo)

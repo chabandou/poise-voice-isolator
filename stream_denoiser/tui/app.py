@@ -34,8 +34,8 @@ class PoiseApp(App):
         Binding("space", "toggle_processing", "Start/Stop", priority=True),
         Binding("m", "cycle_model", "Switch model"),
         Binding("r", "refresh_devices", "Refresh"),
-        Binding("minus", "decrease_threshold", "VAD -"),
-        Binding("plus", "increase_threshold", "VAD +"),
+        Binding("minus", "decrease_threshold", "AAD -"),
+        Binding("plus", "increase_threshold", "AAD +"),
         Binding("escape", "quit", "Quit", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -156,7 +156,7 @@ class PoiseApp(App):
         # yield Header(show_clock=False)
         
         from .font import get_block_text
-        from .widgets import VADPanel
+        from .widgets import AADPanel
         # Top bar: logo left, two-line status block right
         with Horizontal(id="top-bar"):
             with Horizontal(id="title-row"):
@@ -169,7 +169,7 @@ class PoiseApp(App):
             with Horizontal(id="panels-container"):
                 yield DeviceList(id="device-panel")
                 yield StatsPanel(id="stats-panel")
-                yield VADPanel(id="vad-panel")
+                yield AADPanel(id="aad-panel")
         
         yield Footer()
     
@@ -300,28 +300,28 @@ class PoiseApp(App):
         status_line.notify("Devices refreshed")
     
     def action_increase_threshold(self) -> None:
-        """Increase VAD threshold (less sensitive)."""
+        """Increase AAD threshold (less sensitive)."""
         self._adjust_threshold(5.0)
-    
+
     def action_decrease_threshold(self) -> None:
-        """Decrease VAD threshold (more sensitive)."""
+        """Decrease AAD threshold (more sensitive)."""
         self._adjust_threshold(-5.0)
-    
+
     def _adjust_threshold(self, delta: float) -> None:
-        """Adjust VAD threshold by delta dB."""
-        from .widgets import VADPanel
-        vad_panel = self.query_one("#vad-panel", VADPanel)
+        """Adjust AAD threshold by delta dB."""
+        from .widgets import AADPanel
+        aad_panel = self.query_one("#aad-panel", AADPanel)
         
         # Clamp threshold between -80 and 0 dB
-        new_threshold = max(-80.0, min(0.0, vad_panel.threshold_db + delta))
-        vad_panel.set_threshold(new_threshold)
+        new_threshold = max(-80.0, min(0.0, aad_panel.threshold_db + delta))
+        aad_panel.set_threshold(new_threshold)
         
         # Update processor if running
-        if self.processor and self.processor.vad:
-            self.processor.vad.set_threshold(new_threshold)
+        if self.processor and self.processor.aad:
+            self.processor.aad.set_threshold(new_threshold)
         
         status_line = self.query_one("#status-line", StatusLine)
-        status_line.notify(f"VAD threshold: {new_threshold:.1f} dB")
+        status_line.notify(f"AAD threshold: {new_threshold:.1f} dB")
     
     def _start_processing(self) -> None:
         """Start audio processing."""
@@ -400,12 +400,12 @@ class PoiseApp(App):
                     _stats = self.processor.get_stats()
                     _logging.getLogger("stream_denoiser").info(
                         "run stop: frames=%s avg_ms=%.2f rtf=%.3f "
-                        "vad_total=%s vad_bypassed=%s bypass_ratio=%.2f "
+                        "aad_total=%s aad_bypassed=%s bypass_ratio=%.2f "
                         "overflows=%s empty_reads=%s elapsed=%.1fs log=%s",
                         _stats.get("frame_count"), _stats.get("avg_time_ms", 0.0),
-                        _stats.get("rtf", 0.0), _stats.get("vad_total"),
-                        _stats.get("vad_bypassed"),
-                        _stats.get("vad_bypass_ratio", 0.0),
+                        _stats.get("rtf", 0.0), _stats.get("aad_total"),
+                        _stats.get("aad_bypassed"),
+                        _stats.get("aad_bypass_ratio", 0.0),
                         getattr(self, "_input_overflows", 0),
                         getattr(self, "_empty_reads", 0),
                         time.time() - self.start_time if self.start_time else 0.0,
@@ -474,14 +474,14 @@ class PoiseApp(App):
                 engine,
                 target_sr=DEFAULT_SAMPLE_RATE,
                 frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_vad=True,
-                vad_threshold_db=-40.0
+                enable_aad=True,
+                aad_threshold_db=-40.0
             )
             
             # Get input device (null sink monitor). Fail fast when the
             # monitor is not visible to PortAudio: opening the default
             # input instead would capture silence while the default sink
-            # points at the null sink (100% VAD bypass, frames=0).
+            # points at the null sink (100% AAD bypass, frames=0).
             import logging as _early_logging
             _early_run_logger = _early_logging.getLogger('stream_denoiser')
             input_device = None
@@ -603,7 +603,7 @@ class PoiseApp(App):
             stats = self.processor.get_stats()
             running_time = time.time() - self.start_time
             stats_panel.update_stats(stats, running_time)
-            # Throttled file snapshot (~every 5s): distinguishes VAD-bypass
+            # Throttled file snapshot (~every 5s): distinguishes AAD-bypass
             # zeros (silence) from genuine slow-inference RTF on weak CPUs.
             now = time.monotonic()
             if now - getattr(self, "_last_perf_log", 0.0) >= 5.0:
@@ -611,14 +611,14 @@ class PoiseApp(App):
                 import logging as _logging
                 _diag = self.processor.get_diagnostics()
                 _logging.getLogger("stream_denoiser").info(
-                    "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
-                    "vad_active=%s vad_bypassed=%s bypass_ratio=%.2f "
+                    "perf: frames=%s avg_ms=%.2f rtf=%.3f aad_total=%s "
+                    "aad_active=%s aad_bypassed=%s bypass_ratio=%.2f "
                     "overflows=%s empty_reads=%s elapsed=%.1fs "
                     "in_block=%s backlog=%s dropped=%s",
                     stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
-                    stats.get("rtf", 0.0), stats.get("vad_total"),
-                    stats.get("vad_active"), stats.get("vad_bypassed"),
-                    stats.get("vad_bypass_ratio", 0.0),
+                    stats.get("rtf", 0.0), stats.get("aad_total"),
+                    stats.get("aad_active"), stats.get("aad_bypassed"),
+                    stats.get("aad_bypass_ratio", 0.0),
                     getattr(self, "_input_overflows", 0),
                     getattr(self, "_empty_reads", 0), running_time,
                     _diag.get("input_block_size"),

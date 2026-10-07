@@ -83,7 +83,7 @@ Poise is a real-time audio filter that runs in the background while you browse, 
 |---------|-------------|
 | **Voice Isolation** | Removes music and instrumentals, keeps only vocals and speech |
 | **Real-time Processing** | Direct time-domain processing with ~10ms frame latency |
-| **Voice Activity Detection** | Performance boost by skipping silence and non-speech sections |
+| **Audio Activity Detection** | Performance boost by skipping silence and non-speech sections |
 | **Low Latency** | Lock-free ring buffers for reduced latency |
 | **WASAPI Loopback** | Captures system audio on Windows using PyAudioWPatch |
 | **VB Cable Integration** | Automatic Windows audio device switching for seamless capture |
@@ -141,12 +141,12 @@ poise
 #### High latency
 
 - Reduce `BUFFER_CAPACITY_RATIO` in the code (currently 0.1 = 100ms)
-- Ensure VAD is enabled to reduce processing load
+- Ensure AAD is enabled to reduce processing load
 - Check that your system can process frames faster than real-time (RTF < 1.0)
 
 #### Audio dropouts
 
-- Reduce processing load (enable VAD, reduce model complexity)
+- Reduce processing load (enable AAD, reduce model complexity)
 - Check system CPU usage and close unnecessary applications, the model can be resource hungry.
 
 #### Linux Troubleshooting
@@ -303,7 +303,7 @@ pip install samplerate
 
 ##### CLI Mode
 
-Process system audio with default settings (VAD enabled, automatic audio device switching):
+Process system audio with default settings (AAD enabled, automatic audio device switching):
 
 ```bash
 # Using the modular package (recommended)
@@ -319,8 +319,8 @@ python -m stream_denoiser.cli
 - `--onnx`: Path to ONNX model file (deepfilternet3 only, default: `denoiser_model_df3.onnx`)
 - `--input-device`: Input device ID for system audio capture
 - `--output-device`: Output device ID for audio playback
-- `--no-vad`: Disable Voice Activity Detection
-- `--vad-threshold`: VAD threshold in dB (default: -40.0, lower = more sensitive)
+- `--no-aad`: Disable Audio Activity detection
+- `--aad-threshold`: AAD threshold in dB (default: -40.0, lower = more sensitive)
 - `--atten-lim-db`: Attenuation limit in dB (default: -60.0)
 - `--list-devices`: List all available audio devices and exit
 - `--no-vb-cable`: Disable automatic VB Cable switching (use current default device)
@@ -388,7 +388,7 @@ stream_denoiser/
 │       ├── linux.py         # PulseAudio integration
 │       └── windows.py       # WASAPI support
 ├── processor.py             # Core ONNX model wrapper
-├── vad.py                   # Voice Activity Detection
+├── aad.py                   # Audio Activity Detection
 ├── resampler.py             # Audio resampling
 ├── ring_buffer.py           # Thread-safe audio buffering
 ├── vb_cable.py              # Virtual cable management (Windows)
@@ -429,7 +429,7 @@ stream_denoiser/
          │
          ▼
 ┌─────────────────┐
-│ VAD Check       │◄─── Skip processing if silence
+│ AAD Check       │◄─── Skip processing if silence
 │ (optional)      │
 └────────┬────────┘
          │
@@ -478,7 +478,7 @@ During processing, the script/GUI displays real-time statistics:
 
 - **RTF**: Real-time factor (processing time / frame duration, <1.0 means real-time capable)
 - **Avg**: Average processing time per frame in milliseconds
-- **VAD bypass**: Percentage of frames skipped due to silence
+- **AAD bypass**: Percentage of frames skipped due to silence
 - **Buffer status**: Input/output buffer fill levels
 
 ##### Audio routing (how it works)

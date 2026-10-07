@@ -195,13 +195,13 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                     stats = processor.get_stats()
                     diag = processor.get_diagnostics()
                     _logger.info(
-                        "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
-                        "vad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs "
+                        "perf: frames=%s avg_ms=%.2f rtf=%.3f aad_total=%s "
+                        "aad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs "
                         "in_block=%s backlog=%s dropped=%s",
                         stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
-                        stats.get("rtf", 0.0), stats.get("vad_total"),
-                        stats.get("vad_bypassed"),
-                        stats.get("vad_bypass_ratio", 0.0),
+                        stats.get("rtf", 0.0), stats.get("aad_total"),
+                        stats.get("aad_bypassed"),
+                        stats.get("aad_bypass_ratio", 0.0),
                         current_time - start_time,
                         diag.get("input_block_size"),
                         diag.get("resampler_backlog"),

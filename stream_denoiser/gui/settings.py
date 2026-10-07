@@ -60,8 +60,8 @@ class Settings:
     # Setting keys
     KEY_INPUT_DEVICE = "audio/input_device"
     KEY_OUTPUT_DEVICE = "audio/output_device"
-    KEY_VAD_ENABLED = "audio/vad_enabled"
-    KEY_VAD_THRESHOLD = "audio/vad_threshold"
+    KEY_AAD_ENABLED = "audio/aad_enabled"
+    KEY_AAD_THRESHOLD = "audio/aad_threshold"
     KEY_ATTEN_LIM_DB = "audio/atten_lim_db"
     KEY_VB_CABLE_ENABLED = "audio/vb_cable_enabled"
     KEY_VB_CABLE_NAME = "audio/vb_cable_name"
@@ -82,8 +82,8 @@ class Settings:
     DEFAULTS = {
         KEY_INPUT_DEVICE: None,
         KEY_OUTPUT_DEVICE: None,
-        KEY_VAD_ENABLED: True,
-        KEY_VAD_THRESHOLD: -40.0,
+        KEY_AAD_ENABLED: True,
+        KEY_AAD_THRESHOLD: -40.0,
         KEY_ATTEN_LIM_DB: -60.0,
         KEY_VB_CABLE_ENABLED: True,
         KEY_VB_CABLE_NAME: None,
@@ -139,6 +139,27 @@ class Settings:
     def remove(self, key: str) -> None:
         """Remove a setting."""
         self._settings.remove(key)
+
+    def contains(self, key: str) -> bool:
+        """Check whether a setting key exists."""
+        try:
+            return bool(self._settings.contains(key))
+        except Exception:
+            return False
+
+    def _migrated(self, new_key: str, old_key: str, default: Any = None) -> Any:
+        """Read a renamed setting, migrating the legacy key on first use."""
+        if self.contains(new_key):
+            return self.get(new_key, default)
+        if self.contains(old_key):
+            value = self.get(old_key, default)
+            try:
+                self.set(new_key, value)
+                self.remove(old_key)
+            except Exception:
+                pass
+            return value
+        return default
     
     def sync(self) -> None:
         """Force sync settings to disk."""
@@ -166,23 +187,30 @@ class Settings:
     def output_device(self, value: Optional[int]) -> None:
         self.set(self.KEY_OUTPUT_DEVICE, value)
     
+    # Legacy VAD key names (pre-AAD rename). Read once for migration,
+    # then removed. Do NOT "fix" these to aad_* — that is the point.
+    _OLD_KEY_AAD_ENABLED = "audio/vad_enabled"
+    _OLD_KEY_AAD_THRESHOLD = "audio/vad_threshold"
+
     @property
-    def vad_enabled(self) -> bool:
-        """Get VAD enabled state."""
-        return self.get(self.KEY_VAD_ENABLED, True)
-    
-    @vad_enabled.setter
-    def vad_enabled(self, value: bool) -> None:
-        self.set(self.KEY_VAD_ENABLED, value)
-    
+    def aad_enabled(self) -> bool:
+        """Get AAD enabled state."""
+        return self._migrated(
+            self.KEY_AAD_ENABLED, self._OLD_KEY_AAD_ENABLED, True)
+
+    @aad_enabled.setter
+    def aad_enabled(self, value: bool) -> None:
+        self.set(self.KEY_AAD_ENABLED, value)
+
     @property
-    def vad_threshold(self) -> float:
-        """Get VAD threshold in dB."""
-        return float(self.get(self.KEY_VAD_THRESHOLD, -40.0))
-    
-    @vad_threshold.setter
-    def vad_threshold(self, value: float) -> None:
-        self.set(self.KEY_VAD_THRESHOLD, value)
+    def aad_threshold(self) -> float:
+        """Get AAD threshold in dB."""
+        return float(self._migrated(
+            self.KEY_AAD_THRESHOLD, self._OLD_KEY_AAD_THRESHOLD, -40.0))
+
+    @aad_threshold.setter
+    def aad_threshold(self, value: float) -> None:
+        self.set(self.KEY_AAD_THRESHOLD, value)
     
     @property
     def atten_lim_db(self) -> float:

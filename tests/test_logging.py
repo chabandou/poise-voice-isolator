@@ -192,7 +192,7 @@ def test_processor_diagnostics_exposes_resampler():
     diag = proc.get_diagnostics()
     assert diag["frame_count"] == 0
     assert diag["resampler_active"] is False
-    assert "vad_total" in diag
+    assert "aad_total" in diag
 
 
 def _import_status_line_without_textual():
@@ -271,3 +271,54 @@ def test_status_line_never_receives_log_records():
     logger.warning("something odd")
     logger.error("boom")
     assert widget.current_message == "Starting audio processing..."
+
+
+_REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
+
+
+def _run_crashing_child(code: str):
+    """Run `code` in a fresh interpreter (a real abort must not kill pytest)."""
+    import subprocess
+    import os as _os
+    env = dict(_os.environ, PYTHONPATH=str(_REPO_ROOT))
+    return subprocess.run(
+        [sys.executable, "-c", code], cwd=str(_REPO_ROOT), env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"),
+                    reason="crash log is part of Linux file logging")
+def test_crash_traceback_records_python_stack_on_abort(tmp_path):
+    """A native abort (e.g. glibc heap-corruption) leaves every thread's
+    Python stack in poise-crash.log, next to poise.log."""
+    import signal
+    log = tmp_path / "poise.log"
+    code = (
+        "import os, threading\n"
+        "from stream_denoiser.logging_config import "
+        "ensure_file_logging, enable_crash_traceback\n"
+        f"assert ensure_file_logging(log_file={str(log)!r})\n"
+        "assert enable_crash_traceback()\n"
+        "def worker_that_crashes():\n"
+        "    os.abort()\n"
+        "t = threading.Thread(target=worker_that_crashes, name='proc-thread')\n"
+        "t.start(); t.join()\n"
+    )
+    proc = _run_crashing_child(code)
+    # faulthandler re-raises the signal, so the core dump is still produced
+    assert proc.returncode == -signal.SIGABRT, proc.stderr
+    crash = (tmp_path / "poise-crash.log").read_text()
+    assert "--- poise start" in crash
+    assert "worker_that_crashes" in crash
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"),
+                    reason="crash log is part of Linux file logging")
+def test_crash_traceback_off_without_file_logging():
+    code = (
+        "from stream_denoiser.logging_config import enable_crash_traceback\n"
+        "assert enable_crash_traceback() is None\n"
+    )
+    proc = _run_crashing_child(code)
+    assert proc.returncode == 0, proc.stderr
