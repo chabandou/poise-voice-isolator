@@ -18,9 +18,8 @@ from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
 from .widgets import DeviceList, StatsPanel, StatusLine
-from ..constants import DEFAULT_MODEL
+from ..constants import DEFAULT_MODEL, DEFAULT_FRAME_SIZE, PULSE_TARGET_SR
 from ..logging_config import set_tui_mode, get_log_file_path
-from ..backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 
 class PoiseApp(App):
@@ -144,6 +143,25 @@ class PoiseApp(App):
                 pass
             self.linux_router = None
     
+    def get_line_filters(self):
+        """Drop Textual's ANSI→truecolor rewrite so `ansi_default`
+        backgrounds reach the terminal untouched.
+
+        Every rendered line otherwise passes through ANSIToTruecolor,
+        which maps the terminal-default background to the static MONOKAI
+        dark color — repainting the dark rectangle `ansi_default` is meant
+        to remove. Our palette is truecolor hex throughout (only the base
+        background uses an ANSI color), so nothing else changes.
+        """
+        try:
+            from textual.filter import ANSIToTruecolor
+        except ImportError:
+            return super().get_line_filters()
+        return [
+            f for f in super().get_line_filters()
+            if not isinstance(f, ANSIToTruecolor)
+        ]
+
     def on_resize(self, event) -> None:
         """Toggle narrow layout below 100 columns (stack panels, trim title)."""
         try:
@@ -446,59 +464,50 @@ class PoiseApp(App):
         if self.is_processing:
             self._stop_processing()
 
-    def _processing_loop(self, output_device: Optional[int]) -> None:
-        """Audio processing loop (runs in background thread)."""
+    def _processing_loop(self, output_device: Optional[str]) -> None:
+        """Audio processing loop (runs in background thread).
+
+        Linux input is always 48000 Hz via pulse-simple; the shared
+        pulse loop (also used by the CLI) owns the read/process/write
+        body so the two paths cannot diverge.
+        """
         try:
-            if not USE_SOUNDDEVICE or sd is None:
-                import logging
-                msg = "sounddevice is not available"
-                if SOUNDDEVICE_ERROR:
-                    msg = f"sounddevice/PortAudio unavailable: {SOUNDDEVICE_ERROR}"
-                if SOUNDDEVICE_INSTALL_HINT:
-                    msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
-                logging.getLogger('stream_denoiser').error(msg)
-                self._notify_status_from_thread(
-                    "Audio backend unavailable. See log for details.", "error"
-                )
-                return
-            import numpy as np
-            
             from ..processor import DenoiserAudioProcessor
             from ..engines import create_engine
-            from ..constants import DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE
-            
+            from ..backends.pulse_backend import run_pulse_loop
+
             # Create a fresh engine per run (engines hold streaming state)
             engine = create_engine(self.model)
             # Create processor (frame size follows the engine)
             self.processor = DenoiserAudioProcessor(
                 engine,
-                target_sr=DEFAULT_SAMPLE_RATE,
+                target_sr=PULSE_TARGET_SR,
                 frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
                 enable_vad=True,
                 vad_threshold_db=-40.0
             )
-            
-            # Get input device (null sink monitor). Fail fast when the
-            # monitor is not visible to PortAudio: opening the default
-            # input instead would capture silence while the default sink
-            # points at the null sink (100% VAD bypass, frames=0).
+
+            # Resolve the capture source by name. Fail fast when the
+            # monitor is not visible at the Pulse level: opening the
+            # default input instead would capture silence while the
+            # default sink points at the null sink (100% VAD bypass).
             import logging as _early_logging
             _early_run_logger = _early_logging.getLogger('stream_denoiser')
-            input_device = None
+            source = None
             if self.linux_router:
                 try:
                     _monitor_name = self.linux_router.get_monitor_source_name()
                 except Exception:
                     _monitor_name = None
                 if _monitor_name:
-                    input_device = self.linux_router.get_monitor_device_id()
-                    if input_device is None:
+                    source = self.linux_router.wait_for_monitor_source()
+                    if source is None:
                         _early_run_logger.error(
-                            "Null sink monitor '%s' not visible to PortAudio. "
-                            "Not starting: capturing the default input instead would "
-                            "record silence. Fixes: run with --list-devices and pass "
-                            "the input device explicitly, check pavucontrol/PipeWire "
-                            "Pulse backend, or restart without auto-routing.",
+                            "Null sink monitor '%s' not visible at the "
+                            "PulseAudio level. Not starting: capturing the "
+                            "default input instead would record silence. "
+                            "Fixes: check pavucontrol/PipeWire Pulse backend, "
+                            "or restart without auto-routing.",
                             _monitor_name,
                         )
                         self._notify_status_from_thread(
@@ -509,79 +518,76 @@ class PoiseApp(App):
                         except Exception:
                             pass
                         return
-            
-            # Get device info
-            if input_device is not None:
-                input_info = sd.query_devices(input_device)
-                input_sr = int(input_info['default_samplerate'])
+                else:
+                    _early_run_logger.error(
+                        "Audio routing did not provide a monitor source.")
+                    self._notify_status_from_thread(
+                        "Capture device not found. See log for fixes.", "error"
+                    )
+                    try:
+                        self.call_from_thread(self._abort_startup)
+                    except Exception:
+                        pass
+                    return
             else:
-                input_sr = DEFAULT_SAMPLE_RATE
-            
-            self.processor.setup_resampler(input_sr)
-            # Output runs at the device rate; configure its resampler BEFORE
-            # opening the stream so out_block_size matches what the pipeline
-            # actually produces (mismatched block sizes reintroduce drift).
-            self.processor.setup_output_resampler(DEFAULT_SAMPLE_RATE)
+                # No router (e.g. --no-vb-cable path): capture the default
+                # sink's monitor.
+                try:
+                    from ..backends.platform.linux import (
+                        find_monitor_source_pulsectl)
+                    _found = find_monitor_source_pulsectl()
+                    source = _found.name if _found else None
+                except Exception:
+                    source = None
+                if source is None:
+                    _early_run_logger.error("No PulseAudio monitor source found.")
+                    self._notify_status_from_thread(
+                        "Capture device not found. See log for fixes.", "error"
+                    )
+                    try:
+                        self.call_from_thread(self._abort_startup)
+                    except Exception:
+                        pass
+                    return
 
-            block_size = self.processor.frame_size
-            # Read input in rate-scaled blocks so each read resamples to
-            # ~one engine frame; a fixed frame_size read at a non-48kHz input
-            # rate lets the resampler backlog grow without bound (A/V desync
-            # that becomes visible after a few minutes).
-            in_block_size = self.processor.input_block_size
-            out_block_size = self.processor.output_resample_size
+            # Resolve the playback sink by name: explicit TUI selection
+            # wins, else the real hardware sink saved at routing setup,
+            # else the current default sink.
+            sink = output_device
+            if not sink:
+                try:
+                    sink = (self.linux_router.original_sink_name
+                            if self.linux_router else None)
+                except Exception:
+                    sink = None
+            if not sink:
+                try:
+                    from ..backends.platform.linux import get_default_sink_name
+                    sink = get_default_sink_name()
+                except Exception:
+                    sink = None
+            if not sink:
+                _early_run_logger.error("No PulseAudio sink found for playback.")
+                self._notify_status_from_thread(
+                    "Playback device not found. See log for fixes.", "error"
+                )
+                try:
+                    self.call_from_thread(self._abort_startup)
+                except Exception:
+                    pass
+                return
 
-            import logging as _logging
-            _run_logger = _logging.getLogger('stream_denoiser')
-            try:
-                _monitor = self.linux_router.get_monitor_source_name() if self.linux_router else None
-            except Exception:
-                _monitor = None
-            _run_logger.info(
-                "run start: model=%s frame_size=%s target_sr=%s input_device=%s "
-                "input_sr=%s output_device=%s monitor=%s resampler=%s log=%s",
-                self.model, block_size, DEFAULT_SAMPLE_RATE, input_device,
-                input_sr, output_device, _monitor,
-                f"active(in_block={in_block_size})"
-                if self.processor.resampler is not None else "off",
-                get_log_file_path(),
+            # Shared loop owns the run-start log line (source, sink,
+            # backend=pulse-simple, server name) and the read/process/write
+            # body. Stats reach the panel via the _update_stats timer.
+            _final, _empty = run_pulse_loop(
+                self.processor, source, sink,
+                should_stop=self.stop_event,
+                on_stats=None,
             )
-            
-            # Open streams
-            with sd.InputStream(device=input_device, samplerate=input_sr, channels=1,
-                              dtype='float32', blocksize=in_block_size) as inp, \
-                  sd.OutputStream(device=output_device, samplerate=DEFAULT_SAMPLE_RATE,
-                                 channels=2, dtype='float32', blocksize=out_block_size) as out:
-                
-                # Reused stereo buffer with one sample of headroom: output
-                # takes dither around out_block_size (e.g. 470/471).
-                stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
-                while not self.stop_event.is_set():
-                    # Read audio (dithered around the rate-scaled block so
-                    # each read resamples to ~one frame on average).
-                    audio_chunk, overflowed = inp.read(
-                        self.processor.next_input_block_size())
+            self._input_overflows = 0  # pa_simple cannot report overruns
+            self._empty_reads = _empty
 
-                    if overflowed:
-                        self._input_overflows = getattr(self, "_input_overflows", 0) + 1
-                    
-                    if audio_chunk is None or len(audio_chunk) == 0:
-                        self._empty_reads = getattr(self, "_empty_reads", 0) + 1
-                        continue
-                    
-                    # Process
-                    audio_chunk = audio_chunk.flatten()
-                    audio_output = self.processor.process_chunk(audio_chunk)
-                    
-                    if audio_output is not None:
-                        # Duplicate mono to stereo for proper playback on both channels.
-                        # Write exactly what the pipeline produced: padding with
-                        # zeros would insert silence and shift A/V sync.
-                        n = min(len(audio_output), len(stereo_output))
-                        stereo_output[:n, 0] = audio_output[:n]
-                        stereo_output[:n, 1] = audio_output[:n]
-                        out.write(stereo_output[:n])
-        
         except Exception as e:
             # File log holds the full detail; the status line gets only a
             # short UX-friendly note (never the raw record/traceback).

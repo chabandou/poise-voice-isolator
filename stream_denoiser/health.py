@@ -1,15 +1,14 @@
 """
 Startup Health Checks and Audio Recovery (Linux)
 
-Covers the known Linux issues from the README programmatically:
+Covers the known Linux issues programmatically:
 
 1. ONNX Runtime "cannot enable executable stack": some wheels ship the
    GNU_STACK ELF flag as RWE, which hardened loaders refuse. Detectable
    with a pure-Python ELF read; fixed with patchelf (explicit opt-in).
-2. PortAudio "malloc(): invalid size" crash: distro PortAudio builds
-   without PulseAudio support (or the JACK backend bug) segfault
-   natively — uncatchable, so detect the risky setup up front and abort
-   with the rebuild instructions instead of crashing.
+2. PulseAudio backend unavailable: libpulse-simple missing or no
+   Pulse-compatible server reachable (PulseAudio, or PipeWire with
+   pipewire-pulse).
 3. Stuck on the Poise_Capture null sink after a crash: restore the real
    default sink and unload our null-sink module (no sudo needed).
 
@@ -196,7 +195,7 @@ def apply_execstack_fix() -> Tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Issue 2: PortAudio without PulseAudio support (native crash)
+# Issue 2: PulseAudio backend (libpulse-simple + server reachable)
 # ---------------------------------------------------------------------------
 
 def pulse_server_present() -> bool:
@@ -221,56 +220,44 @@ def pulse_server_present() -> bool:
     return False
 
 
-def check_portaudio() -> CheckResult:
-    """Detect the PortAudio setup known to segfault (no PulseAudio backend)."""
+def check_pulse_backend() -> CheckResult:
+    """Check libpulse-simple loads and the Pulse server is reachable."""
     try:
-        from .backend_detection import (
-            USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT,
-        )
+        from .backends.pulse_simple import _load_library
     except ImportError as e:
         return CheckResult(
-            name="portaudio", ok=False,
-            detail=f"backend detection unavailable: {e}",
-        )
-    if not USE_SOUNDDEVICE or sd is None:
-        fix = "pip install sounddevice (needs PortAudio)."
-        if SOUNDDEVICE_ERROR:
-            fix += f" Import error was: {SOUNDDEVICE_ERROR}"
-        if SOUNDDEVICE_INSTALL_HINT:
-            fix += f" {SOUNDDEVICE_INSTALL_HINT}"
-        return CheckResult(
-            name="portaudio", ok=False,
-            detail="sounddevice/PortAudio unavailable.", fix=fix,
+            name="pulse-simple", ok=False,
+            detail=f"pulse-simple backend unavailable: {e}",
         )
     try:
-        apis = sorted({
-            sd.query_hostapis(d["hostapi"])["name"]
-            for d in sd.query_devices()
-        })
+        _load_library()
     except Exception as e:
         return CheckResult(
-            name="portaudio", ok=False,
-            detail=f"could not query PortAudio host APIs: {e}",
+            name="pulse-simple", ok=False,
+            detail=f"libpulse-simple could not be loaded: {e}",
+            fix=("Install libpulse. Arch: sudo pacman -S libpulse. "
+                 "Debian/Ubuntu: sudo apt install libpulse0."),
         )
-    has_pulse = any("pulse" in a.lower() for a in apis)
-    has_jack = any("jack" in a.lower() for a in apis)
-    detail = f"PortAudio host APIs: {', '.join(apis)}"
-    if sys.platform.startswith("linux") and pulse_server_present() and not has_pulse:
+    try:
+        from .backends.platform.linux import get_pulse_server_info
+        server_name, server_version = get_pulse_server_info()
+    except Exception as e:
         return CheckResult(
-            name="portaudio",
-            ok=False,
-            detail=(detail + " — a PulseAudio server is running but this "
-                    "PortAudio build has no PulseAudio backend (known "
-                    "native-crash setup)."),
-            fix=("Rebuild PortAudio with PulseAudio (see README 'Linux "
-                 "Troubleshooting'), then: pip install sounddevice "
-                 "--no-cache-dir, with LD_LIBRARY_PATH=/usr/local/lib. "
-                 "Bypass (ALSA-direct, may work): "
+            name="pulse-simple", ok=False,
+            detail=f"could not query PulseAudio server: {e}",
+        )
+    if not server_name and not pulse_server_present():
+        return CheckResult(
+            name="pulse-simple", ok=False,
+            detail=("libpulse-simple loads, but no Pulse-compatible server "
+                    "is reachable (need PulseAudio, or PipeWire with "
+                    "pipewire-pulse)."),
+            fix=("Start PulseAudio/PipeWire, then retry. Bypass: "
                  f"{SKIP_HEALTH_ENV}=1"),
         )
-    if has_jack:
-        detail += " (JACK present — poise avoids it automatically)"
-    return CheckResult(name="portaudio", ok=True, detail=detail)
+    detail = (f"libpulse-simple OK; server: {server_name or '?'} "
+              f"({server_version or '?'})")
+    return CheckResult(name="pulse-simple", ok=True, detail=detail)
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +363,7 @@ def reset_audio() -> Tuple[bool, str]:
 
 def run_doctor() -> Tuple[bool, List[CheckResult]]:
     """Run all startup checks. Returns (all_ok, results)."""
-    results = [check_execstack(), check_portaudio()]
+    results = [check_execstack(), check_pulse_backend()]
     return all(r.ok for r in results), results
 
 

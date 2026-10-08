@@ -1,24 +1,22 @@
 """
 Device List Widget
 
-Displays available output devices with selection.
+Displays available PulseAudio output sinks (by name) with selection.
 """
 from textual.widgets import Static, ListView, ListItem, Label
 from textual.containers import Vertical
 from textual.reactive import reactive
 from typing import List, Tuple, Optional
 
-from ...backend_detection import USE_SOUNDDEVICE, sd, SOUNDDEVICE_ERROR, SOUNDDEVICE_INSTALL_HINT
 
 class DeviceListItem(ListItem):
-    """A single device in the list."""
-    
-    def __init__(self, device_id: int, device_name: str, host_api: str = "") -> None:
+    """A single sink in the list."""
+
+    def __init__(self, sink_name: str, description: str) -> None:
         super().__init__()
-        self.device_id = device_id
-        self.device_name = device_name
-        self.host_api = host_api
-    
+        self.sink_name = sink_name
+        self.device_name = description
+
     def compose(self):
         # Truncate long names
         display_name = self.device_name[:40] + "..." if len(self.device_name) > 43 else self.device_name
@@ -26,110 +24,85 @@ class DeviceListItem(ListItem):
 
 
 class DeviceList(Static):
-    """Widget to display and select audio output devices."""
-    
+    """Widget to display and select audio output sinks (Pulse names)."""
+
     DEFAULT_CSS = """
     DeviceList {
         border: heavy $border;
     }
     """
-    
-    selected_device: reactive[Optional[int]] = reactive(None)
-    
+
+    selected_device: reactive[Optional[str]] = reactive(None)
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.devices: List[Tuple[int, str, str]] = []  # (id, name, host_api)
-        self.border_title = "\[ OUTPUT DEVICES ]"
-    
+        self.devices: List[Tuple[str, str]] = []  # (sink_name, description)
+        self.border_title = "\\[ OUTPUT DEVICES ]"
+
     def compose(self):
         yield ListView(id="device-list")
-    
+
     def on_mount(self) -> None:
         """Load devices when widget mounts."""
         self.refresh_devices()
-    
+
     def refresh_devices(self) -> None:
-        """Refresh the device list from sounddevice."""
+        """Refresh the sink list from PulseAudio."""
         try:
-            if not USE_SOUNDDEVICE or sd is None:
-                self.devices = []
-                try:
-                    from .status_line import StatusLine
-                    status_line = self.app.query_one("#status-line", StatusLine)
-                    msg = "sounddevice/PortAudio unavailable"
-                    if SOUNDDEVICE_ERROR:
-                        msg = f"sounddevice/PortAudio unavailable: {SOUNDDEVICE_ERROR}"
-                    if SOUNDDEVICE_INSTALL_HINT:
-                        msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
-                    status_line.notify(msg, "error")
-                except Exception:
-                    pass
-                return
-            devices = sd.query_devices()
-            
-            # Friendly brand names for PulseAudio devices: PortAudio reports
-            # raw sink IDs (e.g. 'alsa_output.pci-0000_00_1f.3.analog-stereo')
-            # while PulseAudio knows descriptions ('Built-in Audio Analog
-            # Stereo'). Best effort — falls back to PortAudio names.
-            sink_names = {}
-            try:
-                from ...backends.platform.linux import list_pulseaudio_sinks
-                for sink in list_pulseaudio_sinks():
-                    sink_names[sink.name] = sink.description
-            except Exception:
-                sink_names = {}
-            
+            from ...backends.platform.linux import (
+                list_pulseaudio_sinks, get_default_sink_name,
+            )
+        except ImportError:
+            self.devices = []
+            return
+        try:
+            sinks = [s for s in list_pulseaudio_sinks()
+                     if s.name != "Poise_Capture"]
+            # Exclude other null/virtual sinks from the picker.
+            sinks = [s for s in sinks if "null" not in s.name.lower()]
             self.devices = []
             list_view = self.query_one("#device-list", ListView)
             list_view.clear()
-            
-            # First pass: collect PulseAudio devices
-            pulse_devices = []
-            alsa_devices = []
-            
-            for i, device in enumerate(devices):
-                if device.get('max_output_channels', 0) == 0:
-                    continue
-                    
-                name = device.get('name', f'Device {i}')
-                name_lower = name.lower()
-                
-                # Skip monitors, null sinks, and virtual devices
-                if any(skip in name_lower for skip in ['monitor', 'null', 'poise', 'default']):
-                    continue
-                
-                host_api = sd.query_hostapis(device['hostapi'])['name']
-                
-                # Show the brand/description name where known (selection
-                # still uses the PortAudio device ID underneath).
-                display = sink_names.get(name, name)
-                
-                if 'pulse' in host_api.lower():
-                    pulse_devices.append((i, display, host_api))
-                elif 'alsa' in host_api.lower():
-                    # Skip raw ALSA hw devices if we have PulseAudio
-                    if not name.startswith('HDA ') and not name.startswith('hw:'):
-                        alsa_devices.append((i, display, host_api))
-            
-            # Prefer PulseAudio, fall back to ALSA
-            devices_to_show = pulse_devices if pulse_devices else alsa_devices
-            
-            for device_id, name, host_api in devices_to_show:
-                self.devices.append((device_id, name, host_api))
-                list_view.append(DeviceListItem(device_id, name, host_api))
-            
-            # Select first device by default
-            if self.devices and list_view.children:
-                list_view.index = 0
-                self.selected_device = self.devices[0][0]
-                
-        except (ImportError, OSError):
+
+            default_sink = None
+            try:
+                default_sink = get_default_sink_name()
+            except Exception:
+                default_sink = None
+
+            for sink in sinks:
+                self.devices.append((sink.name, sink.description))
+                list_view.append(DeviceListItem(sink.name, sink.description))
+
+            # Default to the original default sink, else the first sink.
+            selected = None
+            if self.devices:
+                names = [name for name, _ in self.devices]
+                if default_sink in names:
+                    selected = default_sink
+                else:
+                    selected = names[0]
+                try:
+                    list_view.index = names.index(selected)
+                except Exception:
+                    list_view.index = 0
+                self.selected_device = selected
+            else:
+                self.selected_device = None
+                try:
+                    from .status_line import StatusLine
+                    status_line = self.app.query_one("#status-line", StatusLine)
+                    status_line.notify("No PulseAudio sinks found", "error")
+                except Exception:
+                    pass
+        except Exception:
             self.devices = []
-    
+            self.selected_device = None
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Handle device selection."""
+        """Handle sink selection."""
         if isinstance(event.item, DeviceListItem):
-            self.selected_device = event.item.device_id
+            self.selected_device = event.item.sink_name
             # Show feedback in status line
             try:
                 from .status_line import StatusLine

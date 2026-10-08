@@ -4,8 +4,76 @@ $border: #1a1a1a;
 $accent: #3be8ff;
 $running: #6eff25ff;
 
+/* Base background for the whole app: the terminal default, so the app
+   blends with the terminal instead of painting a dark rectangle.
+   NOTE: `transparent` does NOT work for base filler — filler cells drop
+   the alpha channel when converted to terminal colors and render as solid
+   black. `ansi_default` emits the terminal default background instead.
+   The `*` rule covers containers with no explicit background; anything
+   sitting over an opaque parent (modal dialog content, highlight rows)
+   keeps its own `transparent`, which blends correctly down to the parent
+   (those rules live in the widget DEFAULT_CSS and beat `*` anyway). */
+* {
+    background: ansi_default;
+}
+
+/* State and surface rules that widget DEFAULT_CSS used to provide.
+   They must live here: app CSS beats widget DEFAULT_CSS for the same
+   property, so the `*` rule above would otherwise swallow them. */
+ModelPickerScreen > Vertical {
+    background: #1a1a1a;
+}
+
+ModelPickerScreen ListView {
+    background: #1a1a1a;
+}
+
+ModelPickerScreen ListItem {
+    background: #1a1a1a;
+}
+
+ModelPickerScreen Label {
+    background: #1a1a1a;
+}
+
+ModelPickerScreen ListItem.-hovered {
+    background: $block-hover-background;
+}
+
+ModelPickerScreen ListItem.-highlight {
+    background: $accent;
+    color: #1a1a1a;
+}
+
+ModelPickerScreen ListItem.-highlight > Label {
+    background: $accent;
+    color: #1a1a1a;
+}
+
+#device-list ListItem.-hovered {
+    background: $block-hover-background;
+}
+
+#device-list ListItem.-highlight {
+    background: $accent;
+    color: #1a1a1a;
+}
+
+#device-list ListItem.-highlight > Label {
+    background: $accent;
+    color: #1a1a1a;
+}
+
+/* The App node paints the screen base via App.render() (Screen defers to
+   it when it has no opaque background of its own). Textual's default App
+   background is the opaque $background theme color — override it or the
+   whole app is a dark block against the terminal. */
+PoiseApp {
+    background: ansi_default;
+}
+
 Screen {
-    background: transparent;
+    background: ansi_default;
     color: $fg;
     layout: vertical;
 }
@@ -73,13 +141,13 @@ Screen.-running HeaderTitle {
 
 Footer {
     dock: bottom;
-    background: transparent;
+    background: ansi_default;
     color: #888888;
     margin-top: 1;
 }
 
 FooterKey {
-    background: transparent;
+    background: ansi_default;
     color: #888888;
     padding: 0 1;
 }
@@ -91,8 +159,14 @@ FooterKey>.footer-key--key {
     padding: 0 1;
 }
 
+/* NOTE: bare `.footer-key--*` selectors feed FooterKey's render-time
+   component styles (older Textual renders key/description as Text spans,
+   not child widgets, so descendant selectors match nothing there). */
+.footer-key--description,
 FooterKey>.footer-key--description {
     padding: 0 0 0 1;
+    color: $fg;
+    background: ansi_default;
 }
 
 /* Screen.-running FooterKey>.footer-key--key {
@@ -119,7 +193,7 @@ FooterKey>.footer-key--description {
 DeviceList {
     column-span: 1;
     row-span: 1;
-    background: transparent;
+    background: ansi_default;
     border: round $accent;
     border-title-color: $accent;
     border-title-background: transparent;
@@ -127,10 +201,31 @@ DeviceList {
     padding: 1;
 }
 
+/* ListView paints $surface by default — keep the panel on terminal bg. */
+#device-list {
+    background: ansi_default;
+}
+
+#device-list ListItem {
+    background: ansi_default;
+}
+
+#device-list ListItem Label {
+    background: ansi_default;
+}
+
+DeviceListItem {
+    background: ansi_default;
+}
+
+DeviceListItem Label {
+    background: ansi_default;
+}
+
 VADPanel {
     column-span: 1;
     row-span: 1;
-    background: transparent;
+    background: ansi_default;
     border: round $accent;
     border-title-color: $accent;
     border-title-background: transparent;
@@ -141,7 +236,7 @@ VADPanel {
 StatsPanel {
     column-span: 1;
     row-span: 2;
-    background: transparent;
+    background: ansi_default;
     border: round $accent;
     border-title-color: $accent;
     border-title-background: transparent;
@@ -151,7 +246,7 @@ StatsPanel {
 
 StatsPanel Rule {
     color: #888888;
-    background: transparent;
+    background: ansi_default;
     margin: 0 0;
 }
 
@@ -215,7 +310,7 @@ Screen.-running StatsPanel Rule {
 StatusLine {
     width: 1fr;
     height: auto;
-    background: transparent;
+    background: ansi_default;
     align: right top;
 }
 
@@ -223,18 +318,18 @@ StatusLine {
     width: 1fr;
     height: 1;
     content-align: right top;
-    background: transparent;
+    background: ansi_default;
 }
 
 #status-text {
     width: 1fr;
     height: 1;
     content-align: right top;
-    background: transparent;
+    background: ansi_default;
 }
 
 Scrollbar {
-    background: transparent;
+    background: ansi_default;
     color: $dim;
     width: 1;
 }

@@ -2,13 +2,17 @@
 Linux Platform Audio Utilities
 
 Linux-specific audio functionality:
-- PulseAudio/PipeWire device discovery via pulsectl (preferred)
-- PortAudio device mapping for actual audio streaming
-- ALSA device handling (fallback)
+- PulseAudio/PipeWire device discovery via pulsectl
+- Null-sink routing for system-audio capture
 
-This module is EXCLUDED from Windows builds via PyInstaller spec.
+Audio I/O itself uses libpulse-simple directly
+(see stream_denoiser.backends.pulse_simple); PortAudio is not used
+on Linux.
+
+This module is unused on Windows builds.
 """
-from typing import Optional, List, Tuple, Dict, Any
+import time
+from typing import Optional, List, Tuple
 from dataclasses import dataclass
 
 from ...logging_config import get_logger
@@ -21,7 +25,7 @@ try:
     USE_PULSECTL = True
 except ImportError:
     USE_PULSECTL = False
-    _logger.debug("pulsectl not available - using PortAudio-only device discovery")
+    _logger.debug("pulsectl not available - PulseAudio routing unavailable")
 
 
 @dataclass
@@ -35,7 +39,7 @@ class PulseAudioSource:
     channels: int
 
 
-@dataclass  
+@dataclass
 class PulseAudioSink:
     """Represents a PulseAudio/PipeWire sink (output device)."""
     index: int
@@ -48,13 +52,13 @@ class PulseAudioSink:
 def list_pulseaudio_sources() -> List[PulseAudioSource]:
     """
     List all PulseAudio/PipeWire sources using pulsectl.
-    
+
     Returns:
         List of PulseAudioSource objects
     """
     if not USE_PULSECTL:
         return []
-    
+
     try:
         with pulsectl.Pulse('stream-denoiser-list') as pulse:
             sources = []
@@ -77,13 +81,13 @@ def list_pulseaudio_sources() -> List[PulseAudioSource]:
 def list_pulseaudio_sinks() -> List[PulseAudioSink]:
     """
     List all PulseAudio/PipeWire sinks using pulsectl.
-    
+
     Returns:
         List of PulseAudioSink objects
     """
     if not USE_PULSECTL:
         return []
-    
+
     try:
         with pulsectl.Pulse('stream-denoiser-list') as pulse:
             sinks = []
@@ -101,34 +105,101 @@ def list_pulseaudio_sinks() -> List[PulseAudioSink]:
         return []
 
 
+def list_pulseaudio_sources_formatted() -> str:
+    """
+    Get formatted string of PulseAudio sources for CLI display.
+
+    Returns:
+        Formatted string for display, or empty string if unavailable
+    """
+    sources = list_pulseaudio_sources()
+    if not sources:
+        return ""
+
+    lines = []
+    for source in sources:
+        monitor_marker = " [MONITOR]" if source.is_monitor else ""
+        lines.append(f"{source.name}: {source.description}{monitor_marker}")
+        lines.append(f"    Sample rate: {source.sample_rate}Hz, Channels: {source.channels}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def list_pulseaudio_sinks_formatted() -> str:
+    """
+    Get formatted string of PulseAudio sinks for CLI display.
+
+    Returns:
+        Formatted string for display, or empty string if unavailable
+    """
+    sinks = list_pulseaudio_sinks()
+    if not sinks:
+        return ""
+
+    lines = []
+    for sink in sinks:
+        lines.append(f"{sink.name}: {sink.description}")
+        lines.append(f"    Sample rate: {sink.sample_rate}Hz, Channels: {sink.channels}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def get_default_sink_name() -> Optional[str]:
+    """Return the server's current default sink name, or None."""
+    if not USE_PULSECTL:
+        return None
+    try:
+        with pulsectl.Pulse('stream-denoiser-default-sink') as pulse:
+            return pulse.server_info().default_sink_name
+    except Exception as e:
+        _logger.debug(f"Could not query default sink: {e}")
+        return None
+
+
+def get_pulse_server_info() -> Tuple[Optional[str], Optional[str]]:
+    """Return (server_name, server_version) from pulsectl, or (None, None)."""
+    if not USE_PULSECTL:
+        return None, None
+    try:
+        with pulsectl.Pulse('stream-denoiser-server-info') as pulse:
+            info = pulse.server_info()
+            return getattr(info, 'server_name', None), getattr(
+                info, 'server_version', None)
+    except Exception as e:
+        _logger.debug(f"Could not query server info: {e}")
+        return None, None
+
+
 def find_monitor_source_pulsectl() -> Optional[PulseAudioSource]:
     """
     Find the best monitor source for system audio capture using pulsectl.
-    
+
     Priority:
     1. Monitor of the default sink
     2. Any monitor source with "built-in" or "analog" in name
     3. First available monitor source
-    
+
     Returns:
         PulseAudioSource for the best monitor, or None
     """
     if not USE_PULSECTL:
         return None
-    
+
     try:
         with pulsectl.Pulse('stream-denoiser-find') as pulse:
             # Get default sink to find its monitor
             server_info = pulse.server_info()
             default_sink_name = server_info.default_sink_name
-            
+
             sources = pulse.source_list()
             monitor_sources = [s for s in sources if s.name.endswith('.monitor')]
-            
+
             if not monitor_sources:
                 _logger.warning("No monitor sources found in PulseAudio")
                 return None
-            
+
             # Priority 1: Monitor of default sink
             default_monitor_name = f"{default_sink_name}.monitor"
             for source in monitor_sources:
@@ -142,7 +213,7 @@ def find_monitor_source_pulsectl() -> Optional[PulseAudioSource]:
                         sample_rate=source.sample_spec.rate,
                         channels=source.sample_spec.channels
                     )
-            
+
             # Priority 2: Built-in or analog monitor
             for source in monitor_sources:
                 name_lower = source.name.lower()
@@ -156,7 +227,7 @@ def find_monitor_source_pulsectl() -> Optional[PulseAudioSource]:
                         sample_rate=source.sample_spec.rate,
                         channels=source.sample_spec.channels
                     )
-            
+
             # Priority 3: First available monitor
             source = monitor_sources[0]
             _logger.info(f"Using first available monitor: {source.description}")
@@ -168,313 +239,33 @@ def find_monitor_source_pulsectl() -> Optional[PulseAudioSource]:
                 sample_rate=source.sample_spec.rate,
                 channels=source.sample_spec.channels
             )
-            
+
     except pulsectl.PulseError as e:
         _logger.warning(f"Failed to find monitor source: {e}")
         return None
 
 
-def map_pulse_to_portaudio(pulse_source: PulseAudioSource, 
-                           portaudio_devices: List[Dict[str, Any]]) -> Optional[int]:
-    """
-    Map a PulseAudio source to the best matching PortAudio device ID.
-    
-    Since PortAudio may not see PulseAudio devices directly, we try to find
-    a matching device by name similarity. Strongly prefers ALSA devices over
-    JACK to avoid memory corruption issues in PortAudio's JACK backend.
-    
-    Args:
-        pulse_source: PulseAudio source to map
-        portaudio_devices: List of devices from sounddevice.query_devices()
-        
-    Returns:
-        PortAudio device ID, or None if no match found
-    """
-    if not pulse_source:
-        return None
-    
-    try:
-        import sounddevice as sd
-    except ImportError:
-        return None
-    
-    # Extract keywords from PulseAudio source for matching
-    pulse_name_lower = pulse_source.name.lower()
-    pulse_desc_lower = pulse_source.description.lower()
-    
-    # Separate by host API (prefer PulseAudio > ALSA > JACK)
-    pulse_matches = []
-    alsa_matches = []
-    jack_matches = []
-    
-    for i, device in enumerate(portaudio_devices):
-        if device.get('max_input_channels', 0) == 0:
-            continue
-        
-        device_name = device.get('name', '')
-        device_name_lower = device_name.lower()
-        host_api = sd.query_hostapis(device['hostapi'])['name']
-        is_pulse = 'pulse' in host_api.lower()
-        is_alsa = 'alsa' in host_api.lower() and not is_pulse
-        is_jack = 'jack' in host_api.lower()
-        
-        score = 0
-        
-        # Exact match for PulseAudio monitor (best case)
-        if pulse_source.name in device_name or device_name in pulse_source.name:
-            score += 100  # Exact match
-        
-        # Check for partial matches
-        if 'monitor' in device_name_lower and 'monitor' in pulse_desc_lower:
-            score += 50
-        if 'analog' in pulse_name_lower and 'analog' in device_name_lower:
-            score += 10
-        if 'built-in' in pulse_desc_lower and 'built-in' in device_name_lower:
-            score += 5
-        
-        if score > 0:
-            if is_pulse:
-                pulse_matches.append((score, i, device))
-            elif is_alsa:
-                alsa_matches.append((score, i, device))
-            elif is_jack:
-                jack_matches.append((score, i, device))
-    
-    # Prefer PulseAudio devices (direct access to PipeWire sources)
-    if pulse_matches:
-        pulse_matches.sort(key=lambda x: x[0], reverse=True)
-        score, best_idx, best_device = pulse_matches[0]
-        _logger.info(f"Mapped PulseAudio '{pulse_source.description}' -> PortAudio PulseAudio device {best_idx}")
-        return best_idx
-    
-    # Fall back to ALSA if no PulseAudio match
-    if alsa_matches:
-        alsa_matches.sort(key=lambda x: x[0], reverse=True)
-        score, best_idx, best_device = alsa_matches[0]
-        _logger.info(f"Mapped PulseAudio '{pulse_source.description}' -> PortAudio ALSA device {best_idx}")
-        return best_idx
-    
-    # Fall back to JACK if no ALSA match (with warning)
-    if jack_matches:
-        jack_matches.sort(key=lambda x: x[0], reverse=True)
-        score, best_idx, best_device = jack_matches[0]
-        _logger.warning(f"Using JACK device (may be unstable): {best_device.get('name')} (ID: {best_idx})")
-        return best_idx
-    
-    # No match found - look for any PulseAudio device with 'monitor' in name
-    for i, device in enumerate(portaudio_devices):
-        host_api = sd.query_hostapis(device['hostapi'])['name']
-        if 'pulse' in host_api.lower() and 'monitor' in device.get('name', '').lower():
-            if device.get('max_input_channels', 0) > 0:
-                _logger.info(f"Using PulseAudio monitor: {device.get('name')} (ID: {i})")
-                return i
-    
-    _logger.warning(f"Could not map PulseAudio source '{pulse_source.description}' to PortAudio device")
-    return None
-
-
-def find_loopback_hybrid(device_id: Optional[int] = None) -> Optional[int]:
-    """
-    Hybrid loopback device detection for Linux.
-    
-    Uses pulsectl to find monitor sources, then maps to PortAudio device.
-    Falls back to PortAudio-only detection if pulsectl unavailable.
-    
-    Args:
-        device_id: User-specified device ID (returned as-is if provided)
-        
-    Returns:
-        PortAudio device ID for loopback capture
-    """
-    # If user specified a device, return it
-    if device_id is not None:
-        return device_id
-    
-    # Try pulsectl first
-    if USE_PULSECTL:
-        monitor = find_monitor_source_pulsectl()
-        if monitor:
-            # Import sounddevice here to avoid circular imports
-            try:
-                import sounddevice as sd
-                portaudio_devices = sd.query_devices()
-                mapped_id = map_pulse_to_portaudio(monitor, portaudio_devices)
-                if mapped_id is not None:
-                    return mapped_id
-                
-                # If mapping failed but we found a monitor, log helpful info
-                _logger.info(f"PulseAudio monitor found: {monitor.description}")
-                _logger.info(f"  Name: {monitor.name}")
-                _logger.info(f"  Index: {monitor.index}, Rate: {monitor.sample_rate}Hz")
-            except ImportError:
-                pass
-    
-    # Fall back to PortAudio-only detection
-    return None
-
-
-def list_pulseaudio_sources_formatted() -> str:
-    """
-    Get formatted string of PulseAudio sources for CLI display.
-    
-    Returns:
-        Formatted string for display, or empty string if unavailable
-    """
-    sources = list_pulseaudio_sources()
-    if not sources:
-        return ""
-    
-    lines = []
-    for source in sources:
-        monitor_marker = " [MONITOR]" if source.is_monitor else ""
-        lines.append(f"Index {source.index}: {source.description}{monitor_marker}")
-        lines.append(f"    Name: {source.name}")
-        lines.append(f"    Sample rate: {source.sample_rate}Hz, Channels: {source.channels}")
-        lines.append("")
-    
-    return "\n".join(lines)
-
-
-def find_monitor_sources(devices: List[Dict[str, Any]]) -> List[Tuple[int, Dict[str, Any]]]:
-    """
-    Find PulseAudio/PipeWire monitor sources for loopback capture.
-    
-    Monitor sources capture audio playing on output devices (equivalent to
-    WASAPI loopback on Windows).
-    
-    Args:
-        devices: List of audio devices from sounddevice.query_devices()
-        
-    Returns:
-        List of (device_id, device_info) tuples for monitor sources
-    """
-    monitor_devices = []
-    
-    for i, device in enumerate(devices):
-        device_name = device.get('name', '')
-        device_name_lower = device_name.lower()
-        
-        # Must be an input device to capture from
-        if device.get('max_input_channels', 0) == 0:
-            continue
-        
-        # Check for monitor source patterns
-        # PulseAudio/PipeWire: "Monitor of X", "X.monitor"
-        is_monitor = (
-            'monitor of' in device_name_lower or
-            '.monitor' in device_name_lower or
-            device_name_lower.endswith(' monitor')
-        )
-        
-        if is_monitor:
-            monitor_devices.append((i, device))
-            _logger.debug(f"Found monitor source: {device_name} (ID: {i})")
-    
-    return monitor_devices
-
-
-def find_loopback_device_linux(devices: List[Dict[str, Any]], 
-                                preferred_output: Optional[str] = None) -> Optional[int]:
-    """
-    Find the best loopback device for audio capture on Linux.
-    
-    Priority:
-    1. Monitor of the preferred output device (if specified)
-    2. Monitor of "Built-in" or default audio
-    3. Any available monitor source
-    4. Default input device (fallback)
-    
-    Args:
-        devices: List of audio devices from sounddevice.query_devices()
-        preferred_output: Name of preferred output device to find monitor for
-        
-    Returns:
-        Device ID for loopback capture, or None if not found
-    """
-    monitors = find_monitor_sources(devices)
-    
-    if not monitors:
-        _logger.warning("No monitor sources found. Audio capture may require PipeWire/PulseAudio.")
-        return None
-    
-    # If preferred output specified, find its monitor
-    if preferred_output:
-        preferred_lower = preferred_output.lower()
-        for device_id, device in monitors:
-            device_name_lower = device['name'].lower()
-            if preferred_lower in device_name_lower:
-                _logger.info(f"Found monitor for preferred output: {device['name']} (ID: {device_id})")
-                return device_id
-    
-    # Look for built-in audio monitor
-    for device_id, device in monitors:
-        device_name_lower = device['name'].lower()
-        if 'built-in' in device_name_lower or 'internal' in device_name_lower:
-            _logger.info(f"Found built-in audio monitor: {device['name']} (ID: {device_id})")
-            return device_id
-    
-    # Return first available monitor
-    if monitors:
-        device_id, device = monitors[0]
-        _logger.info(f"Using first available monitor: {device['name']} (ID: {device_id})")
-        return device_id
-    
-    return None
-
-
-def get_linux_output_devices(devices: List[Dict[str, Any]]) -> List[Tuple[int, Dict[str, Any]]]:
-    """
-    Get list of output devices suitable for playback on Linux.
-    
-    Filters out virtual devices and monitors, prioritizing real hardware.
-    
-    Args:
-        devices: List of audio devices from sounddevice.query_devices()
-        
-    Returns:
-        List of (device_id, device_info) tuples for output devices
-    """
-    output_devices = []
-    
-    for i, device in enumerate(devices):
-        device_name = device.get('name', '')
-        device_name_lower = device_name.lower()
-        
-        # Must support output
-        if device.get('max_output_channels', 0) == 0:
-            continue
-        
-        # Skip monitor sources (they're for input capture)
-        if 'monitor' in device_name_lower:
-            continue
-        
-        # Skip null sinks (virtual devices for routing)
-        if 'null' in device_name_lower:
-            continue
-        
-        output_devices.append((i, device))
-    
-    return output_devices
-
-
 class LinuxAudioRouter:
     """
     Automatic audio routing for Linux using PulseAudio/PipeWire.
-    
-    Similar to VB Cable on Windows, this class:
+
     1. Creates a null sink (virtual audio device)
     2. Sets it as the default sink (apps route audio there)
-    3. Provides the null sink's monitor for capture
+    3. Provides the null sink's monitor source name for capture
     4. Restores original routing on exit
+
+    Capture and playback both use names, never indices: the monitor
+    source name (``Poise_Capture.monitor``) and the real hardware sink
+    name saved at setup time.
     """
-    
+
     SINK_NAME = "Poise_Capture"
     SINK_DESCRIPTION = "Poise Audio Capture"
-    
+
     def __init__(self, auto_switch: bool = True):
         """
         Initialize the Linux audio router.
-        
+
         Args:
             auto_switch: If True, automatically switch default sink on init
         """
@@ -483,29 +274,29 @@ class LinuxAudioRouter:
         self._sink_name: Optional[str] = None
         self._monitor_source: Optional[str] = None
         self._auto_switch = auto_switch
-        
+
         if auto_switch:
             self._setup_routing()
-    
+
     def _setup_routing(self) -> bool:
         """Set up null sink and switch default sink."""
         if not USE_PULSECTL:
             _logger.warning("pulsectl not available - cannot set up automatic routing")
             return False
-        
+
         try:
             with pulsectl.Pulse('denoiser-router') as pulse:
                 # Get current default sink
                 server_info = pulse.server_info()
                 current_default = server_info.default_sink_name
-                
+
                 # Check if our sink already exists
                 existing_null_sink = None
                 for sink in pulse.sink_list():
                     if sink.name == self.SINK_NAME:
                         existing_null_sink = sink
                         break
-                
+
                 # If current default IS our null sink, we need to find the real hardware sink
                 if current_default == self.SINK_NAME:
                     _logger.warning("Current default is our null sink (from previous crash?)")
@@ -520,7 +311,7 @@ class LinuxAudioRouter:
                 else:
                     self._original_default_sink = current_default
                     _logger.info(f"Original default sink: {self._original_default_sink}")
-                
+
                 # Reuse existing null sink if present
                 if existing_null_sink:
                     _logger.info(f"Reusing existing null sink: {self.SINK_NAME}")
@@ -529,7 +320,7 @@ class LinuxAudioRouter:
                     pulse.sink_default_set(existing_null_sink)
                     _logger.info(f"Set default sink to: {self.SINK_NAME}")
                     return True
-                
+
                 # Create null sink using pactl (pulsectl doesn't support module loading directly)
                 import subprocess
                 result = subprocess.run(
@@ -538,16 +329,16 @@ class LinuxAudioRouter:
                      f'sink_properties=device.description="{self.SINK_DESCRIPTION}"'],
                     capture_output=True, text=True
                 )
-                
+
                 if result.returncode != 0:
                     _logger.error(f"Failed to create null sink: {result.stderr}")
                     return False
-                
+
                 self._module_id = int(result.stdout.strip())
                 self._sink_name = self.SINK_NAME
                 self._monitor_source = f"{self.SINK_NAME}.monitor"
                 _logger.info(f"Created null sink: {self.SINK_NAME} (module ID: {self._module_id})")
-                
+
                 # Set as default sink
                 # Need to refresh sink list
                 for sink in pulse.sink_list():
@@ -555,206 +346,74 @@ class LinuxAudioRouter:
                         pulse.sink_default_set(sink)
                         _logger.info(f"Set default sink to: {self.SINK_NAME}")
                         break
-                
+
                 return True
-                
+
         except pulsectl.PulseError as e:
             _logger.error(f"PulseAudio error during routing setup: {e}")
             return False
         except Exception as e:
             _logger.error(f"Error setting up routing: {e}")
             return False
-    
+
     def get_monitor_source_name(self) -> Optional[str]:
         """Get the name of the null sink's monitor source for capture."""
         return self._monitor_source
-    
-    def _score_monitor_device(self, device: Dict[str, Any]) -> int:
+
+    @property
+    def original_sink_name(self) -> Optional[str]:
+        """Name of the real hardware sink saved at setup time.
+
+        Playback targets this sink by name so output keeps going to
+        hardware even after the default flips to Poise_Capture.
         """
-        Score a PortAudio device against the null sink's monitor.
+        return self._original_default_sink
 
-        PulseAudio and PortAudio use different namespaces, so the null
-        sink's monitor (e.g. ``Poise_Capture.monitor``) can surface under
-        several PortAudio names (e.g. ``Monitor of Poise Audio Capture``).
-        Match on the sink name, the full monitor source name, and the
-        human-readable sink description.
+    def wait_for_monitor_source(self, timeout_sec: float = 3.0,
+                                poll_interval_sec: float = 0.05) -> Optional[str]:
+        """Wait for the null sink's monitor source to appear at Pulse level.
 
-        Returns:
-            Match score (>0 is a candidate, higher is better).
-        """
-        if device.get('max_input_channels', 0) <= 0:
-            return 0
-        name_lower = str(device.get('name', '')).lower()
-        if not name_lower:
-            return 0
-
-        score = 0
-        sink_lower = (self._sink_name or '').lower()
-        monitor_lower = (self._monitor_source or '').lower()
-        desc_lower = self.SINK_DESCRIPTION.lower()
-
-        if sink_lower and sink_lower in name_lower:
-            score += 100
-        if monitor_lower and monitor_lower in name_lower:
-            score += 100
-        if desc_lower and desc_lower in name_lower:
-            score += 80
-        if 'poise' in name_lower:
-            score += 50
-            if 'monitor' in name_lower or 'capture' in name_lower:
-                score += 40
-        # Legacy sink name (pre-Poise rebrand); keep as a low-priority
-        # fallback so old configs still resolve.
-        if 'denoiser' in name_lower:
-            score += 10
-        return score
-
-    @staticmethod
-    def _format_portaudio_devices(devices) -> str:
-        """One-line-per-device summary for failure diagnostics."""
-        lines = []
-        try:
-            import sounddevice as sd
-        except ImportError:
-            sd = None  # type: ignore
-        for i, device in enumerate(devices):
-            try:
-                host_api = sd.query_hostapis(device['hostapi'])['name'] if sd else '?'
-            except Exception:
-                host_api = '?'
-            lines.append(
-                f"ID {i}: {device.get('name', '?')} "
-                f"(in={device.get('max_input_channels', '?')} "
-                f"out={device.get('max_output_channels', '?')} "
-                f"sr={device.get('default_samplerate', '?')} api={host_api})"
-            )
-        return '\n'.join(lines) if lines else '<no PortAudio devices>'
-
-    def _pulse_monitor_exists(self) -> Optional[bool]:
-        """
-        Check whether the monitor source exists at the PulseAudio layer.
-
-        Distinguishes "Pulse has it but PortAudio doesn't publish it"
-        (host-API/backend issue) from "Pulse doesn't have it either"
-        (sink creation/registration issue). Returns None when pulsectl
-        is unavailable or the check itself fails.
-        """
-        if not USE_PULSECTL or not self._monitor_source:
-            return None
-        try:
-            import pulsectl
-            with pulsectl.Pulse('denoiser-router-check') as pulse:
-                names = [s.name for s in pulse.source_list()]
-            return self._monitor_source in names
-        except Exception:
-            return None
-
-    def get_monitor_device_id(
-        self,
-        timeout_sec: float = 5.0,
-        retry_interval_sec: float = 0.5,
-    ) -> Optional[int]:
-        """
-        Get the PortAudio device ID for the null sink's monitor.
-
-        PulseAudio needs a moment to publish a freshly created null sink
-        and PortAudio needs a re-enumeration to see it — on slow machines
-        (spinning Bluetooth + PipeWire stacks) a single 0.5s attempt
-        misses it. Retry until ``timeout_sec`` before giving up.
-
-        Args:
-            timeout_sec: Total time to keep retrying (default: 5s).
-            retry_interval_sec: Delay between attempts (default: 0.5s).
-
-        Returns:
-            PortAudio device ID, or None if not found
+        Polls ``pulsectl.source_list()`` for the exact name
+        ``Poise_Capture.monitor``. Returns the source name when found,
+        else None after ``timeout_sec``. Fail fast: callers must not fall
+        back to the default input (that would capture silence while the
+        default sink points at the null sink).
         """
         if not self._monitor_source:
             return None
-
-        try:
-            import sounddevice as sd
-            import time
-        except ImportError:
-            return None
-
+        if not USE_PULSECTL:
+            # Without pulsectl we cannot confirm; trust the expected name
+            # so offline tests can proceed, real runs need pulsectl anyway.
+            return self._monitor_source
         deadline = time.monotonic() + max(0.0, timeout_sec)
-        refreshed = False
-        devices = []
         while True:
-            # Force PortAudio to refresh device list (new null sink only
-            # appears after re-enumeration).
             try:
-                sd._terminate()
-                sd._initialize()
-            except Exception:
-                pass  # Ignore errors, just try to refresh
-            refreshed = True
-
-            try:
-                devices = sd.query_devices()
+                import pulsectl
+                with pulsectl.Pulse('denoiser-router-wait') as pulse:
+                    names = {s.name for s in pulse.source_list()}
+                if self._monitor_source in names:
+                    return self._monitor_source
             except Exception as e:
-                _logger.warning(f"PortAudio device query failed: {e}")
-                devices = []
-
-            best_id: Optional[int] = None
-            best_score = 0
-            best_name = ''
-            for i, device in enumerate(devices):
-                score = self._score_monitor_device(device)
-                if score > best_score:
-                    best_score = score
-                    best_id = i
-                    best_name = str(device.get('name', ''))
-            if best_id is not None:
-                _logger.info(f"Found null sink monitor: {best_name} (ID: {best_id})")
-                return best_id
-
+                _logger.debug(f"Monitor wait poll failed: {e}")
             if time.monotonic() >= deadline:
                 break
-            time.sleep(max(0.05, retry_interval_sec))
-
-        # Exhausted retries: log everything support needs. The device dump
-        # is what distinguishes a naming mismatch from a missing backend.
-        if not refreshed:
-            devices = []
-        _logger.warning(f"Could not find PortAudio device for monitor: {self._monitor_source}")
-        try:
-            _logger.warning(
-                "PortAudio devices:\n%s", self._format_portaudio_devices(devices)
-            )
-        except Exception:
-            pass
-        pulse_state = self._pulse_monitor_exists()
-        if pulse_state is True:
-            _logger.warning(
-                "PulseAudio HAS '%s' but PortAudio does not publish it: "
-                "check the PortAudio Pulse/PipeWire backend, then retry or "
-                "pass --input-device explicitly (see --list-devices).",
-                self._monitor_source,
-            )
-        elif pulse_state is False:
-            _logger.warning(
-                "PulseAudio does NOT list '%s': the null sink may not have "
-                "registered yet — retry, or create it manually "
-                "(see LinuxAudioRouter.get_routing_instructions).",
-                self._monitor_source,
-            )
-        else:
-            _logger.warning(
-                "Run with --list-devices to see PortAudio devices, or pass "
-                "--input-device explicitly. Use --no-vb-cable to keep the "
-                "current default capture instead."
-            )
+            time.sleep(max(0.005, poll_interval_sec))
+        _logger.warning(
+            "Null sink monitor '%s' did not appear at the PulseAudio "
+            "level within %.1fs. Not starting: capturing the default input "
+            "instead would record silence. Fixes: check pavucontrol/PipeWire "
+            "Pulse backend, or use --no-vb-cable to keep default capture.",
+            self._monitor_source, timeout_sec,
+        )
         return None
-    
+
     def restore_original_sink(self) -> bool:
         """Restore the original default sink and clean up null sink."""
         success = True
-        
+
         if not USE_PULSECTL:
             return True
-        
+
         try:
             with pulsectl.Pulse('denoiser-router-cleanup') as pulse:
                 # Restore original default sink
@@ -768,7 +427,7 @@ class LinuxAudioRouter:
                     except pulsectl.PulseError as e:
                         _logger.warning(f"Could not restore original sink: {e}")
                         success = False
-                
+
                 # Unload null sink module
                 if self._module_id is not None:
                     import subprocess
@@ -782,22 +441,22 @@ class LinuxAudioRouter:
                         _logger.warning(f"Could not unload module: {result.stderr}")
                         success = False
                     self._module_id = None
-                
+
         except pulsectl.PulseError as e:
             _logger.error(f"PulseAudio error during cleanup: {e}")
             success = False
-        
+
         return success
-    
+
     def __enter__(self):
         """Context manager entry."""
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - restore original routing."""
         self.restore_original_sink()
         return False
-    
+
     @staticmethod
     def get_routing_instructions() -> str:
         """Get user-friendly instructions for manual audio routing."""
@@ -818,11 +477,10 @@ Option 1: Use PipeWire/PulseAudio GUI tools
 Option 2: Manual command line setup
   # Create null sink
   pactl load-module module-null-sink sink_name=Poise_Capture sink_properties=device.description="Poise_Capture"
-  
+
   # Set as default (apps will use it automatically)
   pactl set-default-sink Poise_Capture
-  
+
   # Run denoiser - it will capture from the null sink's monitor
   python -m stream_denoiser
 """
-

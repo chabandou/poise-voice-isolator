@@ -43,11 +43,46 @@ def test_check_execstack_live_library():
     assert result.ok  # this machine's wheel is clean; RWE would fail loudly
 
 
-def test_check_portaudio_live():
-    result = health.check_portaudio()
+def test_check_pulse_backend_live():
+    result = health.check_pulse_backend()
     # Must never raise; on a healthy box it passes, elsewhere it explains.
-    assert result.name == "portaudio"
+    assert result.name == "pulse-simple"
     assert isinstance(result.detail, str)
+
+
+def test_check_pulse_backend_reports_server(monkeypatch):
+    from stream_denoiser.backends import pulse_simple
+    monkeypatch.setattr(pulse_simple, "_load_library", lambda: object())
+    from stream_denoiser.backends.platform import linux as linux_mod
+    monkeypatch.setattr(linux_mod, "get_pulse_server_info",
+                        lambda: ("PulseAudio", "16.1"))
+    result = health.check_pulse_backend()
+    assert result.ok is True
+    assert "PulseAudio" in result.detail
+    assert "16.1" in result.detail
+
+
+def test_check_pulse_backend_missing_lib(monkeypatch):
+    from stream_denoiser.backends import pulse_simple
+    def _boom():
+        raise pulse_simple.PulseUnavailable("no lib")
+    monkeypatch.setattr(pulse_simple, "_load_library", _boom)
+    result = health.check_pulse_backend()
+    assert result.ok is False
+    assert "libpulse-simple" in result.detail
+    assert result.fix and "libpulse" in result.fix
+
+
+def test_check_pulse_backend_no_server(monkeypatch):
+    from stream_denoiser.backends import pulse_simple
+    monkeypatch.setattr(pulse_simple, "_load_library", lambda: object())
+    from stream_denoiser.backends.platform import linux as linux_mod
+    monkeypatch.setattr(linux_mod, "get_pulse_server_info",
+                        lambda: (None, None))
+    monkeypatch.setattr(health, "pulse_server_present", lambda: False)
+    result = health.check_pulse_backend()
+    assert result.ok is False
+    assert "no Pulse-compatible server" in result.detail
 
 
 def test_reset_audio_rejects_non_linux(monkeypatch):

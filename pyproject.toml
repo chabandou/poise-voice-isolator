@@ -29,7 +29,8 @@ keywords = ["audio", "denoiser", "voice", "isolator", "real-time", "noise-reduct
 dependencies = [
     "numpy>=1.23.0,<2.0.0",
     "onnxruntime>=1.15.0",
-    "sounddevice>=0.4.6",
+    "sounddevice>=0.4.6; sys_platform == 'win32'",
+    "pyaudio>=0.2.13; sys_platform == 'win32'",
     "scipy>=1.10.0",
     "samplerate>=0.1.0",
 ]
@@ -37,14 +38,17 @@ dependencies = [
 [project.optional-dependencies]
 linux = [
     "pulsectl>=24.0.0",
-    "textual>=0.50.0",
+    # 8.2.8+ required: earlier releases wash footer key text
+    # (from_rich_style maps terminal-default bg to a light gray) and
+    # can't render transparent filler (alpha dropped -> black).
+    "textual>=8.2.8",
 ]
 gui = [
     "PyQt6>=6.5.0",
 ]
 all = [
     "pulsectl>=24.0.0",
-    "textual>=0.50.0",
+    "textual>=8.2.8",
     "PyQt6>=6.5.0",
 ]
 dev = [
@@ -65,3 +69,8 @@ include = ["stream_denoiser*"]
 
 [tool.setuptools.package-data]
 stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: needs a live Pulse-compatible server + libpulse-simple",
+]

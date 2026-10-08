@@ -1,14 +1,14 @@
 # Maintainer: chabandou <chabandou@gmail.com>
 pkgname=poise-bin
 pkgver=1.1.0
-pkgrel=10
+pkgrel=11
 pkgdesc="Real-time system audio denoiser and voice isolator with TUI (prebuilt binary)"
 arch=('x86_64')
 url="https://github.com/chabandou/Poise-Voice-Isolator"
 license=('MIT')
 depends=(
     'glibc'
-    'libpulse'
+    'libpulse'  # pulse-simple backend (PortAudio is not used on Linux)
 )
 provides=('poise')
 conflicts=('poise')

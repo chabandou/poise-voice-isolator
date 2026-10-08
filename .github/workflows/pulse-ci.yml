@@ -1,0 +1,79 @@
+name: Pulse backend CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'stream_denoiser/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - 'build-linux.sh'
+      - '.github/workflows/pulse-ci.yml'
+  pull_request:
+    paths:
+      - 'stream_denoiser/**'
+      - 'tests/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - 'build-linux.sh'
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        run: |
+          pip install pytest numpy pulsectl
+      - name: Run unit tests (no server needed)
+        run: |
+          python -m pytest tests/test_pulse_simple.py tests/test_linux_monitor.py tests/test_health.py -v
+
+  pulseaudio:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-pytest
+          test -f /usr/lib/x86_64-linux-gnu/libpulse-simple.so.0 || \
+            (echo "libpulse-simple missing" && exit 1)
+      - name: Start headless PulseAudio
+        run: |
+          pulseaudio --start --exit-idle-time=-1 --disallow-exit
+          pactl info
+      - name: Install python deps
+        run: pip3 install --break-system-packages pulsectl pytest numpy || pip3 install pulsectl pytest numpy
+      - name: Unit + integration tests
+        run: python3 -m pytest tests/ -v -m "not integration or integration"
+
+  pipewire:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:41
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          dnf install -y pipewire pipewire-pulseaudio pulseaudio-utils pulse-libs python3 python3-pip python3-numpy python3-pytest
+          test -f /usr/lib64/libpulse-simple.so.0 || \
+            (echo "libpulse-simple missing" && exit 1)
+      - name: Start PipeWire with pipewire-pulse
+        run: |
+          pipewire &
+          pipewire-pulse &
+          sleep 3
+          pactl info
+      - name: Install python deps
+        run: pip3 install pulsectl pytest numpy
+      - name: Unit + integration tests
+        run: python3 -m pytest tests/ -v

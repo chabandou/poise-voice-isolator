@@ -6,6 +6,7 @@ Central location for all configuration constants used across the package.
 
 # Audio processing constants
 DEFAULT_SAMPLE_RATE = 48000
+PULSE_TARGET_SR = 48000  # Linux pulse-simple path is fixed 48 kHz float32
 DEFAULT_FRAME_SIZE = 480
 FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 

@@ -27,7 +27,10 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate poise-build
 
 echo "Installing build dependencies..."
-pip install -q nuitka ordered-set numpy onnxruntime sounddevice pulsectl textual samplerate scipy
+# NOTE: textual is pinned to the repo floor (>=8.2.8): older releases wash
+# footer key text and can't render transparent filler. A bare `textual`
+# requirement would keep whatever stale version the env already has.
+pip install -q nuitka ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate scipy
 
 # Install ccache if not present (speeds up rebuilds)
 if ! command -v ccache &> /dev/null; then
@@ -110,6 +113,7 @@ python -m nuitka \
     --nofollow-import-to=pytest,setuptools,pip,wheel,distutils \
     --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
+    --nofollow-import-to=sounddevice,pyaudio,pyaudiowpatch \
     --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
     --remove-output \
     --assume-yes-for-downloads \
@@ -127,6 +131,45 @@ echo "╰───────────────────────�
 echo
 echo "Output: dist/poise"
 echo "Size: $(du -h dist/poise | cut -f1)"
+echo
+echo "Verifying no PortAudio linkage (pulse-simple only)..."
+if command -v ldd &> /dev/null; then
+    if ldd dist/poise 2>/dev/null | grep -qi portaudio; then
+        echo "❌ Error: binary links libportaudio (PortAudio must not ship on Linux)."
+        exit 1
+    else
+        echo "✓ No libportaudio in ldd output"
+    fi
+fi
+# Runtime check: launch briefly and confirm no libportaudio maps.
+# (Skipped when no Pulse server is available in the build container, or
+# when there is no TTY for the TUI.) Any null sink the probe creates is
+# torn down with --reset-audio afterwards so the build never litters audio.
+if ./dist/poise --doctor >/dev/null 2>&1; then
+    POISE_PID=""
+    ./dist/poise >/dev/null 2>&1 &
+    POISE_PID=$!
+    sleep 2
+    if [ -n "$POISE_PID" ] && [ -f "/proc/$POISE_PID/maps" ]; then
+        if grep -qi portaudio "/proc/$POISE_PID/maps"; then
+            echo "❌ Error: libportaudio appears in process maps."
+            kill "$POISE_PID" 2>/dev/null || true
+            ./dist/poise --reset-audio >/dev/null 2>&1 || true
+            exit 1
+        else
+            echo "✓ No libportaudio in process maps"
+        fi
+    else
+        echo "(probe exited without a TTY - ldd check only)"
+    fi
+    if [ -n "$POISE_PID" ]; then
+        kill "$POISE_PID" 2>/dev/null || true
+        wait "$POISE_PID" 2>/dev/null || true
+        ./dist/poise --reset-audio >/dev/null 2>&1 || true
+    fi
+else
+    echo "(doctor unavailable without a Pulse server - ldd check only)"
+fi
 echo
 echo "To install system-wide:"
 echo "  sudo cp dist/poise /usr/local/bin/"

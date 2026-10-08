@@ -2,7 +2,7 @@
 Command-Line Interface for Stream Denoiser
 
 Main entry point and argument parsing for the real-time audio denoiser.
-Supports both Windows (VB Cable) and Linux (PulseAudio/ALSA).
+Supports both Windows (VB Cable) and Linux (PulseAudio via pulse-simple).
 """
 import os
 import sys
@@ -23,6 +23,7 @@ from .constants import (
     ALL_MODELS,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
+    PULSE_TARGET_SR,
 )
 from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
@@ -31,8 +32,6 @@ from .backend_detection import (
     USE_PYAUDIOWPATCH,
     USE_SOUNDDEVICE,
     sd,
-    SOUNDDEVICE_ERROR,
-    SOUNDDEVICE_INSTALL_HINT,
 )
 from .logging_config import get_logger
 
@@ -40,13 +39,15 @@ _logger = get_logger(__name__)
 
 
 def process_system_audio_realtime(engine: DenoiseEngine,
-                                   input_device: Optional[int] = None,
-                                   output_device: Optional[int] = None,
-                                   enable_vad: bool = True,
-                                   vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB,
-                                   atten_lim_db: float = -60.0,
-                                   use_vb_cable: bool = True,
-                                   vb_cable_name: Optional[str] = None) -> None:
+                                 input_device: Optional[int] = None,
+                                 output_device: Optional[int] = None,
+                                 enable_vad: bool = True,
+                                 vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB,
+                                 atten_lim_db: float = -60.0,
+                                 use_vb_cable: bool = True,
+                                 vb_cable_name: Optional[str] = None,
+                                 source: Optional[str] = None,
+                                 sink: Optional[str] = None) -> None:
     """
     Main entry point for real-time audio processing.
     Selects appropriate backend and uses unified DenoiserAudioProcessor.
@@ -54,18 +55,98 @@ def process_system_audio_realtime(engine: DenoiseEngine,
     Args:
         engine: Denoising engine (created via create_engine(); a raw ONNX
             InferenceSession is also accepted for backward compatibility)
-        input_device: Input device ID (optional)
-        output_device: Output device ID (optional)
+        input_device: Input device ID (Windows only; errors on Linux)
+        output_device: Output device ID (Windows only; errors on Linux)
         enable_vad: Enable Voice Activity Detection
         vad_threshold_db: VAD threshold in dB
         atten_lim_db: Attenuation limit in dB
         use_vb_cable: Whether to automatically switch devices (VB Cable on Windows, null sink on Linux)
         vb_cable_name: Custom name for VB Cable device (auto-detected if None)
+        source: Pulse source name for capture (Linux only)
+        sink: Pulse sink name for playback (Linux only)
     """
     # Platform-specific audio routing
     vb_cable_switcher = None
     linux_router = None
-    
+
+    if is_linux():
+        # Linux: pulse-simple path (names, never indices).
+        if input_device is not None:
+            raise ValueError(
+                f"Numeric --input-device {input_device} is not supported on "
+                "Linux (pulse-simple uses names). Use --source <name> "
+                "instead (see --list-devices).")
+        if output_device is not None:
+            raise ValueError(
+                f"Numeric --output-device {output_device} is not supported "
+                "on Linux (pulse-simple uses names). Use --sink <name> "
+                "instead (see --list-devices).")
+        if use_vb_cable:
+            # Linux: Use null sink routing
+            try:
+                from .backends.platform.linux import LinuxAudioRouter
+                linux_router = LinuxAudioRouter(auto_switch=True)
+                if linux_router.get_monitor_source_name():
+                    _logger.info("Linux audio routing enabled - using null sink for capture")
+                else:
+                    _logger.warning("Could not set up automatic routing - using default capture")
+                    linux_router = None
+            except ImportError:
+                _logger.info("Linux routing not available - using default capture")
+
+        try:
+            # Resolve capture source by name (fail fast at Pulse level).
+            if source is None:
+                if linux_router and linux_router.get_monitor_source_name():
+                    source = linux_router.wait_for_monitor_source()
+                    if source is None:
+                        monitor = linux_router.get_monitor_source_name()
+                        linux_router.restore_original_sink()
+                        linux_router = None
+                        raise RuntimeError(
+                            f"Null sink monitor '{monitor}' not visible at the "
+                            "PulseAudio level. Not starting: capturing the "
+                            "default input instead would record silence. "
+                            "Fixes: run with --list-devices, check "
+                            "pavucontrol/PipeWire Pulse backend, or use "
+                            "--no-vb-cable to keep default capture."
+                        )
+                    _logger.info(f"Using null sink monitor as source: {source}")
+                else:
+                    from .backends.platform.linux import find_monitor_source_pulsectl
+                    found = find_monitor_source_pulsectl()
+                    if found is None:
+                        raise RuntimeError(
+                            "No PulseAudio monitor source found. "
+                            "Fixes: check pavucontrol/PipeWire Pulse backend.")
+                    source = found.name
+                    _logger.info(f"Using monitor source: {source}")
+            # Resolve playback sink by name (real hardware, not the null sink).
+            if sink is None:
+                if linux_router and linux_router.original_sink_name:
+                    sink = linux_router.original_sink_name
+                else:
+                    from .backends.platform.linux import get_default_sink_name
+                    sink = get_default_sink_name()
+                _logger.info(f"Using output sink: {sink}")
+            if not sink:
+                raise RuntimeError("No PulseAudio sink found for playback.")
+
+            processor = DenoiserAudioProcessor(
+                engine,
+                target_sr=PULSE_TARGET_SR,
+                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
+                enable_vad=enable_vad,
+                vad_threshold_db=vad_threshold_db,
+                atten_lim_db=atten_lim_db
+            )
+            from .backends.pulse_backend import process_with_pulse
+            process_with_pulse(processor, source, sink)
+        finally:
+            if linux_router is not None:
+                linux_router.restore_original_sink()
+        return
+
     if use_vb_cable:
         if is_windows():
             # Windows: Use VB Cable
@@ -80,45 +161,7 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                 else:
                     _logger.warning(MSG_POWERSHELL_UNAVAILABLE)
                     vb_cable_switcher = None
-        elif is_linux():
-            # Linux: Use null sink routing
-            try:
-                from .backends.platform.linux import LinuxAudioRouter
-                explicit_input = input_device is not None
-                linux_router = LinuxAudioRouter(auto_switch=True)
-                if linux_router.get_monitor_source_name():
-                    _logger.info("Linux audio routing enabled - using null sink for capture")
-                    # Override input device to use null sink monitor.
-                    # Fail fast when the monitor is not visible to PortAudio:
-                    # falling back to the default input would capture silence
-                    # while the default sink points at the null sink.
-                    null_sink_device_id = linux_router.get_monitor_device_id()
-                    if null_sink_device_id is not None:
-                        if not explicit_input:
-                            input_device = null_sink_device_id
-                        _logger.info(f"Using null sink monitor as input device: {null_sink_device_id}")
-                    elif explicit_input:
-                        _logger.warning(
-                            "Null sink monitor not visible to PortAudio - "
-                            f"keeping explicit --input-device {input_device}"
-                        )
-                    else:
-                        monitor = linux_router.get_monitor_source_name()
-                        linux_router.restore_original_sink()
-                        linux_router = None
-                        raise RuntimeError(
-                            f"Null sink monitor '{monitor}' not visible to PortAudio. "
-                            "Not starting: capturing the default input instead would "
-                            "record silence. Fixes: run with --list-devices and pass "
-                            "--input-device explicitly, check pavucontrol/PipeWire "
-                            "Pulse backend, or use --no-vb-cable to keep default capture."
-                        )
-                else:
-                    _logger.warning("Could not set up automatic routing - using default capture")
-                    linux_router = None
-            except ImportError:
-                _logger.info("Linux routing not available - using default capture")
-    
+
     try:
         # Create unified audio processor (frame size follows the engine:
         # e.g. deepfilternet3=512, rnnoise=480)
@@ -130,12 +173,12 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             vad_threshold_db=vad_threshold_db,
             atten_lim_db=atten_lim_db
         )
-        
+
         # Get the actual VB Cable name that was switched to
         actual_vb_cable_name = None
         if vb_cable_switcher is not None:
             actual_vb_cable_name = vb_cable_switcher.vb_cable_name
-        
+
         # Select backend
         if USE_PYAUDIOWPATCH:
             _logger.info("Using PyAudioWPatch + sounddevice backend")
@@ -164,8 +207,8 @@ def main():
 Examples:
   # Process system audio (default with VAD and VB Cable switching):
   python -m stream_denoiser
-  
-  
+
+
   # Disable VAD:
   python -m stream_denoiser --no-vad
 
@@ -174,30 +217,31 @@ Examples:
 
   # Use DeepFilterNet3 (faster, ~2x less CPU):
   python -m stream_denoiser --model deepfilternet3
-  
+
   # Adjust VAD sensitivity (lower = more sensitive):
   python -m stream_denoiser --vad-threshold -50
-  
+
   # Adjust attenuation limit:
   python -m stream_denoiser --atten-lim-db -80
-  
+
   # List available audio devices:
   python -m stream_denoiser --list-devices
-  
-  # Use specific devices:
+
+  # Use specific devices (Windows: IDs; Linux: names):
   python -m stream_denoiser --input-device 2 --output-device 1
-  
+  python -m stream_denoiser --source Poise_Capture.monitor --sink alsa_output.pci-0000_00_1f.3.analog-stereo
+
   # Use VB Cable (automatically switches default playback device):
   python -m stream_denoiser (VB Cable switching enabled by default)
-  
+
   # Disable VB Cable switching:
   python -m stream_denoiser --no-vb-cable
-  
+
   # Custom VB Cable device name:
   python -m stream_denoiser --vb-cable-name "CABLE Input"
         """
     )
-    
+
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
                         choices=list(ALL_MODELS),
                         help=f'Denoising engine to use (default: {DEFAULT_MODEL}). '
@@ -207,9 +251,15 @@ Examples:
                              'default: denoiser_model_df3.onnx; a '
                              '<stem>_states.npz sibling is loaded too)')
     parser.add_argument('--input-device', type=int, default=None,
-                        help='Input device ID for system audio capture')
+                        help='Input device ID (Windows only; Linux uses --source)')
     parser.add_argument('--output-device', type=int, default=None,
-                        help='Output device ID for audio playback')
+                        help='Output device ID (Windows only; Linux uses --sink)')
+    parser.add_argument('--source', type=str, default=None,
+                        help='Pulse source name for capture (Linux only, '
+                             'default: Poise_Capture.monitor)')
+    parser.add_argument('--sink', type=str, default=None,
+                        help='Pulse sink name for playback (Linux only, '
+                             'default: original hardware sink)')
     parser.add_argument('--no-vad', action='store_true',
                         help='Disable Voice Activity Detection')
     parser.add_argument('--vad-threshold', type=float, default=DEFAULT_VAD_THRESHOLD_DB,
@@ -273,7 +323,7 @@ Examples:
     # Startup pre-flight: fail fast with fixes instead of cryptic loader
     # errors or native crashes. Bypass with --no-health-check.
     if not args.no_health_check and not os.environ.get("POISE_SKIP_HEALTH"):
-        from .health import check_execstack, check_portaudio
+        from .health import check_execstack, check_pulse_backend
         if args.model == MODEL_DEEPFILTERNET3:
             exec_check = check_execstack()
             if not exec_check.ok:
@@ -281,13 +331,14 @@ Examples:
                 if exec_check.fix:
                     _logger.error(exec_check.fix)
                 sys.exit(1)
-        port_check = check_portaudio()
-        if not port_check.ok:
-            _logger.error(port_check.detail)
-            if port_check.fix:
-                _logger.error(port_check.fix)
-            sys.exit(1)
-    
+        if is_linux():
+            pulse_check = check_pulse_backend()
+            if not pulse_check.ok:
+                _logger.error(pulse_check.detail)
+                if pulse_check.fix:
+                    _logger.error(pulse_check.fix)
+                sys.exit(1)
+
     # Launch TUI if requested (Linux only)
     if args.tui:
         if not is_linux():
@@ -302,40 +353,42 @@ Examples:
             _logger.error(f"Failed to import TUI: {e}")
             _logger.error("Make sure textual is installed: pip install textual")
             sys.exit(1)
-    
+
     if args.list_devices:
+        if is_linux():
+            from .backends.platform.linux import (
+                list_pulseaudio_sources_formatted,
+                list_pulseaudio_sinks_formatted,
+                USE_PULSECTL,
+            )
+            if USE_PULSECTL:
+                sinks_txt = list_pulseaudio_sinks_formatted()
+                if sinks_txt:
+                    print("PulseAudio/PipeWire Sinks (--sink):")
+                    print("=" * 80)
+                    print(sinks_txt)
+                    print("-" * 80)
+                    print()
+                sources_txt = list_pulseaudio_sources_formatted()
+                if sources_txt:
+                    print("PulseAudio/PipeWire Sources (--source):")
+                    print("=" * 80)
+                    print(sources_txt)
+                    print("-" * 80)
+                    print()
+                if not sinks_txt and not sources_txt:
+                    print("No PulseAudio sources/sinks found.")
+            else:
+                _logger.error("Device listing requires pulsectl on Linux.")
+                sys.exit(1)
+            sys.exit(0)
         if not USE_SOUNDDEVICE:
-            msg = "Device listing requires sounddevice (PortAudio)."
-            if SOUNDDEVICE_ERROR:
-                msg = f"{msg} Import error: {SOUNDDEVICE_ERROR}"
-            if SOUNDDEVICE_INSTALL_HINT:
-                msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
-            _logger.error(msg)
+            _logger.error("Device listing requires sounddevice (Windows).")
             sys.exit(1)
         if sd is None:
-            msg = "Device listing requires sounddevice (PortAudio)."
-            if SOUNDDEVICE_ERROR:
-                msg = f"{msg} Import error: {SOUNDDEVICE_ERROR}"
-            if SOUNDDEVICE_INSTALL_HINT:
-                msg = f"{msg} {SOUNDDEVICE_INSTALL_HINT}"
-            _logger.error(msg)
+            _logger.error("Device listing requires sounddevice (Windows).")
             sys.exit(1)
-        
-        # On Linux, show PulseAudio sources first if available
-        if is_linux():
-            try:
-                from .backends.platform.linux import list_pulseaudio_sources_formatted, USE_PULSECTL
-                if USE_PULSECTL:
-                    pulse_sources = list_pulseaudio_sources_formatted()
-                    if pulse_sources:
-                        print("PulseAudio/PipeWire Sources:")
-                        print("=" * 80)
-                        print(pulse_sources)
-                        print("-" * 80)
-                        print()
-            except ImportError:
-                pass
-        
+
         print("PortAudio Devices:")
         print("=" * 80)
         devices = list_audio_devices()
@@ -343,21 +396,21 @@ Examples:
             host_api = sd.query_hostapis(device['hostapi'])['name']
             is_loopback = 'loopback' in device['name'].lower() or 'stereo mix' in device['name'].lower()
             loopback_marker = " [LOOPBACK]" if is_loopback else ""
-            
+
             print(f"ID {i}: {device['name']}{loopback_marker}")
             print(f"    Host API: {host_api}")
             print(f"    Input channels: {device['max_input_channels']}, Output channels: {device['max_output_channels']}")
             print(f"    Default sample rate: {device['default_samplerate']}")
             print()
-        
+
         try:
             loopback_id = find_loopback_device()
             print(f"Auto-detected loopback device ID: {loopback_id}")
         except Exception as e:
             print(f"Could not auto-detect loopback device: {e}")
-        
+
         sys.exit(0)
-    
+
     try:
         # Create denoising engine
         try:
@@ -368,7 +421,7 @@ Examples:
             if args.model != DEFAULT_MODEL:
                 _logger.info(f"Available models on this machine: {', '.join(available_models())}")
             sys.exit(1)
-        
+
         # Process system audio
         process_system_audio_realtime(
             engine,
@@ -378,9 +431,11 @@ Examples:
             vad_threshold_db=args.vad_threshold,
             atten_lim_db=args.atten_lim_db,
             use_vb_cable=not args.no_vb_cable,
-            vb_cable_name=args.vb_cable_name
+            vb_cable_name=args.vb_cable_name,
+            source=args.source,
+            sink=args.sink
         )
-        
+
     except KeyboardInterrupt:
         print("\n\nProcessing interrupted by user")
     except Exception as e:
