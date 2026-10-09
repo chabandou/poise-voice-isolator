@@ -192,51 +192,6 @@ Clear the executable stack flag on the ONNX Runtime library using `execstack` or
 
 ---
 
-##### Error: `malloc(): invalid size (unsorted)` or crash on startup
-
-Poise aborts before the native crash when it detects a PortAudio build
-without PulseAudio support, printing these rebuild steps. Manual fix:
-
-**Fix - Rebuild PortAudio:**
-
-1. Install build dependencies:
-
-   ```bash
-   sudo pacman -S base-devel cmake libpulse alsa-lib   # Arch
-   sudo apt install build-essential cmake libpulse-dev libasound2-dev  # Ubuntu
-   ```
-
-2. Clone and build PortAudio with PulseAudio:
-
-   ```bash
-   git clone https://github.com/PortAudio/portaudio.git /tmp/portaudio
-   cd /tmp/portaudio && mkdir build && cd build
-   cmake .. -DCMAKE_BUILD_TYPE=Release -DPA_USE_ALSA=ON -DPA_USE_JACK=OFF -DPA_USE_PULSEAUDIO=ON -DCMAKE_INSTALL_PREFIX=/usr/local
-   make -j$(nproc)
-   sudo make install && sudo ldconfig
-   ```
-
-3. Reinstall sounddevice:
-
-   ```bash
-   pip uninstall sounddevice && pip install sounddevice --no-cache-dir
-   ```
-
-4. **Important:** Set `LD_LIBRARY_PATH` before running:
-
-   ```bash
-   export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-   python -m stream_denoiser
-   ```
-
-   To make permanent:
-
-   ```bash
-   echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
-   ```
-
----
-
 ##### No audio output or echo/duplicate audio
 
 The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
