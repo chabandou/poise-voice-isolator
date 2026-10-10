@@ -1,0 +1,113 @@
+name: Build Linux binary
+
+# Builds the standalone `poise` TUI binary with Nuitka on a
+# GitHub-hosted Ubuntu runner (mirrors build-linux.sh, no local
+# conda setup needed). Run it from the GitHub web UI or by pushing
+# a version tag; the binary lands in the run's artifacts, and tags
+# also publish it to the GitHub Release (alongside the Windows
+# installer from build-windows.yml).
+#
+# Triggers:
+#   - GitHub web UI -> Actions -> Build Linux binary -> Run workflow
+#   - git tag v1.1.0 && git push origin v1.1.0  (also publishes a Release)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # needed to publish GitHub Releases on tags
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          # patchelf: clears a bad executable-stack flag on the ONNX
+          #   Runtime library before Nuitka bundles it (see build-linux.sh)
+          # libportaudio2: needed to import sounddevice at build time
+          sudo apt-get install -y patchelf libportaudio2
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt nuitka ordered-set
+          pip list | grep -iE "nuitka|onnxruntime|sounddevice|textual|pulp|pulsectl|samplerate|scipy"
+
+      - name: Check model files
+        run: |
+          test -f denoiser_model_df3.onnx || { echo "Missing denoiser_model_df3.onnx"; exit 1; }
+          test -f denoiser_model_df3_states.npz || { echo "Missing denoiser_model_df3_states.npz"; exit 1; }
+          echo "ONNX models found"
+
+      - name: Clear ONNX Runtime executable-stack flag
+        run: |
+          ORT_SO=$(python -c "from stream_denoiser.health import find_onnxruntime_so; print(find_onnxruntime_so() or 'MISSING')")
+          if [ "$ORT_SO" = "MISSING" ]; then
+            echo "onnxruntime not installed in the build environment!"; exit 1
+          fi
+          echo "ONNX Runtime library: $ORT_SO"
+          DIRTY=$(python -c "
+          from stream_denoiser.health import gnu_stack_flags
+          flags = gnu_stack_flags('$ORT_SO')
+          print('yes' if (flags is not None and flags[1] and flags[2]) else 'no')
+          ")
+          if [ "$DIRTY" = "yes" ]; then
+            echo "Clearing executable-stack flag..."
+            patchelf --clear-execstack "$ORT_SO"
+          else
+            echo "Library clean, no patching needed"
+          fi
+
+      - name: Build poise binary (Nuitka)
+        run: |
+          rm -rf dist/__main__.* dist/poise
+          python -m nuitka \
+            --standalone \
+            --onefile \
+            --static-libpython=no \
+            --lto=yes \
+            --nofollow-import-to=pytest,setuptools,pip,wheel,distutils \
+            --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
+            --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
+            --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
+            --remove-output \
+            --assume-yes-for-downloads \
+            --include-data-files=denoiser_model_df3.onnx=denoiser_model_df3.onnx \
+            --include-data-files=denoiser_model_df3_states.npz=denoiser_model_df3_states.npz \
+            --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
+            --output-filename=poise \
+            --output-dir=dist \
+            poise_tui.py
+
+      - name: Verify binary
+        run: |
+          test -f dist/poise || { echo "dist/poise missing after Nuitka build"; exit 1; }
+          file dist/poise
+          du -h dist/poise
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: poise-linux-x86_64
+          path: dist/poise
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/poise
+          generate_release_notes: true
