@@ -2,14 +2,13 @@
 """Stage VB-Cable driver files for the Windows installer/app bundle.
 
 Downloads VBCABLE_Driver_Pack45.zip from VB-Audio, verifies its SHA-256,
-and extracts the setup executables into installer/windows/vbcable/.
+and extracts it into installer/windows/vbcable/.
 
 The zip itself is NOT committed to git (build-time download, like the
-RNNoise weights in build-rnnoise-dll.sh). Only the two setup exes needed
-at install/runtime are staged:
-
-    installer/windows/vbcable/VBCABLE_Setup_x64.exe  (64-bit + ARM64)
-    installer/windows/vbcable/VBCABLE_Setup.exe      (32-bit fallback)
+RNNoise weights in build-rnnoise-dll.sh). The FULL extracted pack is
+staged (not just the setup exes): per the VB-Cable reference manual the
+setup program requires access to all sibling files (.sys/.cat/.inf) in
+its directory and fails without them.
 
 VB-Audio allows bundling the base VB-CABLE package with silent install
 provided the donationware attribution is shown (see setup.iss and the
@@ -19,7 +18,7 @@ Usage:
     python installer/fetch_vbcable.py [--force]
 
 Exit 0 when the staged files are present and valid (idempotent: skips
-the download when the staged exes already match).
+the download when the x64 setup is already staged).
 """
 import hashlib
 import sys
@@ -84,12 +83,12 @@ def main() -> int:
             if name not in names:
                 print(f"error: {name} missing from pack", file=sys.stderr)
                 return 1
-            with zf.open(name) as src, open(STAGE_DIR / name, "wb") as dst:
-                dst.write(src.read())
+        # Extract the whole pack: the setup exes require their sibling
+        # driver files (.sys/.cat/.inf) beside them and fail without them.
+        zf.extractall(STAGE_DIR)
     tmp_zip.unlink(missing_ok=True)
-    for name in WANTED:
-        size = (STAGE_DIR / name).stat().st_size
-        print(f"Staged {name} ({size} bytes)")
+    total = sum(p.stat().st_size for p in STAGE_DIR.iterdir() if p.is_file())
+    print(f"Staged full pack in {STAGE_DIR} ({total} bytes)")
     return 0
 
 

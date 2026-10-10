@@ -84,6 +84,10 @@ begin
   { Fail closed: any detection failure reports "no install needed" so a
     broken probe can never trigger the setup's removal-offer path. The
     in-app Install button remains as fallback. }
+  if Result then
+    Log('Poise: CABLE endpoints missing, VB-Cable setup will run')
+  else
+    Log('Poise: CABLE endpoints present, skipping VB-Cable setup');
 end;
 
 { Silent-install the vendored driver after files land, only when CABLE
@@ -97,14 +101,21 @@ begin
     Exit;
   SetupExe := ExpandConstant('{app}\vbcable\VBCABLE_Setup_x64.exe');
   if not FileExists(SetupExe) then
+  begin
+    Log('Poise: vendored VB-Cable setup not found, skipping driver install');
     Exit;
+  end;
   if not NeedsVbcableInstall() then
     Exit;
+  Log('Poise: running vendored VB-Cable setup (silent)');
   if Exec(SetupExe, '-i -h', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
+    Log(Format('Poise: VB-Cable setup exited with code %d', [ResultCode]));
     if (ResultCode = 3010) or (ResultCode = 1641) then
       VbcableNeedsReboot := True;
-  end;
+  end
+  else
+    Log('Poise: failed to launch VB-Cable setup');
 end;
 
 function NeedRestart(): Boolean;
