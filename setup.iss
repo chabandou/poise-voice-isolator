@@ -56,7 +56,10 @@ var
   so this gate must stay: never run the setup blindly. }
 function NeedsVbcableInstall(): Boolean;
 var
-  PsPath, OutPath, Script, Output: String;
+  PsPath, OutPath: String;
+  { SaveStringToFile/LoadStringFromFile take AnsiString (var param needs an
+    exact-type match, so plain String fails compile with "Type mismatch"). }
+  Script, Output: AnsiString;
   ResultCode: Integer;
 begin
   Result := True;
