@@ -15,7 +15,8 @@ from ..engines import create_engine, DEFAULT_DF3_ONNX
 from ..vb_cable import VB_CableSwitcher
 from ..constants import (
     DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE, DEVICE_SWITCH_INIT_DELAY_SEC,
-    MSG_NO_BACKEND, DEFAULT_MODEL
+    DEVICE_SWITCH_SUCCESS_HOLD_SEC,
+    MSG_NO_BACKEND, DEFAULT_MODEL, MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHED
 )
 from ..backend_detection import USE_PYAUDIOWPATCH, USE_SOUNDDEVICE, pyaudio, sd
 from ..logging_config import get_logger
@@ -114,18 +115,58 @@ class AudioWorker(QThread):
                 self.stopped_processing.emit()
                 return
             
-            # Setup VB Cable switcher if enabled
+            # VB-Cable routing is mandatory: Poise captures from CABLE Output,
+            # which only receives audio when default playback is CABLE Input.
+            # If the automatic switch fails, do NOT start processing — the
+            # GUI shows a modal with manual steps instead.
             actual_vb_cable_name = None
             if self.vb_cable_enabled:
-                self.status_changed.emit("Switching audio device...")
+                self.status_changed.emit(MSG_DEVICE_SWITCHING)
                 cable_name = self.vb_cable_name or "CABLE Input (VB-Audio Virtual Cable)"
-                self._vb_cable_switcher = VB_CableSwitcher(vb_cable_name=cable_name, auto_switch=True)
-                
-                if self._vb_cable_switcher._powershell_available:
-                    time.sleep(DEVICE_SWITCH_INIT_DELAY_SEC)
-                    actual_vb_cable_name = self._vb_cable_switcher.vb_cable_name
-                else:
-                    self._vb_cable_switcher = None
+                self._vb_cable_switcher = VB_CableSwitcher(
+                    vb_cable_name=cable_name,
+                    auto_switch=True,
+                    status_cb=self.status_changed.emit,
+                )
+
+                if not self._vb_cable_switcher._powershell_available:
+                    self.error_occurred.emit(
+                        "VB-CABLE: PowerShell unavailable, could not switch "
+                        "default playback to CABLE Input."
+                    )
+                    self.stopped_processing.emit()
+                    return
+
+                time.sleep(DEVICE_SWITCH_INIT_DELAY_SEC)
+                if not self._vb_cable_switcher.switch_to_vb_cable():
+                    self.error_occurred.emit(
+                        "VB-CABLE: automatic switch to CABLE Input failed. "
+                        "Is VB-Cable installed?"
+                    )
+                    self.stopped_processing.emit()
+                    return
+
+                try:
+                    current = self._vb_cable_switcher.get_current_default_device()
+                except Exception:
+                    current = None
+                if not current or "CABLE" not in current.upper():
+                    self.error_occurred.emit(
+                        "VB-CABLE: default playback is still "
+                        f"'{current or 'unknown'}', not CABLE Input."
+                    )
+                    self.stopped_processing.emit()
+                    return
+                actual_vb_cable_name = self._vb_cable_switcher.vb_cable_name
+                self.status_changed.emit(MSG_DEVICE_SWITCHED)
+                # Hold the confirmation so it stays readable before the
+                # next phase ("Starting audio streams...") overwrites it.
+                # Interruptible: abort early if the user hits stop.
+                _hold_until = time.time() + DEVICE_SWITCH_SUCCESS_HOLD_SEC
+                while time.time() < _hold_until:
+                    if not self._running:
+                        return
+                    time.sleep(0.1)
             
             # Create processor (frame size follows the engine)
             self._processor = DenoiserAudioProcessor(
@@ -211,7 +252,17 @@ class AudioWorker(QThread):
             if not loopback_device:
                 loopback_device = p.get_default_wasapi_loopback()
                 if not loopback_device:
-                    self.error_occurred.emit("No loopback device found")
+                    self.error_occurred.emit(
+                        "VB-CABLE: CABLE Output not found. "
+                        "Is VB-Cable installed?"
+                    )
+                    return
+                if "CABLE OUTPUT" not in loopback_device.get("name", "").upper():
+                    self.error_occurred.emit(
+                        "VB-CABLE: CABLE Output not found "
+                        f"(capturing '{loopback_device.get('name', 'unknown')}' "
+                        "instead). Is VB-Cable installed?"
+                    )
                     return
             
             device_info = p.get_device_info_by_index(loopback_device['index'])

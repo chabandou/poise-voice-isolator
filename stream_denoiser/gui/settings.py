@@ -65,6 +65,7 @@ class Settings:
     KEY_ATTEN_LIM_DB = "audio/atten_lim_db"
     KEY_VB_CABLE_ENABLED = "audio/vb_cable_enabled"
     KEY_VB_CABLE_NAME = "audio/vb_cable_name"
+    KEY_DEVICE_SWITCH_DONE = "audio/device_switch_done"
     
     KEY_WINDOW_GEOMETRY = "window/geometry"
     KEY_WINDOW_STATE = "window/state"
@@ -87,6 +88,7 @@ class Settings:
         KEY_ATTEN_LIM_DB: -60.0,
         KEY_VB_CABLE_ENABLED: True,
         KEY_VB_CABLE_NAME: None,
+        KEY_DEVICE_SWITCH_DONE: False,
         KEY_MINIMIZE_TO_TRAY: True,
         KEY_MINIMIZE_TO_TRAY_ASKED: False,
         KEY_SHOW_TRAY_ICON: True,
@@ -229,6 +231,15 @@ class Settings:
     @vb_cable_enabled.setter
     def vb_cable_enabled(self, value: bool) -> None:
         self.set(self.KEY_VB_CABLE_ENABLED, value)
+
+    @property
+    def device_switch_done(self) -> bool:
+        """Whether a device switch has completed at least once."""
+        return bool(self.get(self.KEY_DEVICE_SWITCH_DONE, False))
+
+    @device_switch_done.setter
+    def device_switch_done(self, value: bool) -> None:
+        self.set(self.KEY_DEVICE_SWITCH_DONE, value)
     
     @property
     def minimize_to_tray(self) -> bool:

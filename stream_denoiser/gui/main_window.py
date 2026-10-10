@@ -25,6 +25,7 @@ from .settings import get_settings
 from .. import __version__
 from ..constants import (
     MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED, MODEL_INFO,
+    MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHING_FIRST_TIME,
 )
 from .worker import AudioWorker
 from .system_tray import SystemTray
@@ -130,11 +131,12 @@ class MainWindow(QMainWindow):
     def _layout_devices_row(self, narrow: bool) -> None:
         """Set devices row direction and order (power first when stacked).
 
-        Widgets re-add into a new position automatically, but re-adding
-        an already-managed sublayout is a no-op — so the power column
-        leaves first via takeAt (its wrapper is dropped; the layout
-        itself survives on its member ref). Runs only when the narrow
-        flag flips (see _apply_responsive).
+        Input routing is fully automatic via VB-Cable: there is no input
+        selector anymore, only power + output. Widgets re-add into a new
+        position automatically, but re-adding an already-managed sublayout
+        is a no-op — so the power column leaves first via takeAt (its
+        wrapper is dropped; the layout itself survives on its member ref).
+        Runs only when the narrow flag flips (see _apply_responsive).
         """
         self._devices_narrow = narrow
         row = self._devices_row
@@ -150,11 +152,9 @@ class MainWindow(QMainWindow):
         if narrow:
             row.setDirection(QBoxLayout.Direction.TopToBottom)
             row.addLayout(self._power_wrap, stretch=4)
-            row.addWidget(self._input_wrap, stretch=5, alignment=top)
             row.addWidget(self._output_wrap, stretch=5, alignment=top)
         else:
             row.setDirection(QBoxLayout.Direction.LeftToRight)
-            row.addWidget(self._input_wrap, stretch=5, alignment=top)
             row.addLayout(self._power_wrap, stretch=4)
             row.addWidget(self._output_wrap, stretch=5, alignment=top)
 
@@ -209,9 +209,8 @@ class MainWindow(QMainWindow):
         if narrow != self._devices_narrow:
             self._layout_devices_row(narrow)
         self._devices_row.setSpacing(self._rv(24, 16, 12))
-        # The lowered label columns only align beside the tall button.
+        # The lowered label column only aligns beside the tall button.
         lowered = 0 if narrow else self._power_third
-        self._set_lowered(self._input_wrap, lowered)
         self._set_lowered(self._output_wrap, lowered)
         self._bottom_row.setDirection(V if narrow else H)
         self._bottom_row.setSpacing(self._rv(35, 24, 16))
@@ -293,7 +292,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(35)
         self._home_layout = layout
 
-        # --- Top card: devices + power + VB pill ---
+        # --- Top card: power + output (input is always VB-Cable) ---
         top_card = QFrame()
         top_card.setObjectName("card")
         top_layout = QVBoxLayout(top_card)
@@ -305,18 +304,11 @@ class MainWindow(QMainWindow):
         devices_row.setSpacing(24)
         self._devices_row = devices_row
 
-        self.input_selector = DeviceSelector("Input Device", "input")
-        self.input_selector.device_changed.connect(
-            lambda id: setattr(self.settings, 'input_device', id))
         # Labels start a third of the power button's height below its
         # top (per the design): offset the whole column downward.
         # (Lifted again in narrow mode, where the columns stack.)
         power_third = sp(210) // 3
         self._power_third = power_third
-        self._input_wrap = self._lowered(self.input_selector, power_third)
-        devices_row.addWidget(self._input_wrap,
-                              stretch=5,
-                              alignment=Qt.AlignmentFlag.AlignTop)
 
         power_wrap = QVBoxLayout()
         power_wrap.setSpacing(8)
@@ -332,6 +324,7 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("status-line")
         self.status_label.setProperty("state", "ready")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
         power_wrap.addWidget(self.status_label)
         devices_row.addLayout(power_wrap, stretch=4)
 
@@ -345,33 +338,17 @@ class MainWindow(QMainWindow):
 
         top_layout.addLayout(devices_row)
 
-        # VB-Cable pill row
-        vb_pill = QFrame()
-        vb_pill.setObjectName("vb-pill")
-        vb_layout = QHBoxLayout(vb_pill)
-        vb_layout.setContentsMargins(51, 27, 39, 27)
-        vb_layout.setSpacing(14)
-        vb_layout.addWidget(PhosphorIcon("gear", size=22))
-        vb_label = QLabel(
-            "Auto-select VB-Cable as input device to capture system audio")
-        vb_label.setWordWrap(True)
-        # Stretch: the label takes all spare width (single line when it
-        # fits, graceful wrap only when genuinely narrow). Without it
-        # the layout starves the label and it wraps even in fullscreen.
-        vb_layout.addWidget(vb_label, stretch=1)
-        vb_layout.addStretch()
-        self.vb_switch = ToggleSwitch(checked=self.settings.vb_cable_enabled)
-        self.vb_switch.setToolTip(
-            "Automatically selects VB-Cable as the input device "
-            "to capture system audio when running")
-        self.vb_switch.toggled.connect(self._on_vb_cable_toggled)
-        vb_layout.addWidget(self.vb_switch)
-        top_layout.addWidget(vb_pill)
+        # Static routing note (no toggle): input always comes from VB-Cable.
+        routing_note = QLabel(
+            "System audio is captured automatically from VB-Cable "
+            "(CABLE Output). If routing fails, Poise stops and shows "
+            "manual steps.")
+        routing_note.setObjectName("card-subtitle")
+        routing_note.setWordWrap(True)
+        routing_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top_layout.addWidget(routing_note)
 
         layout.addWidget(top_card, stretch=55)
-
-        # Initial state
-        self.input_selector.setEnabled(not self.settings.vb_cable_enabled)
 
         # --- Bottom row: AAD card + stats card ---
         bottom_row = QHBoxLayout()
@@ -829,16 +806,8 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
 
-        # Restore devices
-        self.input_selector.selected_device_id = self.settings.input_device
+        # Restore devices (output only — input is always VB-Cable)
         self.output_selector.selected_device_id = self.settings.output_device
-
-    def _on_vb_cable_toggled(self, checked):
-        """Handle VB Cable auto-switch toggle."""
-        self.settings.vb_cable_enabled = checked
-        # Disable input selector when VB Cable switch is enabled
-        # (Implies we are capturing from VB Cable)
-        self.input_selector.setEnabled(not checked)
 
     @staticmethod
     def _make_badge_icon() -> PhosphorIcon:
@@ -950,22 +919,21 @@ class MainWindow(QMainWindow):
 
     def _configure_worker(self):
         """Pass current UI settings to worker."""
+        # Input routing is always automatic via VB-Cable: capture from
+        # CABLE Output after switching default playback to CABLE Input.
         self.worker.configure(
             model=self.model_combo.currentText() if hasattr(self, 'model_combo') else self.settings.model,
             onnx_path=self.settings.onnx_model_path,
-            input_device=self.input_selector.selected_device_id,
+            input_device=None,
             output_device=self.output_selector.selected_device_id,
             aad_enabled=self.aad_switch.isChecked(),
             aad_threshold=self.thresh_slider.value(),
             atten_lim_db=self.settings.atten_lim_db,
-            vb_cable_enabled=self.vb_switch.isChecked()
+            vb_cable_enabled=True
         )
 
     def _set_controls_enabled(self, enabled: bool):
-        self.input_selector.setEnabled(
-            enabled and not self.vb_switch.isChecked())
         self.output_selector.setEnabled(enabled)
-        self.vb_switch.setEnabled(enabled)
         if hasattr(self, 'model_combo'):
             self.model_combo.setEnabled(enabled)
 
@@ -973,6 +941,14 @@ class MainWindow(QMainWindow):
         """Called when worker successfully starts."""
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(True)
+        # First successful start: device switching (incl. one-time
+        # AudioDeviceCmdlets install) has completed, so future runs
+        # show the short "Switching audio device..." status.
+        try:
+            if not self.settings.device_switch_done:
+                self.settings.device_switch_done = True
+        except Exception:
+            pass
         self.update_status("Isolating audio")
         self._start_status_pulse()
 
@@ -1022,6 +998,16 @@ class MainWindow(QMainWindow):
 
     def update_status(self, message: str):
         """Update status line message."""
+        # First-ever switch needs the AudioDeviceCmdlets one-time
+        # install, which can take a few seconds with no other feedback.
+        # Expand only that message, and only until the first successful
+        # start flips device_switch_done.
+        try:
+            if (message == MSG_DEVICE_SWITCHING
+                    and not self.settings.device_switch_done):
+                message = MSG_DEVICE_SWITCHING_FIRST_TIME
+        except Exception:
+            pass
         self.status_label.setText(message)
 
         # Update status state
@@ -1029,7 +1015,9 @@ class MainWindow(QMainWindow):
         if "Error" in message:
             state = "error"
         elif any(word in message for word in
-                 ("Starting", "Stopping", "Loading", "Isolating", "Processing")):
+                 ("Starting", "Stopping", "Loading", "Isolating", "Processing",
+                  "Switching", "Switched", "Initializing", "Downloading",
+                  "Installing", "Setting up")):
             state = "processing"
 
         self.status_label.setProperty("state", state)
@@ -1088,12 +1076,27 @@ class MainWindow(QMainWindow):
         self.power_btn.set_error(True)
         self._stop_status_pulse()
         self.update_status(f"Error: {message}")
-        if self.tray:
+        if self._is_vb_cable_error(message):
+            # Blocking modal: processing cannot start without VB-Cable
+            # routing. Always show it, even when a tray icon exists.
+            self.bring_to_front()
+            try:
+                from .widgets.vb_cable_dialog import show_vb_cable_error
+                show_vb_cable_error(self, message)
+            except Exception:
+                QMessageBox.critical(self, "VB-Cable routing failed", message)
+        elif self.tray:
             self.tray.notify("Poise Error", message, is_error=True)
         else:
             QMessageBox.critical(self, "Error", message)
 
         _logger.error(f"Error: {message}")
+
+    @staticmethod
+    def _is_vb_cable_error(message: str) -> bool:
+        """Check whether a worker error is a VB-Cable routing failure."""
+        text = (message or "").upper()
+        return "VB-CABLE" in text or ("CABLE" in text and "LOOPBACK" in text)
 
     def closeEvent(self, event: QCloseEvent):
         """Handle window close event (minimize to tray logic)."""

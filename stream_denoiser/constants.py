@@ -65,12 +65,14 @@ STATS_PRINT_INTERVAL_SEC = 1.0  # 1 second
 POWERSHELL_CHECK_TIMEOUT_SEC = 2
 POWERSHELL_DEFAULT_TIMEOUT_SEC = 5
 POWERSHELL_MODULE_CHECK_TIMEOUT_SEC = 10
-POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC = 30
+POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC = 120
+POWERSHELL_PROVIDER_INSTALL_TIMEOUT_SEC = 60
 
 # Device switching constants
 DEVICE_SWITCH_SETTLE_TIME_SEC = 0.2
 DEVICE_SWITCH_INIT_DELAY_SEC = 0.8
 DEVICE_SWITCH_STREAM_DELAY_SEC = 0.3
+DEVICE_SWITCH_SUCCESS_HOLD_SEC = 3.0
 OUTPUT_STREAM_RETRY_COUNT = 3
 OUTPUT_STREAM_RETRY_DELAY_SEC = 0.5
 
@@ -87,5 +89,17 @@ MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux and Wind
 MSG_NO_BACKEND = "No audio backend available"
 MSG_POWERSHELL_UNAVAILABLE = "PowerShell not available - VB Cable switching disabled"
 MSG_DEVICE_SWITCH_ERROR = "Error switching device: {}"
+MSG_DEVICE_SWITCHING = "Switching audio device..."
+MSG_DEVICE_SWITCHING_FIRST_TIME = (
+    "Switching audio device... First time may take a few seconds "
+    "(installing AudioDeviceCmdlets)..."
+)
+MSG_AUDIO_TOOLS_DOWNLOADING = (
+    "Downloading audio tools... First time may take a few seconds..."
+)
+MSG_AUDIO_MODULE_INSTALLING = (
+    "Installing AudioDeviceCmdlets... First time may take a few seconds..."
+)
+MSG_DEVICE_SWITCHED = "Switched to VB-Cable (CABLE Input)"
 MSG_PROCESSING_STARTED = "Processing started"
 MSG_PROCESSING_STOPPED = "Processing stopped"

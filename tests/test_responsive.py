@@ -55,11 +55,10 @@ def test_wide_mode_is_the_mockup(app):
     assert window.sidebar.width() == sp(216)
     m = window._home_layout.contentsMargins()
     assert (m.left(), m.top()) == (26, 26)
-    # VB pill label takes spare width: single line when roomy.
-    vb = next(l for l in window.findChildren(type(window.status_label))
-              if "Auto-select" in l.text())
-    fm = vb.fontMetrics()
-    assert round(vb.heightForWidth(vb.width()) / fm.lineSpacing()) == 1
+    # Routing note explains automatic VB-Cable capture (no input selector).
+    notes = [l for l in window.findChildren(type(window.status_label))
+             if "VB-Cable" in l.text()]
+    assert notes, "expected automatic VB-Cable routing note"
     window.close()
 
 
@@ -85,18 +84,16 @@ def test_narrow_mode_reflows(app):
     assert window._resp == "narrow"
     assert window._devices_row.direction() == QBoxLayout.Direction.TopToBottom
     assert window._bottom_row.direction() == QBoxLayout.Direction.TopToBottom
-    # Stacked order: power button first, then input, output.
+    # Stacked order: power button first, then output (input is automatic).
     row = window._devices_row
     assert row.itemAt(0).layout() is window._power_wrap
-    assert row.itemAt(1).widget() is window._input_wrap
-    assert row.itemAt(2).widget() is window._output_wrap
+    assert row.itemAt(1).widget() is window._output_wrap
     # Icon rail.
     assert window.sidebar.is_compact
     assert window.sidebar.width() == sp(68)
     for btn in window.sidebar._buttons:
         assert not btn._label.isVisible()
-    # Lowered label columns lift when stacked.
-    assert window._input_wrap.layout().contentsMargins().top() == 0
+    # Lowered output column lifts when stacked.
     assert window._output_wrap.layout().contentsMargins().top() == 0
     # Theme tiles wrap 2x2 (settings page must be visible to lay out).
     window._on_page_requested(1)
@@ -128,11 +125,10 @@ def test_roundtrip_restores_wide(app):
     assert window._resp == "wide"
     assert window._devices_row.direction() == QBoxLayout.Direction.LeftToRight
     assert window._bottom_row.direction() == QBoxLayout.Direction.LeftToRight
-    # Wide order restored: input, power, output.
+    # Wide order restored: power, output.
     row = window._devices_row
-    assert row.itemAt(0).widget() is window._input_wrap
-    assert row.itemAt(1).layout() is window._power_wrap
-    assert row.itemAt(2).widget() is window._output_wrap
+    assert row.itemAt(0).layout() is window._power_wrap
+    assert row.itemAt(1).widget() is window._output_wrap
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     assert window.sidebar._buttons[0]._label.isVisible()
@@ -143,7 +139,7 @@ def test_roundtrip_restores_wide(app):
     assert tiles[1].y() == tiles[0].y()
     window._on_page_requested(0)
     _pump(app)
-    assert window._input_wrap.layout().contentsMargins().top() > 0
+    assert window._output_wrap.layout().contentsMargins().top() > 0
     window.close()
 
 
