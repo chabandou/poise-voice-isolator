@@ -1,0 +1,82 @@
+name: Build Windows installer
+
+# Builds Poise.exe with PyInstaller and compiles Poise_Setup.exe with
+# Inno Setup on a GitHub-hosted Windows runner. No Windows PC needed:
+# push a tag (or click Run workflow) and download the installer from
+# the run's artifacts or the GitHub Release.
+#
+# Triggers:
+#   - GitHub web UI -> Actions -> Build Windows installer -> Run workflow
+#   - git tag v1.1.0 && git push origin v1.1.0  (also publishes a Release)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # needed to publish GitHub Releases on tags
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+          pip list | Select-String -Pattern "onnxruntime|PyQt6|sounddevice|pyinstaller"
+
+      - name: Stage VB-Cable driver
+        run: python installer/fetch_vbcable.py
+
+      - name: Build Poise.exe (PyInstaller)
+        run: pyinstaller poise_windows.spec --noconfirm
+
+      - name: Verify app bundle
+        run: |
+          if (-not (Test-Path "dist/Poise/Poise.exe")) {
+            Write-Error "dist/Poise/Poise.exe missing after PyInstaller build"
+            exit 1
+          }
+          Get-ChildItem dist/Poise | Format-Table Name, Length
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer (Inno Setup)
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss'
+
+      - name: Verify installer
+        run: |
+          if (-not (Test-Path "installer/Poise_Setup.exe")) {
+            Write-Error "installer/Poise_Setup.exe missing after ISCC compile"
+            exit 1
+          }
+          Get-Item installer/Poise_Setup.exe | Format-Table Name, Length
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Poise_Setup
+          path: installer/Poise_Setup.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Poise_Setup.exe
+          generate_release_notes: true
