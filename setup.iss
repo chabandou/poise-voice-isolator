@@ -36,8 +36,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
-; (The vendored VB-Cable setups ride along via dist\Poise\vbcable\,
-; staged by poise_windows.spec from installer/windows/vbcable/.)
+; PyInstaller >= 6 stages datas under dist\Poise\_internal\ (older layouts
+; put them in dist\Poise\ directly). Remap the driver pack to a stable
+; {app}\vbcable so the [Code] driver install below finds it regardless.
+; Skipped silently when the source dir is absent (old layout: the blanket
+; copy above already covers dist\Poise\vbcable\).
+Source: "dist\Poise\_internal\vbcable\*"; DestDir: "{app}\vbcable"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -99,7 +103,11 @@ var
 begin
   if CurStep <> ssPostInstall then
     Exit;
+  { Canonical location (remapped by [Files] above); fall back to the raw
+    PyInstaller >= 6 layout in case the remap was skipped. }
   SetupExe := ExpandConstant('{app}\vbcable\VBCABLE_Setup_x64.exe');
+  if not FileExists(SetupExe) then
+    SetupExe := ExpandConstant('{app}\_internal\vbcable\VBCABLE_Setup_x64.exe');
   if not FileExists(SetupExe) then
   begin
     Log('Poise: vendored VB-Cable setup not found, skipping driver install');
@@ -108,7 +116,10 @@ begin
   if not NeedsVbcableInstall() then
     Exit;
   Log('Poise: running vendored VB-Cable setup (silent)');
-  if Exec(SetupExe, '-i -h', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  { Run from the setup's own directory: it resolves its sibling driver
+    files (.sys/.cat/.inf) relative to the working directory. }
+  if Exec(SetupExe, '-i -h', ExtractFileDir(SetupExe),
+      SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     Log(Format('Poise: VB-Cable setup exited with code %d', [ResultCode]));
     if (ResultCode = 3010) or (ResultCode = 1641) then

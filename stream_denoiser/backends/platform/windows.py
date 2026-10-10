@@ -377,8 +377,9 @@ def find_bundled_vbcable_setup(search_dirs=None) -> Optional[str]:
     """Locate the vendored VBCABLE_Setup exe, or None.
 
     Search order: beside the frozen executable (installed app layout:
-    ``{app}\\\\vbcable``), then the repo staging dir
-    (``installer/windows/vbcable`` for dev runs). Prefers x64.
+    ``{app}\\\\vbcable``, remapped by setup.iss), then the raw PyInstaller
+    >= 6 layout (``{app}\\\\_internal\\\\vbcable``), then the repo staging
+    dir (``installer/windows/vbcable`` for dev runs). Prefers x64.
 
     Args:
         search_dirs: Override directories to search (for tests).
@@ -389,7 +390,8 @@ def find_bundled_vbcable_setup(search_dirs=None) -> Optional[str]:
     if search_dirs is None:
         search_dirs = []
         if getattr(sys, "frozen", False):
-            search_dirs.append(Path(sys.executable).resolve().parent)
+            exe_dir = Path(sys.executable).resolve().parent
+            search_dirs.extend([exe_dir, exe_dir / "_internal"])
         else:
             # Dev layout: stream_denoiser/backends/platform/windows.py -> repo.
             repo = Path(__file__).resolve().parents[3]
@@ -513,7 +515,10 @@ def install_vbcable_driver(setup_exe: Optional[str] = None,
     sei.lpVerb = "runas"
     sei.lpFile = str(setup_exe)
     sei.lpParameters = VBCABLE_INSTALL_ARGS
-    sei.lpDirectory = None
+    # The setup resolves its sibling driver files (.sys/.cat/.inf) from
+    # its own directory: run it with that working directory.
+    from pathlib import Path as _Path
+    sei.lpDirectory = str(_Path(str(setup_exe)).resolve().parent)
     sei.nShow = SW_HIDE
 
     if not shell32.ShellExecuteExW(ctypes.byref(sei)):
