@@ -6,7 +6,7 @@ start in this case — the user must fix routing manually and retry.
 """
 
 from PyQt6.QtWidgets import QMessageBox, QPushButton
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 
 VB_CABLE_URL = "https://vb-audio.com/Cable/index.htm"
@@ -59,7 +59,7 @@ def show_vb_cable_error(parent, error_message: str) -> None:
 
     cable_btn = QPushButton("Install VB-Cable")
     cable_btn.clicked.connect(
-        lambda: QDesktopServices.openUrl(QUrl(VB_CABLE_URL)))
+        lambda: _on_install_vb_cable(parent, cable_btn))
     box.addButton(cable_btn, QMessageBox.ButtonRole.ActionRole)
 
     copy_btn = QPushButton("Copy PowerShell fix")
@@ -68,6 +68,66 @@ def show_vb_cable_error(parent, error_message: str) -> None:
     box.addButton(copy_btn, QMessageBox.ButtonRole.ActionRole)
 
     box.exec()
+
+
+def _on_install_vb_cable(parent, button) -> None:
+    """Install the vendored VB-Cable driver, or fall back to the website."""
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+
+    try:
+        from ..platform.windows import (
+            find_bundled_vbcable_setup,
+            install_vbcable_driver,
+            interpret_setup_exit_code,
+            is_vbcable_installed,
+        )
+    except ImportError:
+        _open_cable_website()
+        return
+
+    if is_vbcable_installed():
+        QMessageBox.information(
+            parent, "VB-Cable already installed",
+            "CABLE Input/Output are present. If routing still fails, "
+            "reboot Windows once and press the power button again.")
+        return
+
+    if find_bundled_vbcable_setup() is None:
+        _open_cable_website()
+        return
+
+    button.setEnabled(False)
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        code = install_vbcable_driver()
+    except RuntimeError as e:
+        QMessageBox.warning(parent, "VB-Cable install failed", str(e))
+        return
+    finally:
+        QApplication.restoreOverrideCursor()
+        button.setEnabled(True)
+
+    outcome = interpret_setup_exit_code(code)
+    if is_vbcable_installed():
+        QMessageBox.information(
+            parent, "VB-Cable installed",
+            "CABLE Input/Output are ready. Press the power button "
+            "again to start.")
+    elif outcome == "reboot-required":
+        QMessageBox.information(
+            parent, "Reboot required",
+            "VB-Cable installed — reboot Windows to activate the driver, "
+            "then press the power button again.")
+    else:
+        QMessageBox.warning(
+            parent, "VB-Cable install failed",
+            f"The driver setup exited with code {code}. "
+            "Try installing manually from vb-audio.com/Cable.")
+
+
+def _open_cable_website() -> None:
+    """Fallback when no vendored setup is available."""
+    QDesktopServices.openUrl(QUrl(VB_CABLE_URL))
 
 
 def _open_sound_settings() -> None:

@@ -212,7 +212,7 @@ QComboBox#device-combo::drop-down {
 }
 
 QComboBox#device-combo::down-arrow {
-    image: url({ASSETS_DIR}/chevron-down.svg);
+    image: url("{ASSETS_DIR}/chevron-down.svg");
     width: 12px;
     height: 8px;
     margin-right: 6px;
@@ -269,7 +269,7 @@ QComboBox#settings-combo::drop-down {
 }
 
 QComboBox#settings-combo::down-arrow {
-    image: url({ASSETS_DIR}/chevron-down.svg);
+    image: url("{ASSETS_DIR}/chevron-down.svg");
     width: 12px;
     height: 8px;
     margin-right: 8px;
@@ -453,7 +453,14 @@ QScrollBar::sub-page:vertical {
 
 import os
 
-_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+# Qt Style Sheets require forward slashes in url() — even on Windows —
+# and quoting so paths with spaces/colons (e.g. "C:/Users/John Doe/…")
+# still parse. Without this, every Windows launch logs
+# "Could not parse stylesheet of object MainWindow" twice (once per
+# down-arrow rule: device-combo + settings-combo).
+_ASSETS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "assets"
+).replace(os.sep, "/")
 
 
 def _card_border_width(scale: float) -> int:

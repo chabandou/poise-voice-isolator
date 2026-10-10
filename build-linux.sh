@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "╭────────────────────────────────────────────╮"
-echo "│   Poise Voice Isolator - Nuitka Builder   │"
+echo "│   Poise Voice Isolator - Nuitka Builder    │"
 echo "╰────────────────────────────────────────────╯"
 echo
 
@@ -122,7 +122,7 @@ python -m nuitka \
 
 echo
 echo "╭────────────────────────────────────────────╮"
-echo "│           ✓ Build Complete!               │"
+echo "│           ✓ Build Complete!                │"
 echo "╰────────────────────────────────────────────╯"
 echo
 echo "Output: dist/poise"

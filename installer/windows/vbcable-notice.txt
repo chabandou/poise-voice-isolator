@@ -1,0 +1,16 @@
+Bundled third-party driver: VB-Audio Virtual Cable
+====================================================
+
+Poise Voice Isolator routes system audio through VB-CABLE
+(CABLE Input / CABLE Output), a virtual audio driver by VB-Audio
+Software (V.Burel). Origin: https://vb-audio.com/Cable/
+
+VB-CABLE is donationware: it is free to use, and all participations
+to VB-Audio are welcome. If you find VB-CABLE useful, please consider
+donating for a license on their webshop:
+https://shop.vb-audio.com/
+
+This installer bundles the base VB-CABLE driver package with VB-Audio's
+permission for distribution (silent install, only when CABLE endpoints
+are not already present on your system). CABLE A+B / C+D are NOT
+included. VB-Audio, VB-CABLE and related names belong to their owner.

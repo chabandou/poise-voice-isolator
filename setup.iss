@@ -24,6 +24,7 @@ SetupIconFile=stream_denoiser\gui\assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+InfoBeforeFile=installer\windows\vbcable-notice.txt
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -35,6 +36,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+; (The vendored VB-Cable setups ride along via dist\Poise\vbcable\,
+; staged by poise_windows.spec from installer/windows/vbcable/.)
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -42,3 +45,66 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  VbcableNeedsReboot: Boolean;
+
+{ Scan the MMDevices registry for a CABLE Input render endpoint.
+  Needs no AudioDeviceCmdlets module, so it works on fresh machines.
+  Running the VB-Cable setup while already installed offers REMOVAL,
+  so this gate must stay: never run the setup blindly. }
+function NeedsVbcableInstall(): Boolean;
+var
+  PsPath, OutPath, Script, Output: String;
+  ResultCode: Integer;
+begin
+  Result := True;
+  PsPath := ExpandConstant('{tmp}\poise_vbcable_detect.ps1');
+  OutPath := ExpandConstant('{tmp}\poise_vbcable_detect.txt');
+  Script :=
+    '$names = Get-ChildItem ''HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render'' -ErrorAction SilentlyContinue | ForEach-Object {' + #13#10 +
+    '    $p = $_.PSPath + ''\Properties'';' + #13#10 +
+    '    (Get-ItemProperty -Path $p -Name ''{a45c254e-df1c-4efd-8020-67d146a850e0},2'' -ErrorAction SilentlyContinue).''{a45c254e-df1c-4efd-8020-67d146a850e0},2''' + #13#10 +
+    '};' + #13#10 +
+    '$found = $names | Where-Object { $_ -like ''CABLE Input*'' };' + #13#10 +
+    'if ($found) { $verdict = ''CABLE-PRESENT'' } else { $verdict = ''CABLE-MISSING'' };' + #13#10 +
+    'Out-File -FilePath ''' + OutPath + ''' -InputObject $verdict -Encoding ascii;' + #13#10;
+  if not SaveStringToFile(PsPath, Script, False) then
+    Exit;
+  if not Exec('powershell.exe',
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + PsPath + '"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  if LoadStringFromFile(OutPath, Output) then
+    Result := Pos('CABLE-PRESENT', Output) = 0;
+  { Fail closed: any detection failure reports "no install needed" so a
+    broken probe can never trigger the setup's removal-offer path. The
+    in-app Install button remains as fallback. }
+end;
+
+{ Silent-install the vendored driver after files land, only when CABLE
+  is missing. 3010/1641 mean "installed, reboot to activate". }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  SetupExe: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  SetupExe := ExpandConstant('{app}\vbcable\VBCABLE_Setup_x64.exe');
+  if not FileExists(SetupExe) then
+    Exit;
+  if not NeedsVbcableInstall() then
+    Exit;
+  if Exec(SetupExe, '-i -h', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if (ResultCode = 3010) or (ResultCode = 1641) then
+      VbcableNeedsReboot := True;
+  end;
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VbcableNeedsReboot;
+end;

@@ -12,17 +12,25 @@ model_path = os.path.join(project_dir, 'denoiser_model_df3.onnx')
 model_states_path = os.path.join(project_dir, 'denoiser_model_df3_states.npz')
 rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
 assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
+vbcable_dir = os.path.join(project_dir, 'installer', 'windows', 'vbcable')
+
+datas = [
+    (model_path, '.'),
+    (model_states_path, '.'),
+    (rnnoise_dll_path, '.'),
+    (assets_path, 'stream_denoiser/gui/assets'),
+]
+# Vendored VB-Cable setups (staged via installer/fetch_vbcable.py).
+# Optional: a build without the stage dir still works, the in-app
+# Install button then falls back to the VB-Audio website.
+if os.path.isdir(vbcable_dir):
+    datas.append((vbcable_dir, 'vbcable'))
 
 a = Analysis(
     ['run_poise_gui.py'],
     pathex=[project_dir],
     binaries=[],
-    datas=[
-        (model_path, '.'),
-        (model_states_path, '.'),
-        (rnnoise_dll_path, '.'),
-        (assets_path, 'stream_denoiser/gui/assets'),
-    ],
+    datas=datas,
     hiddenimports=[
         'stream_denoiser.backends.sounddevice_backend',
         'sounddevice',
