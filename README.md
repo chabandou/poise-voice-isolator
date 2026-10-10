@@ -84,8 +84,8 @@ Poise is a real-time audio filter that runs in the background while you browse, 
 | **Voice Isolation** | Removes music and instrumentals, keeps only vocals and speech |
 | **Real-time Processing** | Direct time-domain processing with ~10ms frame latency |
 | **Audio Activity Detection** | Performance boost by skipping silence and non-speech sections |
-| **Low Latency** | Lock-free ring buffers for reduced latency |
-| **WASAPI Loopback** | Captures system audio on Windows using PyAudioWPatch |
+| **Low Latency** | Blocking sounddevice I/O with ~10ms frames |
+| **WASAPI Capture** | Captures system audio on Windows via VB Cable (regular WASAPI input) |
 | **VB Cable Integration** | Automatic Windows audio device switching for seamless capture |
 
 ### Installation
@@ -136,7 +136,7 @@ poise
 #### No audio devices found
 
 - Run `python -m stream_denoiser --list-devices` to see available devices
-- On Windows, ensure `pyaudiowpatch` is installed for WASAPI loopback support
+- On Windows, ensure VB Cable is installed (CABLE Output must be visible)
 
 #### High latency
 
@@ -292,9 +292,6 @@ cd poise-voice-isolator
 ```bash
 pip install onnxruntime numpy sounddevice scipy PyQt6
 
-# For Windows system audio capture (recommended):
-pip install pyaudiowpatch
-
 # For better resampling performance (optional):
 pip install samplerate
 ```
@@ -382,8 +379,7 @@ stream_denoiser/
 │   ├── system_tray.py
 │   └── worker.py            # Audio processing thread
 ├── backends/                # Audio interface backends
-│   ├── pyaudio_backend.py   # Windows/WASAPI support
-│   ├── sounddevice_backend.py # Cross-platform support
+│   ├── sounddevice_backend.py # Cross-platform support (VB Cable on Windows)
 │   └── platform/            # Platform-specific code
 │       ├── linux.py         # PulseAudio integration
 │       └── windows.py       # WASAPI support

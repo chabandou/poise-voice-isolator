@@ -201,7 +201,6 @@ def test_cli_keeps_explicit_input_when_monitor_missing(monkeypatch):
     def _fake_backend(processor, input_device, output_device):
         seen["input"] = input_device
 
-    monkeypatch.setattr(cli_mod, "USE_PYAUDIOWPATCH", False)
     monkeypatch.setattr(cli_mod, "USE_SOUNDDEVICE", True)
     monkeypatch.setitem(
         sys.modules,

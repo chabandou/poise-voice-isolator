@@ -24,9 +24,7 @@ a = Analysis(
         (assets_path, 'stream_denoiser/gui/assets'),
     ],
     hiddenimports=[
-        'stream_denoiser.backends.pyaudio_backend',
         'stream_denoiser.backends.sounddevice_backend',
-        'pyaudiowpatch',
         'sounddevice',
         'onnxruntime',
         'numpy',

@@ -28,7 +28,6 @@ from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import (
-    USE_PYAUDIOWPATCH,
     USE_SOUNDDEVICE,
     sd,
     SOUNDDEVICE_ERROR,
@@ -131,17 +130,9 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             atten_lim_db=atten_lim_db
         )
         
-        # Get the actual VB Cable name that was switched to
-        actual_vb_cable_name = None
-        if vb_cable_switcher is not None:
-            actual_vb_cable_name = vb_cable_switcher.vb_cable_name
-        
-        # Select backend
-        if USE_PYAUDIOWPATCH:
-            _logger.info("Using PyAudioWPatch + sounddevice backend")
-            from .backends.pyaudio_backend import process_with_pyaudiowpatch
-            process_with_pyaudiowpatch(processor, input_device, output_device, vb_cable_name=actual_vb_cable_name)
-        elif USE_SOUNDDEVICE:
+        # Select backend (sounddevice-only; CABLE Output is a regular
+        # WASAPI capture device, no loopback extension needed)
+        if USE_SOUNDDEVICE:
             _logger.info("Using sounddevice backend")
             from .backends.sounddevice_backend import process_with_sounddevice
             process_with_sounddevice(processor, input_device, output_device)

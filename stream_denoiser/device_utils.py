@@ -2,14 +2,11 @@
 Audio Device Utilities
 
 Functions for discovering and managing audio devices.
-Supports both Windows (WASAPI loopback) and Linux (PulseAudio/ALSA monitors).
+Supports both Windows (VB Cable via WASAPI) and Linux (PulseAudio/ALSA monitors).
 """
 from typing import Optional, List, Dict, Any, Tuple
 
-from .backend_detection import (
-    USE_SOUNDDEVICE, USE_PYAUDIO, USE_PYAUDIOWPATCH,
-    sd, pyaudio
-)
+from .backend_detection import USE_SOUNDDEVICE, sd
 from .platform_utils import is_windows, is_linux, is_acceptable_host_api
 from .logging_config import get_logger
 
@@ -17,23 +14,9 @@ _logger = get_logger(__name__)
 
 
 def list_audio_devices() -> List[Dict[str, Any]]:
-    """List all available audio devices."""
+    """List all available audio devices (sounddevice/PortAudio only)."""
     if USE_SOUNDDEVICE:
         devices = sd.query_devices()
-        return devices
-    elif USE_PYAUDIO:
-        p = pyaudio.PyAudio()
-        devices = []
-        for i in range(p.get_device_count()):
-            info = p.get_device_info_by_index(i)
-            devices.append({
-                'name': info['name'],
-                'max_input_channels': info['maxInputChannels'],
-                'max_output_channels': info['maxOutputChannels'],
-                'default_samplerate': info['defaultSampleRate'],
-                'hostapi': p.get_host_api_info_by_index(info['hostApi'])['name']
-            })
-        p.terminate()
         return devices
     else:
         return []
@@ -52,65 +35,6 @@ def _validate_device_id(device_id: int, devices: List[Dict[str, Any]]) -> None:
     """
     if device_id >= len(devices):
         raise ValueError(f"Device ID {device_id} is out of range. Available devices: 0-{len(devices)-1}")
-
-
-def _find_wasapi_loopback_pyaudio() -> Optional[int]:
-    """
-    Find WASAPI loopback device using PyAudioWPatch.
-    Prioritizes VB Cable Output device.
-    Only searches WASAPI devices.
-    
-    Returns:
-        Device index if found, None otherwise
-    """
-    if not USE_PYAUDIOWPATCH:
-        return None
-    
-    p = pyaudio.PyAudio()
-    try:
-        # Get WASAPI Host API index
-        wasapi_host_api_index = None
-        for api_idx in range(p.get_host_api_count()):
-            api_info = p.get_host_api_info_by_index(api_idx)
-            if 'WASAPI' in api_info['name'].upper():
-                wasapi_host_api_index = api_idx
-                break
-        
-        if wasapi_host_api_index is None:
-            _logger.warning("WASAPI Host API not found")
-            return None
-        
-        # First, try to find VB Cable Output specifically (WASAPI only)
-        device_count = p.get_device_count()
-        for i in range(device_count):
-            try:
-                device_info = p.get_device_info_by_index(i)
-                # Filter to WASAPI devices only
-                if device_info['hostApi'] != wasapi_host_api_index:
-                    continue
-                    
-                device_name = device_info['name']
-                # Check if it's VB Cable Output (loopback device)
-                if device_info['maxInputChannels'] > 0:
-                    if 'CABLE Output' in device_name and 'VB-Audio' in device_name:
-                        _logger.info(f"Found VB Cable loopback device: {device_name} (Index: {i})")
-                        return i
-                    elif 'CABLE Output' in device_name:
-                        _logger.info(f"Found CABLE Output loopback device: {device_name} (Index: {i})")
-                        return i
-            except Exception:
-                continue
-        
-        # Fallback to default WASAPI loopback
-        loopback_device = p.get_default_wasapi_loopback()
-        if loopback_device:
-            _logger.info(f"Found WASAPI loopback device: {loopback_device['name']} (Index: {loopback_device['index']})")
-            return loopback_device['index']
-        else:
-            _logger.warning("No default WASAPI loopback device found")
-            return None
-    finally:
-        p.terminate()
 
 
 def _find_loopback_devices_sounddevice() -> List[Tuple[int, Dict[str, Any]]]:
@@ -182,8 +106,9 @@ def _find_loopback_devices_sounddevice() -> List[Tuple[int, Dict[str, Any]]]:
 def find_loopback_device(device_id: Optional[int] = None) -> Optional[int]:
     """
     Find loopback device for system audio capture.
-    
-    On Windows: Uses WASAPI loopback via PyAudioWPatch or VB Cable.
+
+    On Windows: opens CABLE Output as a regular WASAPI capture device
+        (sounddevice/PortAudio). No WASAPI-loopback extension needed.
     On Linux: Uses pulsectl to find PulseAudio/PipeWire monitor sources,
               then maps to PortAudio device for streaming.
     
@@ -208,20 +133,9 @@ def find_loopback_device(device_id: Optional[int] = None) -> Optional[int]:
         except ImportError:
             _logger.debug("Linux platform module not available, using fallback")
     
-    # Try PyAudioWPatch first (Windows preferred method)
-    wasapi_device = _find_wasapi_loopback_pyaudio()
-    if wasapi_device is not None:
-        if device_id is not None and device_id != wasapi_device:
-            # User specified a different device, validate it
-            if USE_SOUNDDEVICE:
-                devices = sd.query_devices()
-                _validate_device_id(device_id, devices)
-                return device_id
-        return wasapi_device if device_id is None else device_id
-    
     # Fallback to sounddevice
     if not USE_SOUNDDEVICE:
-        raise RuntimeError("Loopback device detection requires sounddevice or pyaudiowpatch")
+        raise RuntimeError("Loopback device detection requires sounddevice")
     
     devices = sd.query_devices()
     

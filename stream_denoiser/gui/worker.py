@@ -18,7 +18,7 @@ from ..constants import (
     DEVICE_SWITCH_SUCCESS_HOLD_SEC,
     MSG_NO_BACKEND, DEFAULT_MODEL, MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHED
 )
-from ..backend_detection import USE_PYAUDIOWPATCH, USE_SOUNDDEVICE, pyaudio, sd
+from ..backend_detection import USE_SOUNDDEVICE, sd
 from ..logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -119,7 +119,6 @@ class AudioWorker(QThread):
             # which only receives audio when default playback is CABLE Input.
             # If the automatic switch fails, do NOT start processing — the
             # GUI shows a modal with manual steps instead.
-            actual_vb_cable_name = None
             if self.vb_cable_enabled:
                 self.status_changed.emit(MSG_DEVICE_SWITCHING)
                 cable_name = self.vb_cable_name or "CABLE Input (VB-Audio Virtual Cable)"
@@ -157,7 +156,6 @@ class AudioWorker(QThread):
                     )
                     self.stopped_processing.emit()
                     return
-                actual_vb_cable_name = self._vb_cable_switcher.vb_cable_name
                 self.status_changed.emit(MSG_DEVICE_SWITCHED)
                 # Hold the confirmation so it stays readable before the
                 # next phase ("Starting audio streams...") overwrites it.
@@ -181,11 +179,9 @@ class AudioWorker(QThread):
             self.status_changed.emit("Starting audio streams...")
             self.started_processing.emit()
             
-            # Run the appropriate backend
-            # Run the appropriate backend
-            if USE_PYAUDIOWPATCH and USE_SOUNDDEVICE:
-                self._run_processing_loop()
-            elif USE_SOUNDDEVICE:
+            # sounddevice-only backend (CABLE Output is a regular WASAPI
+            # capture device; no PyAudioWPatch loopback extension)
+            if USE_SOUNDDEVICE:
                 self._run_processing_loop()
             else:
                 self.error_occurred.emit(MSG_NO_BACKEND)
@@ -198,211 +194,189 @@ class AudioWorker(QThread):
     
     def _run_processing_loop(self) -> None:
         """
-        Main processing loop using the existing backend infrastructure.
-        
-        This is a simplified loop that periodically emits stats.
-        The actual audio processing is handled by the backend.
+        Main processing loop using the sounddevice backend (blocking I/O).
+
+        Captures CABLE Output as a regular WASAPI input device, processes
+        through DenoiserAudioProcessor, and plays to the output device.
+        Runs in this QThread; stops when self._running is cleared.
         """
         import numpy as np
-        from ..ring_buffer import RingBuffer
-        from ..constants import BUFFER_CAPACITY_RATIO, WORKER_SLEEP_TIME_SEC
-        from ..device_utils import get_output_device_id, validate_output_device
-        
-        if not USE_SOUNDDEVICE:
+        from ..device_utils import (
+            find_loopback_device,
+            get_output_device_id,
+            validate_output_device,
+        )
+
+        if not USE_SOUNDDEVICE or sd is None:
             self.error_occurred.emit("sounddevice is required")
             return
-        
-        block_size = self._processor.frame_size
-        
-        # Initialize PyAudio
-        if pyaudio is None:
-            self.error_occurred.emit("PyAudio is not available")
-            return
-        
-        p = pyaudio.PyAudio()
-        loopback_stream = None
-        
+
         try:
-            # Find loopback device
-            loopback_device = None
-            wasapi_host_api_index = None
-            
-            for api_idx in range(p.get_host_api_count()):
-                api_info = p.get_host_api_info_by_index(api_idx)
-                if 'WASAPI' in api_info['name'].upper():
-                    wasapi_host_api_index = api_idx
-                    break
-            
-            # Search for VB Cable Output
-            device_count = p.get_device_count()
-            for i in range(device_count):
-                try:
-                    device_info = p.get_device_info_by_index(i)
-                    if wasapi_host_api_index is not None and device_info['hostApi'] != wasapi_host_api_index:
-                        continue
-                    
-                    device_name = device_info['name']
-                    if device_info['maxInputChannels'] > 0:
-                        if 'CABLE Output' in device_name:
-                            loopback_device = {'index': i, 'name': device_name, 'info': device_info}
-                            break
-                except Exception:
-                    continue
-            
-            if not loopback_device:
-                loopback_device = p.get_default_wasapi_loopback()
-                if not loopback_device:
-                    self.error_occurred.emit(
-                        "VB-CABLE: CABLE Output not found. "
-                        "Is VB-Cable installed?"
-                    )
-                    return
-                if "CABLE OUTPUT" not in loopback_device.get("name", "").upper():
-                    self.error_occurred.emit(
-                        "VB-CABLE: CABLE Output not found "
-                        f"(capturing '{loopback_device.get('name', 'unknown')}' "
-                        "instead). Is VB-Cable installed?"
-                    )
-                    return
-            
-            device_info = p.get_device_info_by_index(loopback_device['index'])
-            input_sr = int(device_info['defaultSampleRate'])
-            input_channels = device_info.get('maxInputChannels', 2) or 2
-            
-            self._processor.setup_resampler(input_sr)
-            # Drain the input ring in rate-scaled blocks so each chunk
-            # resamples to ~one engine frame (see backends/pyaudio_backend).
-            # (Per-iteration sizes come from processor.next_input_block_size().)
-            
-            # Find output device
+            input_dev_id = find_loopback_device(self.input_device)
+        except (RuntimeError, ValueError) as e:
+            self.error_occurred.emit(f"Input device error: {e}")
+            return
+
+        try:
             devices = sd.query_devices()
-            try:
-                output_dev_id = get_output_device_id(self.output_device, devices)
-            except ValueError as e:
-                self.error_occurred.emit(str(e))
-                return
-            
-            output_sr = self._processor.target_sr
-            
-            # Ring buffers
-            buffer_capacity = int(self._processor.target_sr * BUFFER_CAPACITY_RATIO)
-            input_buffer = RingBuffer(buffer_capacity)
-            output_buffer = RingBuffer(buffer_capacity)
-            
-            # Callbacks
-            def loopback_callback(in_data, frame_count, time_info, status):
-                try:
-                    audio_data = np.frombuffer(in_data, dtype=np.float32)
-                    if input_channels > 1:
-                        audio_data = audio_data.reshape(-1, input_channels)
-                        audio_data = np.mean(audio_data, axis=1)
-                    else:
-                        audio_data = audio_data.flatten()
-                    input_buffer.write(audio_data)
-                    return (None, pyaudio.paContinue)
-                except Exception:
-                    return (None, pyaudio.paAbort)
-            
-            def output_callback(outdata, frames, time_arg, status):
-                try:
-                    processed_chunk = output_buffer.read(frames)
-                    if processed_chunk is not None and len(processed_chunk) > 0:
-                        if len(processed_chunk) < frames:
-                            padded = np.zeros(frames, dtype=np.float32)
-                            padded[:len(processed_chunk)] = processed_chunk
-                            processed_chunk = padded
-                        # Duplicate mono to stereo for proper playback on both channels
-                        outdata[:, 0] = processed_chunk[:frames].astype(np.float32)
-                        outdata[:, 1] = processed_chunk[:frames].astype(np.float32)
-                    else:
-                        outdata.fill(0)
-                except Exception:
-                    outdata.fill(0)
-            
-            # Open streams
-            loopback_stream = p.open(
-                format=pyaudio.paFloat32,
-                channels=input_channels,
-                rate=input_sr,
-                input=True,
-                input_device_index=loopback_device['index'],
-                frames_per_buffer=block_size,
-                stream_callback=loopback_callback
+            input_device_info = sd.query_devices(input_dev_id)
+        except Exception as e:
+            self.error_occurred.emit(f"Failed to query audio devices: {e}")
+            return
+
+        # VB-Cable is mandatory: refuse to capture a mic/default input.
+        input_name = str(input_device_info.get('name', ''))
+        if "CABLE OUTPUT" not in input_name.upper():
+            self.error_occurred.emit(
+                "VB-CABLE: CABLE Output not found "
+                f"(found '{input_name or 'unknown'}' instead). "
+                "Is VB-Cable installed?"
             )
-            loopback_stream.start_stream()
-            
-            # Try to open output stream with retry and fallback logic
+            return
+
+        input_sr = int(input_device_info.get('default_samplerate', 48000))
+        self._processor.setup_resampler(input_sr)
+        in_block_size = self._processor.input_block_size
+
+        # Find output device (match input host API for compatibility)
+        try:
+            input_host_api = sd.query_hostapis(input_device_info['hostapi'])['name']
+        except Exception:
+            input_host_api = None
+        try:
+            output_dev_id = get_output_device_id(
+                self.output_device, devices, input_host_api=input_host_api)
+            if not validate_output_device(
+                    output_dev_id, self._processor.target_sr, devices):
+                raise ValueError(
+                    f"Output device {output_dev_id} does not support "
+                    "required configuration")
+        except (ValueError, RuntimeError) as e:
+            self.error_occurred.emit(str(e))
+            return
+
+        output_sr = self._processor.target_sr
+        output_device_info = sd.query_devices(output_dev_id)
+
+        # Open input stream at its native rate, stereo (see note below),
+        # then downmix to mono in software like the old PyAudio path did.
+        # NOTE: never open a stereo WASAPI endpoint (e.g. VB-Cable Output)
+        # with channels=1: the capture comes back sample-doubled (every
+        # sample repeated twice = effective half rate in a full-rate
+        # container), which sounds dull/muffled/incomprehensible through
+        # the engine. Stereo capture is bit-clean.
+        try:
             try:
+                input_stream = sd.InputStream(
+                    device=input_dev_id,
+                    samplerate=input_sr,
+                    channels=2,
+                    dtype='float32',
+                    blocksize=in_block_size,
+                )
+                _input_channels = 2
+            except Exception:
+                # Genuinely mono device: fall back to a mono open.
+                input_stream = sd.InputStream(
+                    device=input_dev_id,
+                    samplerate=input_sr,
+                    channels=1,
+                    dtype='float32',
+                    blocksize=in_block_size,
+                )
+                _input_channels = 1
+        except Exception as e:
+            self.error_occurred.emit(
+                f"Failed to open input '{input_name}': {e}")
+            return
+
+        # Open output stream, falling back to the device default rate.
+        try:
+            self._processor.setup_output_resampler(output_sr)
+            out_block_size = self._processor.output_resample_size
+            output_stream = sd.OutputStream(
+                device=output_dev_id,
+                channels=2,
+                samplerate=output_sr,
+                dtype='float32',
+                blocksize=out_block_size,
+            )
+        except Exception:
+            try:
+                device_default_sr = int(
+                    output_device_info.get('default_samplerate', 44100))
+                self.status_changed.emit(
+                    f"Switching to {device_default_sr}Hz output...")
+                self._processor.setup_output_resampler(device_default_sr)
+                out_block_size = self._processor.output_resample_size
                 output_stream = sd.OutputStream(
                     device=output_dev_id,
                     channels=2,
-                    samplerate=output_sr,
-                    blocksize=block_size,
-                    callback=output_callback,
-                    dtype=np.float32
+                    samplerate=device_default_sr,
+                    dtype='float32',
+                    blocksize=out_block_size,
                 )
-                self._processor.setup_output_resampler(output_sr)
-                
-            except sd.PortAudioError:
-                # Fallback to device default sample rate
+            except Exception as e:
                 try:
-                    output_device_info = sd.query_devices(output_dev_id)
-                    device_default_sr = int(output_device_info.get('default_samplerate', 44100))
-                    self.status_changed.emit(f"Switching to {device_default_sr}Hz output...")
-                    
-                    output_stream = sd.OutputStream(
-                        device=output_dev_id,
-                        channels=2,
-                        samplerate=device_default_sr,
-                        blocksize=block_size,
-                        callback=output_callback,
-                        dtype=np.float32
-                    )
-                    
-                    self._processor.setup_output_resampler(device_default_sr)
-                    
-                except Exception as e:
-                    if loopback_stream:
-                        loopback_stream.stop_stream()
-                        loopback_stream.close()
-                    p.terminate()
-                    self.error_occurred.emit(f"Failed to open output: {str(e)}")
-                    return
-            
-            self.status_changed.emit("Processing")
-            
-            last_stats_time = time.time()
-            
-            with output_stream:
+                    input_stream.close()
+                except Exception:
+                    pass
+                self.error_occurred.emit(f"Failed to open output: {e}")
+                return
+
+        self.status_changed.emit("Processing")
+        last_stats_time = time.time()
+        # Reused stereo buffer with one sample of headroom: output takes
+        # dither around out_block_size (mirrors sounddevice_backend).
+        stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
+
+        try:
+            with input_stream, output_stream:
                 while self._running:
-                    # Process audio
-                    audio_chunk = input_buffer.read(
-                        self._processor.next_input_block_size())
-                    
-                    if audio_chunk is not None:
-                        audio_output = self._processor.process_chunk(audio_chunk)
-                        if audio_output is not None:
-                            output_buffer.write(audio_output)
+                    try:
+                        audio_chunk, overflowed = input_stream.read(
+                            self._processor.next_input_block_size())
+                    except Exception as e:
+                        self.error_occurred.emit(f"Input read failed: {e}")
+                        return
+                    if overflowed:
+                        _logger.warning("Input buffer overflow")
+                    if audio_chunk is None or len(audio_chunk) == 0:
+                        continue
+                    # Downmix to mono in software (mean of L/R), matching
+                    # the old PyAudio path. Never rely on a mono device
+                    # open (see note at stream open).
+                    if _input_channels > 1:
+                        audio_chunk = audio_chunk.mean(axis=1).astype(np.float32)
                     else:
-                        time.sleep(WORKER_SLEEP_TIME_SEC)
-                    
-                    # Emit stats periodically
+                        audio_chunk = audio_chunk.flatten()
+                    try:
+                        audio_output = self._processor.process_chunk(audio_chunk)
+                    except Exception as e:
+                        self.error_occurred.emit(f"Processing failed: {e}")
+                        return
+                    if audio_output is not None:
+                        # Write exactly what the pipeline produced: padding
+                        # with zeros would insert silence and shift A/V sync.
+                        n = min(len(audio_output), len(stereo_output))
+                        stereo_output[:n, 0] = audio_output[:n]
+                        stereo_output[:n, 1] = audio_output[:n]
+                        try:
+                            output_stream.write(stereo_output[:n])
+                        except Exception as e:
+                            self.error_occurred.emit(f"Output write failed: {e}")
+                            return
+
                     current_time = time.time()
                     if current_time - last_stats_time >= 0.1:  # Every 100ms
                         stats = self._processor.get_stats()
-                        stats['input_buffer'] = input_buffer.available()
-                        stats['output_buffer'] = output_buffer.available()
                         self.stats_updated.emit(stats)
                         last_stats_time = current_time
-        
         finally:
-            if loopback_stream:
-                try:
-                    loopback_stream.stop_stream()
-                    loopback_stream.close()
-                except Exception:
-                    pass
-            p.terminate()
+            try:
+                input_stream.close()
+            except Exception:
+                pass
     
     def stop(self) -> None:
         """Stop processing gracefully."""
