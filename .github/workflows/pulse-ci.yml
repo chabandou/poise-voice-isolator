@@ -10,13 +10,9 @@ on:
       - 'pyproject.toml'
       - 'build-linux.sh'
       - '.github/workflows/pulse-ci.yml'
+  # No path filter on PRs: these jobs are required checks on master, and a
+  # skipped required check blocks the PR forever.
   pull_request:
-    paths:
-      - 'stream_denoiser/**'
-      - 'tests/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
-      - 'build-linux.sh'
   workflow_dispatch:
 
 jobs:
