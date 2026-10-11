@@ -310,3 +310,23 @@ def test_rescan_arrow_follows_the_secondary_colour(app):
     sel.refresh_theme()
     assert sel._refresh_icon._color == themes.current()["secondary"]
     themes.set_current("abyss")
+
+
+def test_about_credits_vb_audio_with_a_link(app, monkeypatch):
+    """VB-CABLE is third-party donationware: credit it and link its site."""
+    from PyQt6.QtWidgets import QLabel, QPushButton
+    from stream_denoiser.gui import main_window as mw
+    window = mw.MainWindow()
+    window.show()
+    _pump(app)
+    texts = " ".join(w.text() for w in window.findChildren(QLabel))
+    assert "VB-CABLE by VB-Audio Software" in texts
+    assert "donationware" in texts
+    opened = []
+    monkeypatch.setattr(mw.QDesktopServices, "openUrl",
+                        staticmethod(lambda url: opened.append(url.toString())))
+    button = next(b for b in window.findChildren(QPushButton)
+                  if b.text() == "VB-Audio")
+    button.click()
+    assert opened == [mw.VB_AUDIO_URL] == ["https://vb-audio.com/"]
+    window.close()

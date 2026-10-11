@@ -65,6 +65,7 @@ HOME_ISOLATING_SUB = "Music and noise are removed."
 
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
+VB_AUDIO_URL = "https://vb-audio.com/"
 
 
 class MainWindow(QMainWindow):
@@ -624,6 +625,8 @@ class MainWindow(QMainWindow):
 
         credits = QLabel(
             "Denoising: DeepFilterNet3 · RNNoise (xiph.org)\n"
+            "Audio routing: VB-CABLE by VB-Audio Software · "
+            "third-party, donationware\n"
             "Built with Python and PyQt6 · MIT licensed")
         credits.setObjectName("card-subtitle")
         credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -640,6 +643,11 @@ class MainWindow(QMainWindow):
         issues_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
         links.addWidget(issues_btn)
+        vb_btn = self._icon_button("VB-Audio", "waveform")
+        vb_btn.setToolTip("VB-CABLE by VB-Audio Software: vb-audio.com")
+        vb_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(VB_AUDIO_URL)))
+        links.addWidget(vb_btn)
         links.addStretch()
         layout.addLayout(links)
 
