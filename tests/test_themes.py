@@ -140,3 +140,24 @@ def test_verdant_is_registered_with_gold_secondary():
     css = styles.get_stylesheet(scale=1.0, theme="verdant")
     assert not LEFTOVER_TOKEN.search(css)
     assert "53, 224, 168" in css
+
+
+def test_six_themes_fill_a_three_by_two_grid():
+    ids = themes.theme_ids()
+    assert len(ids) == 6 and ids[0] == themes.DEFAULT_THEME
+    assert ids[-1] == "orchid"
+    p = themes.get_theme("orchid")
+    assert p["label"] == "Orchid"
+    css = styles.get_stylesheet(scale=1.0, theme="orchid")
+    assert not LEFTOVER_TOKEN.search(css)
+    assert "244, 114, 182" in css          # accent wash
+
+
+def test_ghost_buttons_hover_like_the_dropdown():
+    """One hover colour for fields and ghost buttons: the secondary."""
+    import re
+    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+    ghost = re.search(r"QPushButton#ghost:hover\s*\{([^}]*)\}", css)
+    combo = re.search(r"QComboBox#device-combo:hover\s*\{([^}]*)\}", css)
+    assert ghost and combo
+    assert "#E8C468" in ghost.group(1) and "#E8C468" in combo.group(1)

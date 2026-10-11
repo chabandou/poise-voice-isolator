@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
             card_layout.setContentsMargins(
                 *self._rm((24, 22, 24, 22), (20, 18, 20, 18),
                           (16, 16, 16, 16)))
-        self._layout_theme_grid(5 if narrow else 3)
+        self._layout_theme_grid(3)
 
         # Logs / About
         for page_layout in (self._logs_layout, self._about_layout):
@@ -738,6 +738,7 @@ class MainWindow(QMainWindow):
         self._refresh_app_icon()
         for chip in self.findChildren(IconChip):
             chip.refresh_theme()
+        self.output_selector.refresh_theme()
         self._tint_icon_buttons()
         self.power_btn.update()
         self.stats_bar.update()

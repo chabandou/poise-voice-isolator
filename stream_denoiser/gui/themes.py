@@ -102,6 +102,22 @@ THEMES: Dict[str, Dict] = {
         "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
+    "orchid": {
+        "label": "Orchid",
+        "blurb": "Hot pink on dark plum, with a sky-blue accent.",
+        "bg": "#150d14", "sidebar": "#110a10",
+        "card": "#1b1119", "pill": "#20141d", "groove": "#30202b",
+        "text": "#fdf2f8", "muted": "#a8939f",
+        "device_title": "#b59fac",
+        "nav_active": "#fbb6d9", "nav_muted": "#a8939f",
+        "accent": "#f472b6", "accent_light": "#fbb6d9",
+        "accent_rgb": "244, 114, 182",
+        "secondary": "#86C5FF", "secondary_rgb": "134, 197, 255",
+        "border_rgb": "255, 170, 215", "border_alpha": 0.22,
+        "divider_rgb": "255, 165, 210", "divider_alpha": 0.32,
+        "badge_bg": "#2a1623", "badge_fg": "#f472b6",
+        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+    },
 }
 
 DEFAULT_THEME = "abyss"

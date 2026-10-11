@@ -189,7 +189,7 @@ class DialButton(PowerButton):
 
     def _update_hover_cursor(self, pos) -> None:
         zone = self._zone(pos)
-        self._hot = zone == "ring"
+        self._hot = zone in ("ring", "disc")   # head needle lights on both
         if self._dragging:
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif zone == "ring":

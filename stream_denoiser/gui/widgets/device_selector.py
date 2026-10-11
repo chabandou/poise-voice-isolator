@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayo
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from .phosphor import PhosphorIcon
+from ..themes import current as current_theme
 from .chip import IconChip
 from .combo import AnimatedComboBox
 from ..scaling import sp
@@ -78,7 +79,9 @@ class DeviceSelector(QWidget):
         self._refresh_btn.setFixedSize(sp(28), sp(28))
         refresh_layout = QHBoxLayout(self._refresh_btn)
         refresh_layout.setContentsMargins(6, 6, 6, 6)
-        refresh_layout.addWidget(PhosphorIcon("refresh", size=15))
+        self._refresh_icon = PhosphorIcon(
+            "refresh", color=current_theme()["secondary"], size=15)
+        refresh_layout.addWidget(self._refresh_icon)
         self._refresh_btn.setToolTip("Rescan audio devices")
         self._refresh_btn.clicked.connect(self.refresh_devices)
         header.addWidget(self._refresh_btn)
@@ -177,6 +180,7 @@ class DeviceSelector(QWidget):
 
     def refresh_theme(self) -> None:
         self._chip.refresh_theme()
+        self._refresh_icon.set_color(current_theme()["secondary"])
 
     def set_enabled(self, enabled: bool):
         """Enable or disable the selector."""

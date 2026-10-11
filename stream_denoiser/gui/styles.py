@@ -471,8 +471,7 @@ QPushButton#ghost {
 }
 
 QPushButton#ghost:hover {
-    border-color: {accent};
-    color: {accent_light};
+    border-color: {secondary};
 }
 
 QPushButton#ghost:pressed {

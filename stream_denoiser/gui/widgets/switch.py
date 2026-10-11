@@ -89,16 +89,24 @@ class ToggleSwitch(QAbstractButton):
             int(a.alpha() + (b.alpha() - a.alpha()) * t),
         )
 
-    def paintEvent(self, event):  # noqa: N802 (Qt override)
+    def knob_geometry(self):
+        """(left x, side) of the knob. NOT clamped: the slide rides an
+        OutBack spring, so the knob overshoots the far end and settles
+        back (the toggle's bounce)."""
         w, h = self.width(), self.height()
-        border_w = max(1.0, float(sp(1)))
         inset = h * 4.0 / 26.0          # knob margin (4px at 26px tall)
         knob = h - 2.0 * inset
         travel = w - 2.0 * inset - knob
-        x = inset + travel * max(0.0, min(1.0, self._knob))
-        # The knob rides an overshooting spring curve; positions may pass
-        # the ends but colours are blended with a clamped factor so they
-        # never extrapolate (that reads as a flash at the end of a slide).
+        return inset + travel * self._knob, knob
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        w, h = self.width(), self.height()
+        border_w = max(1.0, float(sp(1)))
+        x, knob = self.knob_geometry()
+        inset = h * 4.0 / 26.0
+        # Colours are blended with a clamped factor so they never
+        # extrapolate past either endpoint (that reads as a flash at the
+        # end of the slide); only the knob's position springs past them.
         t = max(0.0, min(1.0, self._knob))
 
         palette = current_theme()

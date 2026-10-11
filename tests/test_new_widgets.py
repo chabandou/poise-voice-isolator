@@ -252,3 +252,59 @@ def test_toggle_is_a_rounded_square_outline_with_an_accent_knob(app):
         img_on.pixelColor(0, 0) != img_on.pixelColor(w // 2, h // 2)
     off.close()
     on.close()
+
+
+def test_toggle_knob_springs_past_the_end_and_settles(app):
+    """The slide's bounce: position is unclamped (overshoots), but the
+    colour blend stays clamped so it never flashes."""
+    from stream_denoiser.gui.widgets.switch import ToggleSwitch
+    sw = ToggleSwitch(checked=True)
+    sw.show()
+    _pump(app)
+    rest_x, side = sw.knob_geometry()
+    sw._knob = 1.1                     # OutBack overshoot
+    over_x, _ = sw.knob_geometry()
+    assert over_x > rest_x
+    assert over_x + side < sw.width()  # still inside the track
+    sw._knob = 0.0
+    start_x, _ = sw.knob_geometry()
+    sw._knob = -0.1                    # and past the start on the way back
+    assert sw.knob_geometry()[0] < start_x
+    sw.grab()                          # paints without error at overshoot
+    sw.close()
+
+
+def test_power_button_hover_lights_the_head_needle_like_the_ring(app):
+    from PyQt6.QtCore import QPoint
+    btn = _dial(app)
+    k = btn.width() / 300.0
+    centre = QPoint(btn.width() // 2, btn.height() // 2)
+    ring = QPoint(int(btn.width() / 2 + 125 * k), btn.height() // 2)
+    corner = QPoint(1, 1)
+    btn._update_hover_cursor(centre)
+    assert btn._hot is True
+    btn._update_hover_cursor(ring)
+    assert btn._hot is True
+    btn._update_hover_cursor(corner)
+    assert btn._hot is False
+    btn.close()
+
+
+def _dial(app):
+    from stream_denoiser.gui.widgets.dial import DialButton
+    btn = DialButton()
+    btn.show()
+    _pump(app)
+    return btn
+
+
+def test_rescan_arrow_follows_the_secondary_colour(app):
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    themes.set_current("abyss")
+    sel = DeviceSelector("Output device", "output")
+    assert sel._refresh_icon._color == themes.current()["secondary"]
+    themes.set_current("ember")
+    sel.refresh_theme()
+    assert sel._refresh_icon._color == themes.current()["secondary"]
+    themes.set_current("abyss")

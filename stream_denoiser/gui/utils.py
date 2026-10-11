@@ -13,6 +13,7 @@ THEME_ICON_VARIANTS = {
     "verdant": "icon-verdant.svg",
     "ultraviolet": "icon-ultraviolet.svg",
     "ember": "icon-ember.svg",
+    "orchid": "icon-orchid.svg",
 }
 
 

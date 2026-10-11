@@ -98,13 +98,13 @@ def test_narrow_mode_reflows(app):
     assert window.sidebar.width() == sp(68)
     for btn in window.sidebar._buttons:
         assert not btn._label.isVisible()
-    # Theme tiles sit on one row when the cards stack.
+    # Theme tiles stay three across (two even rows of three).
     window._on_page_requested(1)
     _pump(app)
     tiles = window.theme_tiles
-    assert len(tiles) >= 5
-    assert tiles[1].y() == tiles[0].y()
-    assert tiles[4].y() == tiles[0].y()
+    assert len(tiles) == 6
+    assert tiles[2].y() == tiles[0].y()
+    assert tiles[3].y() > tiles[0].y()
     window._on_page_requested(0)
     _pump(app)
     # The sliding highlight still tracks after the reflow.
