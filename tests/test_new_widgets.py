@@ -312,21 +312,30 @@ def test_rescan_arrow_follows_the_secondary_colour(app):
     themes.set_current("abyss")
 
 
-def test_about_credits_vb_audio_with_a_link(app, monkeypatch):
-    """VB-CABLE is third-party donationware: credit it and link its site."""
-    from PyQt6.QtWidgets import QLabel, QPushButton
+def test_about_credits_vb_audio_with_an_embedded_link(app, monkeypatch):
+    """VB-CABLE is third-party donationware: credit it, and link VB-Audio's
+    name in place (with an external-link arrow), not as a separate button."""
+    from PyQt6.QtWidgets import QPushButton
     from stream_denoiser.gui import main_window as mw
     window = mw.MainWindow()
     window.show()
     _pump(app)
-    texts = " ".join(w.text() for w in window.findChildren(QLabel))
-    assert "VB-CABLE by VB-Audio Software" in texts
-    assert "donationware" in texts
+    label = window.about_credits
+    html = label.text()
+    assert f'href="{mw.VB_AUDIO_URL}"' in html
+    assert "VB-Audio Software \u2197" in html          # name + arrow
+    assert "VB-CABLE by" in html and "donationware" in html
+    assert not any(b.text() == "VB-Audio"
+                   for b in window.findChildren(QPushButton))
     opened = []
     monkeypatch.setattr(mw.QDesktopServices, "openUrl",
                         staticmethod(lambda url: opened.append(url.toString())))
-    button = next(b for b in window.findChildren(QPushButton)
-                  if b.text() == "VB-Audio")
-    button.click()
-    assert opened == [mw.VB_AUDIO_URL] == ["https://vb-audio.com/"]
+    label.linkActivated.emit(mw.VB_AUDIO_URL)
+    assert opened == ["https://vb-audio.com/"]
+    # Underlines on hover only, and follows the theme accent.
+    assert "text-decoration:none" in html
+    label.linkHovered.emit(mw.VB_AUDIO_URL)
+    assert "text-decoration:underline" in label.text()
+    label.linkHovered.emit("")
+    assert "text-decoration:none" in label.text()
     window.close()

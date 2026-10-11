@@ -623,13 +623,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(tagline)
         layout.addSpacing(12)
 
-        credits = QLabel(
-            "Denoising: DeepFilterNet3 · RNNoise (xiph.org)\n"
-            "Audio routing: VB-CABLE by VB-Audio Software · "
-            "third-party, donationware\n"
-            "Built with Python and PyQt6 · MIT licensed")
+        credits = QLabel()
         credits.setObjectName("card-subtitle")
         credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits.setTextFormat(Qt.TextFormat.RichText)
+        credits.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        credits.linkActivated.connect(
+            lambda url: QDesktopServices.openUrl(QUrl(url)))
+        credits.linkHovered.connect(
+            lambda url: self._refresh_credits(hover=bool(url)))
+        self.about_credits = credits
+        self._refresh_credits()
         layout.addWidget(credits)
         layout.addSpacing(8)
 
@@ -643,16 +649,26 @@ class MainWindow(QMainWindow):
         issues_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
         links.addWidget(issues_btn)
-        vb_btn = self._icon_button("VB-Audio", "waveform")
-        vb_btn.setToolTip("VB-CABLE by VB-Audio Software: vb-audio.com")
-        vb_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(VB_AUDIO_URL)))
-        links.addWidget(vb_btn)
         links.addStretch()
         layout.addLayout(links)
 
         layout.addStretch()
         return page
+
+    def _refresh_credits(self, hover: bool = False) -> None:
+        """About credits as rich text; VB-Audio's name is an embedded link.
+
+        The link takes the theme accent, underlines on hover and carries
+        an external-link arrow. Rebuilt on theme switches.
+        """
+        accent = theme_store.current()["accent"]
+        underline = "underline" if hover else "none"
+        link = (f'<a href="{VB_AUDIO_URL}" style="color:{accent}; '
+                f'text-decoration:{underline};">VB-Audio Software \u2197</a>')
+        self.about_credits.setText(
+            "Denoising: DeepFilterNet3 · RNNoise (xiph.org)<br>"
+            f"Audio routing: VB-CABLE by {link} · third-party, donationware"
+            "<br>Built with Python and PyQt6 · MIT licensed")
 
     # -- navigation ------------------------------------------------------------
     def _on_page_requested(self, index: int):
@@ -757,6 +773,7 @@ class MainWindow(QMainWindow):
         for chip in self.findChildren(IconChip):
             chip.refresh_theme()
         self.output_selector.refresh_theme()
+        self._refresh_credits()
         self._tint_icon_buttons()
         self.power_btn.update()
         self.stats_bar.update()
