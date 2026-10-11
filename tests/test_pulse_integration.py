@@ -131,7 +131,7 @@ def test_start_stop_cycles_no_crash():
         "sink=get_default_sink_name();"
         "import pulsectl;"
         "snks=[s.name for s in pulsectl.Pulse('t').sink_list()];"
-        "sink=[s for s in snks if 'null' not in s.lower()][0] if snks else snks[0];"
+        "sink=next((s for s in snks if 'null' not in s.lower()), snks[0]);"
         "exec('for _ in range(50):\\n"
         " c=PulseCapture(src0,frames);c.close();c.close();\\n"
         " p=PulsePlayback(sink,frames);p.close();p.close()\\n')"

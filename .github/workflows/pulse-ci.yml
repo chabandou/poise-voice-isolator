@@ -27,6 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install libpulse
+        run: sudo apt-get update && sudo apt-get install -y libpulse0
       - name: Install test deps
         # Runtime deps minus the GUI: stream_denoiser/__init__ pulls in the
         # resampler (scipy, samplerate) and the engines (onnxruntime).
@@ -61,7 +63,9 @@ jobs:
       - name: Install python deps
         run: |
           grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
-          pip3 install --break-system-packages -r /tmp/requirements-ci.txt pulsectl pytest
+          # --ignore-installed: textual needs a newer Pygments than Debian's,
+          # which pip cannot uninstall (no RECORD file).
+          pip3 install --break-system-packages --ignore-installed -r /tmp/requirements-ci.txt pulsectl pytest
       - name: Unit + integration tests
         run: python3 -m pytest tests/ -v -m "not integration or integration"
 

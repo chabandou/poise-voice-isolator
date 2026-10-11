@@ -1,5 +1,6 @@
 """Tests for Linux-only file logging (no system changes)."""
 import logging
+import os
 import sys
 
 import pytest
@@ -86,6 +87,12 @@ def test_empty_home_still_produces_writable_log(monkeypatch, tmp_path):
     assert "empty-home-line" in Path(path).read_text()
 
 
+_skip_as_root = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root ignores directory permissions (e.g. CI containers)")
+
+
+@_skip_as_root
 def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     """Read-only home with no XDG set -> per-user /tmp dir, never None."""
     ro_home = tmp_path / "ro-home"
@@ -104,6 +111,7 @@ def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     assert "/tmp/poise-" in path, path
 
 
+@_skip_as_root
 def test_readonly_home_prefers_xdg_state_home(monkeypatch, tmp_path):
     ro_home = tmp_path / "ro-home"
     ro_home.mkdir()
@@ -119,6 +127,7 @@ def test_readonly_home_prefers_xdg_state_home(monkeypatch, tmp_path):
     assert path and path.startswith(str(xdg_state)), path
 
 
+@_skip_as_root
 def test_unwritable_explicit_path_falls_back_on_linux(tmp_path):
     """A bad --log-file must not silently disable logging on Linux."""
     if not sys.platform.startswith("linux"):
