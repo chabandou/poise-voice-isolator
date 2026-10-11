@@ -412,15 +412,12 @@ QComboBox#device-combo::down-arrow {
    own tiny sheet. */
 QComboBox#device-combo QAbstractItemView,
 QComboBox#settings-combo QAbstractItemView {
-    background-color: {pill};
+    background-color: transparent;
     color: {text};
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 10px;
-    padding: 6px;
+    border: none;
+    padding: 0px;
     outline: none;
     font-size: 15px;
-    selection-background-color: {accent};
-    selection-color: {bg};
 }
 
 /* Settings-page dropdown (boxed style) */

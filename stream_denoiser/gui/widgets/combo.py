@@ -3,10 +3,15 @@ Poise Voice Isolator - Animated Dropdown (QComboBox)
 
 QComboBox with a properly dark popup and Apple-style open/close motion:
 
-- The popup's outer container is an internal Qt class no QSS selector
-  can reach, so it stays default-white (the white bars framing every
-  popup). It is painted dark here in code via palette — no fragile
-  class-name selectors, no cascade risk to the styled list inside.
+- The popup's outer container is an internal Qt class the app stylesheet
+  cannot reach, so it stays default-white (the white bars framing every
+  popup). It is styled here in code: its own tiny sheet (card colour,
+  hairline border, rounded corners over a translucent window) plus the
+  pill palette as the fallback where translucency is unavailable.
+- Rows are painted by PopupItemDelegate: a soft accent wash fading out to
+  the right on hover (same shape as the sidebar/Settings highlights) and
+  a diamond marking the current choice, so hover never looks like
+  selection.
 - Opening fades the popup in while it settles 8px from the combo edge
   (direction-aware: rises when opening below, falls when flipped
   above), ~160ms OutCubic. Closing fades out fast, then hides.
@@ -16,12 +21,17 @@ QComboBox with a properly dark popup and Apple-style open/close motion:
 Usage: drop in wherever QComboBox was used; objectName-driven QSS
 ("device-combo" / "settings-combo") keeps working unchanged.
 """
-from PyQt6.QtWidgets import QComboBox, QListView, QStyledItemDelegate
+from PyQt6.QtWidgets import (
+    QComboBox, QListView, QStyledItemDelegate, QWidget,
+)
 from PyQt6.QtCore import (
     QEasingCurve, QPoint, QPropertyAnimation,
     QParallelAnimationGroup, QSize, Qt,
 )
-from PyQt6.QtGui import QColor, QPalette, QPen
+from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtGui import (
+    QColor, QLinearGradient, QPainter, QPainterPath, QPalette,
+)
 
 from ..scaling import sp
 from ..themes import current as current_theme
@@ -31,6 +41,9 @@ OPEN_MS = 160
 CLOSE_MS = 110
 SLIDE_PX = 8
 POPUP_GAP = -6  # slight overlap: popup tucks under the button edge
+POPUP_PAD = 6   # padding between the border and the rows (design px)
+POPUP_RADIUS = 12
+ROW_RADIUS = 8
 
 
 def _supports_window_fade() -> bool:
@@ -45,66 +58,81 @@ def _supports_window_fade() -> bool:
 
 class PopupItemDelegate(QStyledItemDelegate):
     """Paints dropdown rows directly: QSS ::item rules don't reach combo
-    popup views on any selector, so spacing, dividers, and row states
-    live here in paint code (like the rest of the app's widgets)."""
+    popup views on any selector, so spacing and row states live here in
+    paint code (like the rest of the app's widgets).
+
+    Highlight (hover / keyboard) is a rounded wash fading to the right;
+    the current choice carries a small diamond in the secondary colour.
+    """
 
     ROW_H = 40
-    DIVIDER_ALPHA = 0.20  # stats-like divider, quieter
+    WASH_ALPHA = 0.20
+
+    def __init__(self, parent=None, combo=None):
+        super().__init__(parent)
+        self._combo = combo
 
     def sizeHint(self, option, index):  # noqa: N802 (Qt override)
         hint = super().sizeHint(option, index)
-        hint.setHeight(max(hint.height(), sp(self.ROW_H)))
+        # Fixed row height: the popup is sized from it, and font-driven
+        # variation would make the list height (and scrolling) unstable.
+        hint.setHeight(sp(self.ROW_H))
         return hint
+
+    def _is_current(self, index) -> bool:
+        try:
+            return (self._combo is not None
+                    and index.row() == self._combo.currentIndex())
+        except Exception:
+            return False
 
     def paint(self, painter, option, index):  # noqa: N802 (Qt override)
         from PyQt6.QtWidgets import QStyle
         palette = current_theme()
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        lit = bool(option.state & (QStyle.StateFlag.State_Selected
+                                   | QStyle.StateFlag.State_MouseOver))
 
         painter.save()
         try:
-            rect = option.rect
-            if selected:
-                painter.fillRect(rect, QColor(palette["accent"]))
-                text_color = QColor(palette["bg"])
-            else:
-                if hovered:
-                    wash = QColor(palette["accent"])
-                    wash.setAlphaF(0.12)
-                    painter.fillRect(rect, wash)
-                text_color = QColor(palette["text"])
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            row = QRectF(option.rect).adjusted(0, sp(2), 0, -sp(2))
 
-            # Label with breathing room, elided to the row.
-            pad_h, pad_v = sp(12), sp(6)
-            text_rect = rect.adjusted(pad_h, pad_v, -pad_h, -pad_v)
+            if lit:
+                accent = QColor(palette["accent"])
+                wash = QLinearGradient(row.left(), 0,
+                                       row.left() + row.width() * 0.92, 0)
+                start = QColor(accent)
+                start.setAlphaF(self.WASH_ALPHA)
+                end = QColor(accent)
+                end.setAlphaF(0.0)
+                wash.setColorAt(0.0, start)
+                wash.setColorAt(1.0, end)
+                shape = QPainterPath()
+                shape.addRoundedRect(row, sp(ROW_RADIUS), sp(ROW_RADIUS))
+                painter.fillPath(shape, wash)
+
+            # Current choice: diamond in the secondary colour.
+            pad_h = sp(14)
+            if self._is_current(index):
+                d = sp(4)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(palette["secondary"]))
+                painter.translate(QPointF(row.left() + pad_h, row.center().y()))
+                painter.rotate(45)
+                painter.drawRoundedRect(QRectF(-d, -d, 2 * d, 2 * d), 1.5, 1.5)
+                painter.resetTransform()
+
+            # Label, always indented past the marker slot so rows align.
+            text_left = pad_h + sp(18)
+            text_rect = row.adjusted(text_left, 0, -sp(12), 0).toRect()
             text = index.data(Qt.ItemDataRole.DisplayRole) or ""
             elided = option.fontMetrics.elidedText(
                 str(text), Qt.TextElideMode.ElideRight, text_rect.width())
-            painter.setPen(text_color)
+            painter.setPen(QColor(palette["text"]))
             painter.drawText(
                 text_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 elided)
-
-            # Hairline divider under every row but the last.
-            try:
-                model = index.model()
-                last = model is not None and index.row() >= model.rowCount() - 1
-            except Exception:
-                last = True
-            if not last:
-                try:
-                    r, g, b = (int(c) for c in
-                               palette["divider_rgb"].split(","))
-                except Exception:
-                    r, g, b = (148, 163, 184)
-                div = QColor(r, g, b)
-                div.setAlphaF(self.DIVIDER_ALPHA)
-                painter.setPen(QPen(div, 1))
-                y = rect.bottom()
-                painter.drawLine(rect.left() + pad_h, y,
-                                 rect.right() - pad_h, y)
         finally:
             painter.restore()
 
@@ -121,10 +149,11 @@ class AnimatedComboBox(QComboBox):
             view = QListView(self)
             view.setMouseTracking(True)
             view.setUniformItemSizes(False)
-            view.setItemDelegate(PopupItemDelegate(view))
+            view.setItemDelegate(PopupItemDelegate(view, combo=self))
             self.setView(view)
         except Exception:
             pass
+        self._prepare_popup_container()
 
     # -- popup container -------------------------------------------------
     @staticmethod
@@ -136,42 +165,100 @@ class AnimatedComboBox(QComboBox):
         except Exception:
             return None
 
-    def _paint_popup_container(self) -> None:
-        """Kill the unstyled popup frame (white bars) and paint it dark.
+    def _prepare_popup_container(self) -> None:
+        """One-time window setup (before the popup is first shown).
 
-        Three things the naive approaches miss, all learned empirically:
+        Rounded corners need a translucent window, and a translucent
+        popup must not get the system's rectangular drop shadow.
+        """
+        try:
+            win = self._popup_window(self)
+            if win is None:
+                return
+            win.setObjectName("poise-popup")
+            win.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+            win.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            # Qt's up/down scroller strips are unstyleable (plain white
+            # bars) and steal row height; collapse them and let the list
+            # use a regular, themed scrollbar when it must scroll.
+            view = self.view()
+            for child in win.findChildren(
+                    QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+                if child is not view:
+                    child.setFixedHeight(0)
+            if view is not None:
+                view.setVerticalScrollBarPolicy(
+                    Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        except Exception:
+            pass
+
+    def _paint_popup_container(self) -> None:
+        """Style the unstyled popup frame (white bars) per theme.
+
+        Learned empirically:
         - stylesheets do not cascade into top-level popup windows, so the
-          container gets its OWN tiny stylesheet here (an objectName +
-          app-sheet rule demonstrably never matches it);
-        - the container also ignores palette auto-fill, so that alone
-          is not enough either;
-        - NoFrame removes the native panel border that QSS can't reach.
+          container gets its OWN stylesheet here (scoped by objectName so
+          it never leaks to the list or scrollbars inside);
+        - the pill palette stays as the fallback fill for platforms that
+          ignore translucency (square corners, but never white);
+        - the frame must be a StyledPanel for the QSS border to paint.
         """
         try:
             from PyQt6.QtWidgets import QFrame
             win = self._popup_window(self)
             if win is None:
                 return
+            palette = current_theme()
             if isinstance(win, QFrame):
                 try:
-                    win.setFrameShape(QFrame.Shape.NoFrame)
+                    win.setFrameShape(QFrame.Shape.StyledPanel)
                     win.setLineWidth(0)
                 except Exception:
                     pass
             try:
-                pill = current_theme()["pill"]
                 win.setStyleSheet(
-                    f"background-color: {pill}; border: none;")
+                    "QFrame#poise-popup {"
+                    f" background-color: {palette['card']};"
+                    f" border: 1px solid rgba({palette['border_rgb']},"
+                    f" {palette['border_alpha']});"
+                    f" border-radius: {sp(POPUP_RADIUS)}px; }}"
+                    "QListView { background: transparent; border: none;"
+                    " padding: 0px; outline: none; }")
             except Exception:
                 pass
             try:
                 pal = win.palette()
                 pal.setColor(QPalette.ColorRole.Window,
-                             QColor(current_theme()["pill"]))
+                             QColor(palette["pill"]))
                 win.setPalette(pal)
-                win.setAutoFillBackground(True)
+                win.setAutoFillBackground(False)
             except Exception:
                 pass
+            try:
+                layout = win.layout()
+                if layout is not None:
+                    pad = sp(POPUP_PAD)
+                    layout.setContentsMargins(pad, pad, pad, pad)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _fit_popup(self) -> None:
+        """Size the popup to its rows plus padding and border.
+
+        Qt sizes the container for its own (unpadded) layout, so after
+        the padding/border are applied the height is recomputed here.
+        """
+        try:
+            win = self._popup_window(self)
+            view = self.view()
+            if win is None or view is None:
+                return
+            rows = min(self.count(), max(1, self.maxVisibleItems()))
+            rows_h = sum(view.sizeHintForRow(i) for i in range(rows))
+            chrome = 2 * (sp(POPUP_PAD) + 1)
+            win.resize(max(win.width(), self.width()), rows_h + chrome)
         except Exception:
             pass
 
@@ -238,9 +325,11 @@ class AnimatedComboBox(QComboBox):
 
     def showPopup(self):  # noqa: N802 (Qt override)
         self._stop_pop_anim()
+        self._paint_popup_container()
         super().showPopup()
         try:
             self._paint_popup_container()
+            self._fit_popup()
             self._place_popup()
             if not self._motion_ok():
                 return

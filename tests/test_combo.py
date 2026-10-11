@@ -37,26 +37,31 @@ def _pump(app, secs=0.4):
         time.sleep(0.02)
 
 
-def test_popup_container_carries_own_dark_sheet(app):
-    """Top-level popup gets its own sheet (cascade never reaches it)."""
+def test_popup_container_carries_own_card_sheet(app):
+    """Top-level popup gets its own sheet (cascade never reaches it):
+    card colour, hairline border, rounded corners; the pill palette stays
+    as the fallback fill where translucency is unavailable."""
+    from PyQt6.QtGui import QPalette
     from stream_denoiser.gui import themes
     combo = _make_combo()
     _pump(app, 0.2)
     combo.showPopup()
     _pump(app, 0.2)
     win = combo.view().window()
-    assert win.styleSheet() != ""
-    assert themes.current()["pill"].lower() in win.styleSheet().lower()
+    sheet = win.styleSheet().lower()
+    assert themes.current()["card"].lower() in sheet
+    assert "border-radius" in sheet and "border: 1px solid" in sheet
+    assert (win.palette().color(QPalette.ColorRole.Window).name()
+            == themes.current()["pill"].lower())
+    assert not win.autoFillBackground()   # corners stay see-through
     combo.hidePopup()
     _pump(app, 0.2)
     assert not win.isVisible()
     combo.close()
 
 
-def test_delegate_sizes_rows_and_divides(app):
-    """Rows are airy and a divider tint is painted between them."""
-    from PyQt6.QtGui import QColor
-    from stream_denoiser.gui import themes
+def test_delegate_sizes_rows_to_a_fixed_height(app):
+    """Rows are airy and exactly ROW_H tall (the popup is sized from it)."""
     from stream_denoiser.gui.scaling import sp
     from stream_denoiser.gui.widgets.combo import PopupItemDelegate
     combo = _make_combo()
@@ -65,31 +70,8 @@ def test_delegate_sizes_rows_and_divides(app):
     _pump(app, 0.2)
     view = combo.view()
     assert isinstance(view.itemDelegate(), PopupItemDelegate)
-    assert view.sizeHintForRow(0) == sp(40)
-    # Divider = divider_rgb @ 0.20 over whatever the row painted
-    # (accent under a selected row, pill under a plain one).
-    pal = themes.current()
-    pill = QColor(pal["pill"])
-    accent = QColor(pal["accent"])
-    r, g, b = (int(c) for c in pal["divider_rgb"].split(","))
-    t = PopupItemDelegate.DIVIDER_ALPHA
-
-    def blend(base):
-        return (base.red() + (r - base.red()) * t,
-                base.green() + (g - base.green()) * t,
-                base.blue() + (b - base.blue()) * t)
-
-    targets = (blend(pill), blend(accent))
-
-    def near(c, e):
-        return (abs(c.red() - e[0]) < 6 and abs(c.green() - e[1]) < 6
-                and abs(c.blue() - e[2]) < 6)
-
-    img = view.window().grab().toImage()
-    found = sum(1 for y in range(img.height())
-                for x in range(0, img.width(), 8)
-                if any(near(img.pixelColor(x, y), e) for e in targets))
-    assert found > 20, "divider tint missing between rows"
+    for row in range(combo.count()):
+        assert view.sizeHintForRow(row) == sp(PopupItemDelegate.ROW_H)
     combo.hidePopup()
     _pump(app, 0.2)
     combo.close()

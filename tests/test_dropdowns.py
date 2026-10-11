@@ -43,13 +43,15 @@ def _block_after(css, marker):
 
 
 def test_popup_view_block_intact():
-    """Frame, font, and selection tokens survive for both combo styles."""
+    """List view block stays neutral (the container owns the frame) and
+    keeps readable text for both combo styles."""
     css = _css()
     for combo in ("device-combo", "settings-combo"):
         assert f"QComboBox#{combo} QAbstractItemView" in css, combo
     body = _block_after(css, "QComboBox#settings-combo QAbstractItemView")
     assert "background-color" in body
-    assert "border-radius" in body
+    assert "border-radius" not in body   # the popup container is rounded
+    assert "padding: 0px" in body        # rows get padding from the container
     assert re.search(r"font-size:\s*1[5-9]px", body), "readable item text"
 
 
