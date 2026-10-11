@@ -81,6 +81,9 @@ class DeviceSelector(QWidget):
         refresh_layout.setContentsMargins(6, 6, 6, 6)
         self._refresh_icon = PhosphorIcon(
             "refresh", color=current_theme()["secondary"], size=15)
+        # Let the button (not the icon) own hover so its wash paints.
+        self._refresh_icon.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         refresh_layout.addWidget(self._refresh_icon)
         self._refresh_btn.setToolTip("Rescan audio devices")
         self._refresh_btn.clicked.connect(self.refresh_devices)

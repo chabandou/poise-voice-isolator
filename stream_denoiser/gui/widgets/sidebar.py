@@ -49,6 +49,12 @@ class NavButton(QPushButton):
         self._label = QLabel(text)
         self._label.setObjectName("nav-text")
         self._layout.addWidget(self._label, stretch=1)
+        # The icon and label cover nearly the whole button. If they take
+        # mouse events, Qt hovers *them* and the button's own :hover
+        # background never paints (it only showed on the thin margins).
+        for child in (self._icon, self._label):
+            child.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         # Apple-style press dip (opacity only — layout-safe).
         try:
