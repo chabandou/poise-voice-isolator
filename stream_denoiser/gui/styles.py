@@ -3,7 +3,8 @@ Poise Voice Isolator - Dashboard Theme
 
 Card-based dark theme driven by gui/themes.py palettes: every hue in
 this sheet is a {token} resolved per theme, so all colorways stay
-self-matching. Custom-painted widgets (PowerButton, ToggleSwitch) draw
+self-matching. {HEADING_FONT} is the bundled heading face (gui/fonts.py).
+Custom-painted widgets (DialButton, ToggleSwitch) draw
 themselves from the same palette; icons come from the vendored
 Phosphor SVGs (see widgets/phosphor.py).
 """
@@ -34,16 +35,16 @@ QFrame#sidebar {
 
 QLabel#logo {
     color: {text};
+    font-family: {HEADING_FONT};
+    font-size: 24px;
+    font-weight: 700;
 }
 
 QPushButton#nav {
     background-color: transparent;
     border: none;
-    border-top-left-radius: 0px;
-    border-bottom-left-radius: 0px;
-    border-top-right-radius: 10px;
-    border-bottom-right-radius: 10px;
-    min-height: 52px;
+    border-radius: 10px;
+    min-height: 50px;
     color: {nav_muted};
     font-size: 14px;
     font-weight: 500;
@@ -55,8 +56,8 @@ QPushButton#nav:hover {
 }
 
 QPushButton#nav[active="true"] {
-    background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
-    color: {nav_active};
+    background-color: transparent;
+    color: {text};
 }
 
 QLabel#nav-text {
@@ -67,7 +68,7 @@ QLabel#nav-text {
 }
 
 QPushButton#nav[active="true"] QLabel#nav-text {
-    color: {nav_active};
+    color: {text};
 }
 
 QLabel#version {
@@ -83,6 +84,12 @@ QFrame#card {
     background-color: {card};
     border: {CARD_BORDER_WIDTH}px solid rgba({border_rgb}, {border_alpha});
     border-radius: 16px;
+}
+
+QFrame#chip {
+    background-color: rgba({secondary_rgb}, 0.16);
+    border: none;
+    border-radius: 12px;
 }
 
 QFrame#vb-pill {
@@ -118,27 +125,203 @@ QLabel#section {
 }
 
 QLabel#device-title {
-    color: {device_title};
-    font-size: 14px;
+    font-family: {HEADING_FONT};
+    color: {text};
+    font-size: 24px;
     font-weight: 700;
 }
 
 QLabel#page-title {
-    font-size: 22px;
+    font-family: {HEADING_FONT};
+    font-size: 34px;
     font-weight: 700;
     color: {text};
 }
 
 QLabel#page-subtitle {
-    font-size: 13px;
+    font-size: 14px;
     color: {muted};
 }
 
 QLabel#card-title {
-    font-size: 16px;
+    font-family: {HEADING_FONT};
+    font-size: 24px;
     font-weight: 700;
     color: {text};
 }
+
+/* Settings list rows / summary rows */
+QLabel#row-title {
+    font-family: {HEADING_FONT};
+    font-size: 22px;
+    font-weight: 700;
+    color: {text};
+}
+
+QLabel#row-sub {
+    font-size: 13px;
+    color: {muted};
+}
+
+QLabel#row-value {
+    font-family: {HEADING_FONT};
+    font-size: 21px;
+    font-weight: 700;
+    color: {secondary};
+}
+
+/* Home headline + live status line */
+QLabel#home-title {
+    font-family: {HEADING_FONT};
+    font-size: 36px;
+    font-weight: 700;
+    color: {text};
+}
+
+/* Model cards */
+QPushButton#model-card {
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 12px;
+    text-align: left;
+}
+
+QPushButton#model-card:hover {
+    border: 1px solid rgba({secondary_rgb}, 0.6);
+}
+
+QPushButton#model-card:checked {
+    border: 1px solid {secondary};
+    background-color: rgba({secondary_rgb}, 0.08);
+}
+
+QPushButton#model-card:disabled {
+    background-color: transparent;
+    border: 1px dashed rgba(148, 163, 184, 0.22);
+}
+
+QLabel#model-name {
+    font-family: {HEADING_FONT};
+    font-size: 24px;
+    font-weight: 700;
+    color: {text};
+    background-color: transparent;
+}
+
+QLabel#model-blurb {
+    font-size: 14px;
+    color: {muted};
+    background-color: transparent;
+}
+
+QLabel#model-name:disabled {
+    color: {muted};
+}
+
+QLabel#log-path {
+    font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
+    font-size: 12px;
+    color: {muted};
+}
+
+QLabel#about-version {
+    font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
+    font-size: 13px;
+    color: {secondary};
+}
+
+/* VB-Cable recovery dialog */
+QDialog#vb-dialog {
+    background-color: {bg};
+}
+
+QFrame#err-chip {
+    background-color: rgba(248, 113, 113, 0.14);
+    border: none;
+    border-radius: 12px;
+}
+
+QLabel#step-num {
+    font-family: {HEADING_FONT};
+    font-size: 14px;
+    font-weight: 700;
+    color: {secondary};
+    border: 1px solid rgba({secondary_rgb}, 0.55);
+    border-radius: 12px;
+    min-width: 24px;
+    max-width: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    background-color: transparent;
+}
+
+QLabel#code-box {
+    font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
+    font-size: 12px;
+    color: {text};
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+QPushButton#primary {
+    background-color: {accent};
+    color: {bg};
+    border: none;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-weight: 700;
+}
+
+QPushButton#primary:hover {
+    background-color: {accent_light};
+}
+
+QPushButton#primary:disabled {
+    background-color: rgba({accent_rgb}, 0.3);
+    color: {muted};
+}
+
+/* Status bar */
+QStatusBar {
+    background-color: {sidebar};
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    min-height: 30px;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+QLabel#sb-text,
+QLabel#sb-value,
+QLabel#sb-good,
+QLabel#sb-warn,
+QLabel#sb-bad {
+    font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
+    font-size: 12px;
+    background-color: transparent;
+}
+
+QLabel#sb-text { color: {muted}; }
+QLabel#sb-value { color: {text}; }
+QLabel#sb-good { color: {success}; }
+QLabel#sb-warn { color: {warning}; }
+QLabel#sb-bad { color: {error}; }
+
+QFrame#sb-dot {
+    background-color: {muted};
+    border: none;
+    border-radius: 4px;
+    min-width: 8px;
+    max-width: 8px;
+    min-height: 8px;
+    max-height: 8px;
+}
+
+QFrame#sb-dot[state="processing"] { background-color: {accent}; }
+QFrame#sb-dot[state="error"] { background-color: {error}; }
 
 QLabel#card-subtitle {
     font-size: 12px;
@@ -146,7 +329,7 @@ QLabel#card-subtitle {
 }
 
 QLabel#status-line {
-    font-size: 12px;
+    font-size: 15px;
     color: {muted};
 }
 
@@ -176,23 +359,22 @@ QLabel#thresh-value {
    DEVICE DROPDOWNS (underline style)
    ================================================================================= */
 QComboBox#device-combo {
-    background-color: transparent;
-    border: none;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
-    border-radius: 0px;
-    padding: 0px 28px 10px 0px;
-    min-height: 30px;
+    background-color: {pill};
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 10px;
+    padding: 0px 14px;
+    min-height: 46px;
     color: {text};
     font-weight: 500;
-    font-size: 17px;
+    font-size: 15px;
 }
 
 QComboBox#device-combo:hover {
-    border-bottom: 1px solid {accent};
+    border: 1px solid {secondary};
 }
 
 QComboBox#device-combo:on {
-    border-bottom: 1px solid {accent};
+    border: 1px solid {secondary};
 }
 
 QComboBox#device-combo:focus {
@@ -201,21 +383,21 @@ QComboBox#device-combo:focus {
 
 QComboBox#device-combo:disabled {
     color: #52525b;
-    border-bottom: 1px solid rgba(82, 82, 91, 0.4);
+    border: 1px solid rgba(82, 82, 91, 0.4);
 }
 
 QComboBox#device-combo::drop-down {
     subcontrol-origin: padding;
-    subcontrol-position: top right;
-    width: 24px;
+    subcontrol-position: center right;
+    width: 38px;
     border: none;
+    border-left: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 QComboBox#device-combo::down-arrow {
     image: url("{ASSETS_DIR}/chevron-down.svg");
     width: 12px;
     height: 8px;
-    margin-right: 6px;
 }
 
 /* Dropdown popups (shared list styling for both combo styles).
@@ -281,8 +463,8 @@ QComboBox#settings-combo::down-arrow {
 QPushButton#ghost {
     background-color: rgba(148, 163, 184, 0.08);
     border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 8px;
-    padding: 8px 18px;
+    border-radius: 10px;
+    padding: 9px 18px;
     color: {text};
     font-weight: 600;
     font-size: 13px;
@@ -493,6 +675,8 @@ def get_stylesheet(scale=None, theme=None) -> str:
     for key in KEYS:
         css = css.replace("{" + key + "}", str(palette[key]))
     css = css.replace("{ACCENT_WASH_ALPHA}", str(ACCENT_WASH_ALPHA))
+    from .fonts import heading_css
+    css = css.replace("{HEADING_FONT}", heading_css())
     # Substitute after px-scaling so the stepped width is not scaled twice.
     css = scale_stylesheet(css, factor)
     return css.replace("{CARD_BORDER_WIDTH}", str(_card_border_width(factor)))

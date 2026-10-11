@@ -1,9 +1,10 @@
 """
 Poise Voice Isolator - Main Window
 
-Dashboard layout matching the v1.1 mockup: sidebar navigation with
-Home / Settings / Logs / About pages, glowing power button, toggle
-pills, and live stat cards.
+Dashboard layout: sidebar navigation with Home / Settings / Logs / About
+pages. Home is the tick-ring dial (Start/Stop + reduction strength) next
+to the output device and a summary of the current setup; everything else
+lives in Settings. Live performance stats sit in the status bar.
 """
 import os
 import sys
@@ -11,7 +12,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QCheckBox, QComboBox,
+    QLabel,
     QMessageBox, QApplication, QFrame, QStackedWidget,
     QTextEdit, QPushButton, QButtonGroup, QScrollArea, QBoxLayout,
 )
@@ -20,28 +21,46 @@ from PyQt6.QtGui import QIcon, QCloseEvent, QPixmap, QDesktopServices
 
 from .styles import get_stylesheet
 from .scaling import init_scaling, sp
+from .fonts import load_fonts
 from . import themes as theme_store
 from .settings import get_settings
 from .. import __version__
 from ..constants import (
-    MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED, MODEL_INFO,
+    MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED,
     MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHING_FIRST_TIME,
 )
 from .worker import AudioWorker
 from .system_tray import SystemTray
-from .widgets.phosphor import PhosphorIcon, clear_cache as clear_icon_cache
+from .widgets.phosphor import (
+    clear_cache as clear_icon_cache, icon as phosphor_icon,
+)
 from .widgets.theme_tile import ThemeTile
-from .widgets.power_button import PowerButton
+from .widgets.dial import DialButton
 from .widgets.switch import ToggleSwitch
 from .widgets.slider import HoverSlider
 from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
-from .widgets.combo import AnimatedComboBox
-from .widgets.stats_panel import StatsPanel
+from .widgets.chip import IconChip
+from .widgets.model_cards import ModelCards
+from .widgets.settings_row import SettingsRow
+from .widgets.setup_summary import SetupSummary
+from .widgets.stats_bar import StatsBar
+from .widgets.emblem import Emblem
+from .widgets.pattern_card import PatternCard
 from ..logging_config import get_logger, get_log_file_path
 from .utils import get_icon_path
 
 _logger = get_logger(__name__)
+
+HOME_TITLES = {
+    "ready": "Ready to isolate",
+    "starting": "Getting ready...",
+    "isolating": "Isolating voices",
+    "stopping": "Stopping...",
+    "error": "Couldn't start",
+}
+HOME_READY_SUB = "Press the dial to start."
+HOME_ISOLATING_SUB = "Music and noise are removed."
 
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
@@ -62,6 +81,7 @@ class MainWindow(QMainWindow):
         self._error_state = False
 
         init_scaling()
+        load_fonts()
         theme_store.set_current(self.settings.theme)
 
         self.setWindowTitle("Poise Voice Isolator")
@@ -78,7 +98,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(*self._window_size(700, 560))
         self.setStyleSheet(get_stylesheet())
         self._resp = None  # responsive mode: wide / compact / narrow
-        self._devices_narrow = False  # devices row order tracks this flag
+        self._icon_buttons = []  # (button, icon name) re-tinted per theme
 
         self.setup_ui()
 
@@ -103,23 +123,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    @staticmethod
-    def _lowered(widget: QWidget, offset: int) -> QWidget:
-        """Wrap a widget with a fixed top offset."""
-        wrap = QWidget()
-        layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(0, offset, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(widget)
-        return wrap
-
-    @staticmethod
-    def _set_lowered(wrap: QWidget, offset: int) -> None:
-        """Adjust a _lowered() wrapper's top offset (responsive)."""
-        lay = wrap.layout()
-        if lay is not None:
-            lay.setContentsMargins(0, offset, 0, 0)
-
     def _layout_theme_grid(self, cols: int) -> None:
         """Arrange theme tiles in rows of `cols` (re-parenting is safe)."""
         for i, tile in enumerate(self.theme_tiles):
@@ -127,36 +130,6 @@ class MainWindow(QMainWindow):
         for c in range(4):
             self.theme_grid.setColumnStretch(c, 0)
         self.theme_grid.setColumnStretch(cols, 1)
-
-    def _layout_devices_row(self, narrow: bool) -> None:
-        """Set devices row direction and order (power first when stacked).
-
-        Input routing is fully automatic via VB-Cable: there is no input
-        selector anymore, only power + output. Widgets re-add into a new
-        position automatically, but re-adding an already-managed sublayout
-        is a no-op — so the power column leaves first via takeAt (its
-        wrapper is dropped; the layout itself survives on its member ref).
-        Runs only when the narrow flag flips (see _apply_responsive).
-        """
-        self._devices_narrow = narrow
-        row = self._devices_row
-        top = Qt.AlignmentFlag.AlignTop
-        try:
-            for i in range(row.count()):
-                if row.itemAt(i).layout() is self._power_wrap:
-                    taken = row.takeAt(i)
-                    del taken
-                    break
-        except Exception:
-            pass
-        if narrow:
-            row.setDirection(QBoxLayout.Direction.TopToBottom)
-            row.addLayout(self._power_wrap, stretch=4)
-            row.addWidget(self._output_wrap, stretch=5, alignment=top)
-        else:
-            row.setDirection(QBoxLayout.Direction.LeftToRight)
-            row.addLayout(self._power_wrap, stretch=4)
-            row.addWidget(self._output_wrap, stretch=5, alignment=top)
 
     def _rv(self, wide, compact, narrow):
         """Pick a responsive value for the current mode."""
@@ -166,6 +139,27 @@ class MainWindow(QMainWindow):
             return compact
         return wide
 
+    def _rm(self, wide, compact, narrow):
+        """Responsive margins as scaled pixels (a 4-tuple per mode)."""
+        return tuple(sp(v) for v in self._rv(wide, compact, narrow))
+
+    def _icon_button(self, text: str, icon_name: str) -> QPushButton:
+        """Ghost button with a secondary-tinted Phosphor icon."""
+        from PyQt6.QtCore import QSize
+        from .scaling import isp
+        btn = QPushButton(text)
+        btn.setObjectName("ghost")
+        btn.setIconSize(QSize(isp(16), isp(16)))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._icon_buttons.append((btn, icon_name))
+        self._tint_icon_buttons()
+        return btn
+
+    def _tint_icon_buttons(self) -> None:
+        color = theme_store.current()["secondary"]
+        for btn, name in self._icon_buttons:
+            btn.setIcon(phosphor_icon(name, 16, color))
+
     # -- responsive ----------------------------------------------------------
     def resizeEvent(self, event):  # noqa: N802 (Qt override)
         super().resizeEvent(event)
@@ -174,9 +168,9 @@ class MainWindow(QMainWindow):
     def _apply_responsive(self) -> None:
         """Adapt chrome density and row direction to the window width.
 
-        Wide keeps the dashboard mockup; compact tightens it; narrow
-        stacks the rows and collapses the sidebar to an icon rail.
-        Runs only on mode changes, so live resizes stay cheap. The
+        Wide puts the dial card beside the cards; compact tightens it;
+        narrow stacks everything and collapses the sidebar to an icon
+        rail. Runs only on mode changes, so live resizes stay cheap. The
         window width alone drives the mode (internal changes never feed
         back into it), so this cannot oscillate.
         """
@@ -200,42 +194,34 @@ class MainWindow(QMainWindow):
         H = QBoxLayout.Direction.LeftToRight
 
         # Home
+        self._home_layout.setDirection(V if narrow else H)
         self._home_layout.setContentsMargins(
-            *self._rv((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
-        self._home_layout.setSpacing(self._rv(35, 24, 16))
-        self._top_layout.setContentsMargins(
-            *self._rv((78, 57, 66, 57), (40, 32, 36, 32), (20, 20, 20, 20)))
-        self._top_layout.setSpacing(self._rv(26, 18, 14))
-        if narrow != self._devices_narrow:
-            self._layout_devices_row(narrow)
-        self._devices_row.setSpacing(self._rv(24, 16, 12))
-        # The lowered label column only aligns beside the tall button.
-        lowered = 0 if narrow else self._power_third
-        self._set_lowered(self._output_wrap, lowered)
-        self._bottom_row.setDirection(V if narrow else H)
-        self._bottom_row.setSpacing(self._rv(35, 24, 16))
-        self._aad_layout.setContentsMargins(
-            *self._rv((69, 51, 57, 51), (36, 28, 32, 28), (20, 20, 20, 20)))
-        self._aad_layout.setSpacing(self._rv(16, 12, 10))
+            *self._rm((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._home_layout.setSpacing(sp(self._rv(20, 16, 12)))
+        self._stage_layout.setContentsMargins(
+            *self._rm((26, 28, 26, 24), (20, 24, 20, 20), (16, 20, 16, 18)))
+        self._right_col.setSpacing(sp(self._rv(20, 16, 12)))
+        self.power_btn.set_dial_size(sp(self._rv(300, 270, 240)))
 
         # Settings
         self._settings_layout.setContentsMargins(
-            *self._rv((26, 24, 26, 24), (16, 16, 16, 16), (12, 12, 12, 12)))
-        self._settings_layout.setSpacing(self._rv(29, 20, 16))
-        for card_layout in (self._model_layout, self._audio_layout,
-                            self._appearance_layout, self._behavior_layout):
+            *self._rm((26, 24, 26, 24), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._settings_layout.setSpacing(sp(self._rv(20, 16, 12)))
+        self._settings_bottom.setDirection(V if narrow else H)
+        self._settings_bottom.setSpacing(sp(self._rv(20, 16, 12)))
+        for card_layout in (self._model_layout, self._appearance_layout):
             card_layout.setContentsMargins(
-                *self._rv((66, 45, 54, 45), (36, 28, 32, 28),
-                          (20, 20, 20, 20)))
-        self._layout_theme_grid(2 if narrow else 4)
+                *self._rm((24, 22, 24, 22), (20, 18, 20, 18),
+                          (16, 16, 16, 16)))
+        self._layout_theme_grid(4 if narrow else 2)
 
         # Logs / About
         for page_layout in (self._logs_layout, self._about_layout):
             page_layout.setContentsMargins(
-                *self._rv((34, 32, 34, 32), (20, 20, 20, 20),
+                *self._rm((34, 32, 34, 32), (20, 20, 20, 20),
                           (12, 12, 12, 12)))
-        self._logs_layout.setSpacing(self._rv(14, 10, 8))
-        self._about_layout.setSpacing(self._rv(10, 8, 8))
+        self._logs_layout.setSpacing(sp(self._rv(14, 10, 8)))
+        self._about_layout.setSpacing(sp(self._rv(10, 8, 8)))
 
         # Sidebar rail on narrow windows.
         self.sidebar.set_compact(narrow)
@@ -284,272 +270,214 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(scroll)
         root_layout.addWidget(self.stack, stretch=1)
 
+        # Performance readout lives in the status bar (not on Home).
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.stats_bar = StatsBar()
+        bar.addWidget(self.stats_bar, 1)
+
     # -- Home page ----------------------------------------------------------
+    def _saved_atten_db(self) -> int:
+        try:
+            return int(self.settings.atten_lim_db)
+        except Exception:
+            return -60
+
+    def _divider(self) -> QFrame:
+        line = QFrame()
+        line.setObjectName("divider")
+        line.setFrameShape(QFrame.Shape.HLine)
+        return line
+
     def _build_home_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(26, 26, 26, 26)
-        layout.setSpacing(35)
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, page)
+        layout.setContentsMargins(sp(26), sp(26), sp(26), sp(26))
+        layout.setSpacing(sp(20))
         self._home_layout = layout
+        center = Qt.AlignmentFlag.AlignCenter
 
-        # --- Top card: power + output (input is always VB-Cable) ---
-        top_card = QFrame()
-        top_card.setObjectName("card")
-        top_layout = QVBoxLayout(top_card)
-        top_layout.setContentsMargins(78, 57, 66, 57)
-        top_layout.setSpacing(26)
-        self._top_layout = top_layout
+        # --- Left: dial card (state headline, Start/Stop, strength) ---
+        stage = PatternCard()
+        stage.setObjectName("card")
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(sp(26), sp(28), sp(26), sp(24))
+        stage_layout.setSpacing(sp(8))
+        self._stage_layout = stage_layout
 
-        devices_row = QHBoxLayout()
-        devices_row.setSpacing(24)
-        self._devices_row = devices_row
+        self.home_title = QLabel(HOME_TITLES["ready"])
+        self.home_title.setObjectName("home-title")
+        self.home_title.setAlignment(center)
+        self.home_title.setWordWrap(True)
+        stage_layout.addWidget(self.home_title)
 
-        # Labels start a third of the power button's height below its
-        # top (per the design): offset the whole column downward.
-        # (Lifted again in narrow mode, where the columns stack.)
-        power_third = sp(210) // 3
-        self._power_third = power_third
-
-        power_wrap = QVBoxLayout()
-        power_wrap.setSpacing(8)
-        self._power_wrap = power_wrap
-        power_row = QHBoxLayout()
-        power_row.addStretch()
-        self.power_btn = PowerButton()
-        self.power_btn.toggled_state.connect(self.toggle_processing)
-        power_row.addWidget(self.power_btn)
-        power_row.addStretch()
-        power_wrap.addLayout(power_row)
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel(HOME_READY_SUB)
         self.status_label.setObjectName("status-line")
         self.status_label.setProperty("state", "ready")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setAlignment(center)
         self.status_label.setWordWrap(True)
-        power_wrap.addWidget(self.status_label)
-        devices_row.addLayout(power_wrap, stretch=4)
+        stage_layout.addWidget(self.status_label)
 
-        self.output_selector = DeviceSelector("Output Device", "output")
+        stage_layout.addStretch(1)
+        self.power_btn = DialButton()
+        self.power_btn.toggled_state.connect(self.toggle_processing)
+        self.power_btn.set_strength_db(self._saved_atten_db())
+        self.power_btn.strength_changed.connect(self._on_atten_changed)
+        stage_layout.addWidget(
+            self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        stage_layout.addStretch(1)
+
+        hint = QLabel("Drag the ring to set the reduction strength. "
+                      "It applies the next time you start.")
+        hint.setObjectName("row-sub")
+        hint.setAlignment(center)
+        hint.setWordWrap(True)
+        stage_layout.addWidget(hint)
+        layout.addWidget(stage, stretch=2)
+
+        # --- Right: output device + current setup ---
+        right = QVBoxLayout()
+        right.setSpacing(sp(20))
+        self._right_col = right
+
+        output_card = QFrame()
+        output_card.setObjectName("card")
+        output_layout = QVBoxLayout(output_card)
+        output_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(20))
+        output_layout.setSpacing(sp(12))
+        self.output_selector = DeviceSelector(
+            "Output device", "output", "Where the clean audio plays")
         self.output_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'output_device', id))
-        self._output_wrap = self._lowered(self.output_selector, power_third)
-        devices_row.addWidget(self._output_wrap,
-                              stretch=5,
-                              alignment=Qt.AlignmentFlag.AlignTop)
-
-        top_layout.addLayout(devices_row)
-
-        # Static routing note (no toggle): input always comes from VB-Cable.
+        output_layout.addWidget(self.output_selector)
+        # Input is always VB-Cable: say so once, plainly.
         routing_note = QLabel(
-            "System audio is captured automatically from VB-Cable "
-            "(CABLE Output). If routing fails, Poise stops and shows "
-            "manual steps.")
-        routing_note.setObjectName("card-subtitle")
+            "System audio is captured through VB-Cable (CABLE Output), "
+            "cleaned by Poise, then played here. If routing fails, Poise "
+            "stops and shows manual steps.")
+        routing_note.setObjectName("row-sub")
         routing_note.setWordWrap(True)
-        routing_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        top_layout.addWidget(routing_note)
+        output_layout.addWidget(routing_note)
+        right.addWidget(output_card)
 
-        layout.addWidget(top_card, stretch=55)
-
-        # --- Bottom row: AAD card + stats card ---
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(35)
-        self._bottom_row = bottom_row
-
-        aad_card = QFrame()
-        aad_card.setObjectName("card")
-        aad_layout = QVBoxLayout(aad_card)
-        aad_layout.setContentsMargins(69, 51, 57, 51)
-        aad_layout.setSpacing(16)
-        self._aad_layout = aad_layout
-
-        aad_header = QHBoxLayout()
-        aad_header.setSpacing(14)
-        icon_circle = QFrame()
-        icon_circle.setObjectName("icon-circle")
-        icon_circle.setFixedSize(sp(44), sp(44))
-        icon_layout = QHBoxLayout(icon_circle)
-        icon_layout.setContentsMargins(0, 0, 0, 0)
-        self._badge_icon = self._make_badge_icon()
-        icon_layout.addWidget(self._badge_icon)
-        aad_header.addWidget(icon_circle)
-
-        aad_titles = QVBoxLayout()
-        aad_titles.setSpacing(2)
-        aad_title = QLabel("AAD")
-        aad_title.setObjectName("card-title")
-        aad_titles.addWidget(aad_title)
-        aad_sub = QLabel("Audio Activity detection")
-        aad_sub.setObjectName("card-subtitle")
-        aad_titles.addWidget(aad_sub)
-        aad_header.addLayout(aad_titles)
-        aad_header.addStretch()
-
-        self.aad_switch = ToggleSwitch(checked=self.settings.aad_enabled)
-        aad_header.addWidget(self.aad_switch)
-        aad_layout.addLayout(aad_header)
-
-        divider = QFrame()
-        divider.setObjectName("divider")
-        divider.setFrameShape(QFrame.Shape.HLine)
-        aad_layout.addWidget(divider)
-
-        aad_layout.addStretch(1)
-
-        thresh_title = QLabel("Threshold")
-        thresh_title.setObjectName("section")
-        aad_layout.addWidget(thresh_title)
-
-        thresh_row = QHBoxLayout()
-        thresh_row.setSpacing(14)
-        self.thresh_slider = HoverSlider(Qt.Orientation.Horizontal)
-        self.thresh_slider.setRange(-80, -10)
-        self.thresh_slider.setValue(int(self.settings.aad_threshold))
-        self.thresh_slider.valueChanged.connect(self._on_threshold_changed)
-        self.thresh_slider.setEnabled(self.settings.aad_enabled)
-        thresh_row.addWidget(self.thresh_slider, stretch=1)
-        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
-        self.thresh_val_label.setObjectName("thresh-value")
-        self.thresh_val_label.setFixedWidth(sp(64))
-        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        thresh_row.addWidget(self.thresh_val_label)
-        aad_layout.addLayout(thresh_row)
-
-        self.aad_switch.toggled.connect(self._on_aad_toggled)
-        aad_layout.addStretch(1)
-        bottom_row.addWidget(aad_card, stretch=3)
-
-        stats_card = QFrame()
-        stats_card.setObjectName("card")
-        stats_layout = QVBoxLayout(stats_card)
-        stats_layout.setContentsMargins(6, 6, 6, 6)
-        self.stats_panel = StatsPanel()
-        stats_layout.addWidget(self.stats_panel)
-        bottom_row.addWidget(stats_card, stretch=2)
-
-        layout.addLayout(bottom_row, stretch=45)
+        self.setup_summary = SetupSummary()
+        self.setup_summary.open_settings.connect(
+            lambda: self._on_page_requested(1))
+        right.addWidget(self.setup_summary, stretch=1)
+        layout.addLayout(right, stretch=3)
         return page
 
     # -- Settings page -------------------------------------------------------
     def _build_settings_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(26, 24, 26, 24)
-        layout.setSpacing(29)
+        layout.setContentsMargins(sp(26), sp(24), sp(26), sp(24))
+        layout.setSpacing(sp(20))
         self._settings_layout = layout
 
         title = QLabel("Settings")
         title.setObjectName("page-title")
         layout.addWidget(title)
-        subtitle = QLabel("Models, audio, and app behavior.")
+        subtitle = QLabel("Silence skipping, model, appearance, and app "
+                          "behavior. Reduction strength is the dial on Home.")
         subtitle.setObjectName("page-subtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
-        layout.addSpacing(4)
 
-        # Model card
+        # List card: menu-style rows.
+        list_card = QFrame()
+        list_card.setObjectName("card")
+        list_layout = QVBoxLayout(list_card)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(0)
+
+        self.aad_switch = ToggleSwitch(checked=self.settings.aad_enabled)
+        self.aad_switch.toggled.connect(self._on_aad_toggled)
+        aad_row = SettingsRow(
+            "Skip silence",
+            "Audio Activity detection. Saves CPU while nothing plays.",
+            self.aad_switch)
+
+        thresh_box = QWidget()
+        thresh_layout = QHBoxLayout(thresh_box)
+        thresh_layout.setContentsMargins(0, 0, 0, 0)
+        thresh_layout.setSpacing(sp(14))
+        self.thresh_slider = HoverSlider(Qt.Orientation.Horizontal)
+        self.thresh_slider.setRange(-80, -10)
+        self.thresh_slider.setValue(int(self.settings.aad_threshold))
+        self.thresh_slider.valueChanged.connect(self._on_threshold_changed)
+        self.thresh_slider.setEnabled(self.settings.aad_enabled)
+        self.thresh_slider.setMinimumWidth(sp(230))
+        thresh_layout.addWidget(self.thresh_slider, stretch=1)
+        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
+        self.thresh_val_label.setObjectName("thresh-value")
+        self.thresh_val_label.setFixedWidth(sp(64))
+        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        thresh_layout.addWidget(self.thresh_val_label)
+        thresh_row = SettingsRow(
+            "Silence threshold", "Anything quieter counts as silence.",
+            thresh_box)
+
+        self.tray_switch = ToggleSwitch(
+            checked=self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True))
+        self.tray_switch.toggled.connect(self._on_tray_toggled)
+        tray_row = SettingsRow(
+            "Show tray icon", "Keep Poise in the system tray.",
+            self.tray_switch)
+
+        self.min_tray_switch = ToggleSwitch(
+            checked=self.settings.minimize_to_tray)
+        self.min_tray_switch.toggled.connect(
+            lambda checked: setattr(self.settings, 'minimize_to_tray', checked))
+        min_tray_row = SettingsRow(
+            "Keep running in the tray when closed",
+            "Closing the window does not stop Poise.", self.min_tray_switch)
+
+        rows = [aad_row, thresh_row, tray_row, min_tray_row]
+        for i, row in enumerate(rows):
+            row.set_position(i == 0, i == len(rows) - 1)
+            list_layout.addWidget(row)
+            if i < len(rows) - 1:
+                list_layout.addWidget(self._divider())
+        self._aad_row = aad_row
+        layout.addWidget(list_card)
+
+        # Bottom: model cards + appearance.
+        bottom = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        bottom.setSpacing(sp(20))
+        self._settings_bottom = bottom
+
         model_card = QFrame()
         model_card.setObjectName("card")
         model_layout = QVBoxLayout(model_card)
-        model_layout.setContentsMargins(66, 45, 54, 45)
-        model_layout.setSpacing(10)
+        model_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+        model_layout.setSpacing(sp(16))
         self._model_layout = model_layout
-        model_title = QLabel("Denoising model")
-        model_title.setObjectName("card-title")
-        model_head = QHBoxLayout()
-        model_head.setSpacing(12)
-        model_head.addWidget(PhosphorIcon("cpu", size=20))
-        model_head.addWidget(model_title)
-        model_layout.addLayout(model_head)
-        model_layout.addSpacing(10)
-
-        model_row = QHBoxLayout()
-        model_row.setSpacing(14)
-        self.model_combo = AnimatedComboBox()
-        self.model_combo.setObjectName("settings-combo")
+        model_layout.addLayout(self._card_head(
+            "cpu", "Model", "Takes effect the next time you start."))
+        self.model_cards = ModelCards()
         try:
-            from ..engines import available_models
-            _models = available_models()
-        except Exception:
-            from ..constants import DEFAULT_MODEL as _default
-            _models = [_default]
-        self.model_combo.addItems(_models)
-        try:
-            _saved = self.settings.model
-            if _saved in _models:
-                self.model_combo.setCurrentText(_saved)
+            self.model_cards.setCurrentText(self.settings.model)
         except Exception:
             pass
-        self.model_combo.currentTextChanged.connect(self._on_model_changed)
-        model_row.addWidget(self.model_combo, stretch=1)
-        model_row.addStretch()
-        model_layout.addLayout(model_row)
+        self.model_cards.currentTextChanged.connect(self._on_model_changed)
+        model_layout.addWidget(self.model_cards)
+        model_layout.addStretch(1)
+        bottom.addWidget(model_card, stretch=3)
 
-        self.model_blurb = QLabel()
-        self.model_blurb.setObjectName("card-subtitle")
-        self.model_blurb.setWordWrap(True)
-        model_layout.addWidget(self.model_blurb)
-        self._update_model_blurb(self.model_combo.currentText())
-        layout.addWidget(model_card)
-
-        # Audio card
-        audio_card = QFrame()
-        audio_card.setObjectName("card")
-        audio_layout = QVBoxLayout(audio_card)
-        audio_layout.setContentsMargins(66, 45, 54, 45)
-        audio_layout.setSpacing(10)
-        self._audio_layout = audio_layout
-        audio_title = QLabel("Audio")
-        audio_title.setObjectName("card-title")
-        audio_head = QHBoxLayout()
-        audio_head.setSpacing(12)
-        audio_head.addWidget(PhosphorIcon("sliders", size=20))
-        audio_head.addWidget(audio_title)
-        audio_layout.addLayout(audio_head)
-        audio_layout.addSpacing(10)
-
-        atten_row = QHBoxLayout()
-        atten_row.setSpacing(14)
-        atten_label = QLabel("Max attenuation")
-        atten_row.addWidget(atten_label)
-        atten_row.addStretch()
-        self.atten_slider = HoverSlider(Qt.Orientation.Horizontal)
-        self.atten_slider.setRange(-80, -20)
-        try:
-            atten_val = int(self.settings.atten_lim_db)
-        except Exception:
-            atten_val = -60
-        self.atten_slider.setValue(atten_val)
-        self.atten_slider.valueChanged.connect(self._on_atten_changed)
-        atten_row.addWidget(self.atten_slider, stretch=1)
-        self.atten_val_label = QLabel(f"{atten_val} dB")
-        self.atten_val_label.setObjectName("thresh-value")
-        self.atten_val_label.setFixedWidth(sp(64))
-        self.atten_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        atten_row.addWidget(self.atten_val_label)
-        audio_layout.addLayout(atten_row)
-        atten_note = QLabel("Applies the next time processing starts.")
-        atten_note.setObjectName("card-subtitle")
-        audio_layout.addWidget(atten_note)
-        layout.addWidget(audio_card)
-
-        # Appearance card
         appearance_card = QFrame()
         appearance_card.setObjectName("card")
         appearance_layout = QVBoxLayout(appearance_card)
-        appearance_layout.setContentsMargins(66, 45, 54, 45)
-        appearance_layout.setSpacing(10)
+        appearance_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+        appearance_layout.setSpacing(sp(16))
         self._appearance_layout = appearance_layout
-        appearance_title = QLabel("Appearance")
-        appearance_title.setObjectName("card-title")
-        appearance_head = QHBoxLayout()
-        appearance_head.setSpacing(12)
-        appearance_head.addWidget(PhosphorIcon("palette", size=20))
-        appearance_head.addWidget(appearance_title)
-        appearance_layout.addLayout(appearance_head)
-        appearance_layout.addSpacing(10)
+        appearance_layout.addLayout(self._card_head(
+            "palette", "Appearance", ""))
 
         theme_grid = QGridLayout()
         theme_grid.setContentsMargins(0, 0, 0, 0)
-        theme_grid.setSpacing(14)
+        theme_grid.setSpacing(sp(14))
         self.theme_grid = theme_grid
         self.theme_tiles = []
         self.theme_group = QButtonGroup(self)
@@ -566,7 +494,7 @@ class MainWindow(QMainWindow):
             self.theme_group.addButton(tile, index)
             self.theme_tiles.append(tile)
         appearance_layout.addLayout(theme_grid)
-        self._layout_theme_grid(4)
+        self._layout_theme_grid(2)
         try:
             saved = theme_store.theme_ids().index(self.settings.theme)
         except ValueError:
@@ -577,43 +505,35 @@ class MainWindow(QMainWindow):
         self.theme_group.idClicked.connect(self._on_theme_changed)
 
         self.theme_blurb = QLabel()
-        self.theme_blurb.setObjectName("card-subtitle")
+        self.theme_blurb.setObjectName("row-sub")
         self.theme_blurb.setWordWrap(True)
         appearance_layout.addWidget(self.theme_blurb)
+        appearance_layout.addStretch(1)
         self._update_theme_blurb(self.settings.theme)
-        layout.addWidget(appearance_card)
+        bottom.addWidget(appearance_card, stretch=2)
 
-        # Behavior card
-        behavior_card = QFrame()
-        behavior_card.setObjectName("card")
-        behavior_layout = QVBoxLayout(behavior_card)
-        behavior_layout.setContentsMargins(66, 45, 54, 45)
-        behavior_layout.setSpacing(12)
-        self._behavior_layout = behavior_layout
-        behavior_title = QLabel("Behavior")
-        behavior_title.setObjectName("card-title")
-        behavior_head = QHBoxLayout()
-        behavior_head.setSpacing(12)
-        behavior_head.addWidget(PhosphorIcon("gear", size=20))
-        behavior_head.addWidget(behavior_title)
-        behavior_layout.addLayout(behavior_head)
-        behavior_layout.addSpacing(10)
-
-        self.tray_check = QCheckBox("Show tray icon")
-        self.tray_check.setChecked(
-            self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True))
-        self.tray_check.toggled.connect(self._on_tray_toggled)
-        behavior_layout.addWidget(self.tray_check)
-
-        self.min_tray_check = QCheckBox("Minimize to tray instead of exiting")
-        self.min_tray_check.setChecked(self.settings.minimize_to_tray)
-        self.min_tray_check.toggled.connect(
-            lambda checked: setattr(self.settings, 'minimize_to_tray', checked))
-        behavior_layout.addWidget(self.min_tray_check)
-        layout.addWidget(behavior_card)
-
+        layout.addLayout(bottom)
         layout.addStretch()
+        self._refresh_summary()
         return page
+
+    def _card_head(self, icon: str, title: str, subtitle: str):
+        """Chip + title (+ caption) header row used by Settings cards."""
+        head = QHBoxLayout()
+        head.setSpacing(sp(14))
+        head.addWidget(IconChip(icon))
+        titles = QVBoxLayout()
+        titles.setSpacing(sp(2))
+        name = QLabel(title)
+        name.setObjectName("card-title")
+        titles.addWidget(name)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("row-sub")
+            titles.addWidget(sub)
+        head.addLayout(titles)
+        head.addStretch(1)
+        return head
 
     # -- Logs page ------------------------------------------------------------
     def _build_logs_page(self) -> QWidget:
@@ -630,16 +550,14 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.setSpacing(10)
         self.log_path_label = QLabel()
-        self.log_path_label.setObjectName("card-subtitle")
+        self.log_path_label.setObjectName("log-path")
         bar.addWidget(self.log_path_label, stretch=1)
 
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setObjectName("ghost")
+        refresh_btn = self._icon_button("Refresh", "refresh")
         refresh_btn.clicked.connect(self._refresh_logs)
         bar.addWidget(refresh_btn)
 
-        folder_btn = QPushButton("Open Folder")
-        folder_btn.setObjectName("ghost")
+        folder_btn = self._icon_button("Open Folder", "folder")
         folder_btn.clicked.connect(self._open_log_folder)
         bar.addWidget(folder_btn)
         layout.addLayout(bar)
@@ -687,15 +605,12 @@ class MainWindow(QMainWindow):
         self._about_layout = layout
         layout.addStretch()
 
+        self._about_icon = Emblem()
         icon_path = get_icon_path()
         if icon_path:
-            self._about_icon = QLabel()
-            self._about_icon.setPixmap(
-                QPixmap(icon_path).scaled(
-                    240, 240, Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation))
-            self._about_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(self._about_icon)
+            self._about_icon.set_pixmap(QPixmap(icon_path))
+        layout.addWidget(
+            self._about_icon, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         name = QLabel("Poise Voice Isolator")
         name.setObjectName("page-title")
@@ -703,7 +618,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(name)
 
         version = QLabel(f"v{__version__}")
-        version.setObjectName("card-subtitle")
+        version.setObjectName("about-version")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
@@ -722,13 +637,11 @@ class MainWindow(QMainWindow):
 
         links = QHBoxLayout()
         links.addStretch()
-        github_btn = QPushButton("GitHub")
-        github_btn.setObjectName("ghost")
+        github_btn = self._icon_button("GitHub", "info")
         github_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(GITHUB_URL)))
         links.addWidget(github_btn)
-        issues_btn = QPushButton("Report an issue")
-        issues_btn.setObjectName("ghost")
+        issues_btn = self._icon_button("Report an issue", "doc")
         issues_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
         links.addWidget(issues_btn)
@@ -781,7 +694,7 @@ class MainWindow(QMainWindow):
         # Connect signals
         self.worker.started_processing.connect(self._on_worker_started)
         self.worker.stopped_processing.connect(self._on_worker_stopped)
-        self.worker.stats_updated.connect(self.stats_panel.update_stats)
+        self.worker.stats_updated.connect(self.stats_bar.update_stats)
         self.worker.status_changed.connect(self.update_status)
         self.worker.error_occurred.connect(self.handle_error)
 
@@ -808,12 +721,7 @@ class MainWindow(QMainWindow):
 
         # Restore devices (output only — input is always VB-Cable)
         self.output_selector.selected_device_id = self.settings.output_device
-
-    @staticmethod
-    def _make_badge_icon() -> PhosphorIcon:
-        """AAD badge glyph in the active theme's badge color."""
-        return PhosphorIcon(
-            "waveform", color=theme_store.current()["badge_fg"], size=24)
+        self._refresh_summary()
 
     def _on_theme_changed(self, index: int):
         """Persist the selected theme and apply it live."""
@@ -833,9 +741,13 @@ class MainWindow(QMainWindow):
         theme_store.set_current(theme_id)
         self.setStyleSheet(get_stylesheet())
         clear_icon_cache()
-        self._badge_icon.set_color(theme_store.current()["badge_fg"])
         self.sidebar.refresh_theme()
         self._refresh_app_icon()
+        for chip in self.findChildren(IconChip):
+            chip.refresh_theme()
+        self._tint_icon_buttons()
+        self.power_btn.update()
+        self.stats_bar.update()
         self.update()
 
     def _refresh_app_icon(self):
@@ -851,10 +763,7 @@ class MainWindow(QMainWindow):
         if self.tray is not None:
             self.tray.setIcon(app_icon)
         if hasattr(self, "_about_icon"):
-            self._about_icon.setPixmap(
-                QPixmap(icon_path).scaled(
-                    240, 240, Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation))
+            self._about_icon.set_pixmap(QPixmap(icon_path))
 
     def _on_model_changed(self, model: str):
         """Persist selected denoising engine."""
@@ -862,18 +771,19 @@ class MainWindow(QMainWindow):
             self.settings.model = model
         except Exception:
             pass
-        self._update_model_blurb(model)
+        self._refresh_summary()
 
-    def _update_model_blurb(self, model: str):
-        info = MODEL_INFO.get((model or "").strip().lower(), {})
-        picker = info.get("picker_blurb", "")
-        pipe = info.get("blurb", "")
-        text = " · ".join(part for part in (picker, pipe) if part)
-        self.model_blurb.setText(text)
+    def _refresh_summary(self) -> None:
+        """Keep Home's "Current setup" card in step with Settings."""
+        if not hasattr(self, "setup_summary") or not hasattr(self, "aad_switch"):
+            return
+        self.setup_summary.refresh(
+            self.model_cards.currentText(),
+            self.aad_switch.isChecked(),
+            float(self.thresh_slider.value()))
 
     def _on_atten_changed(self, value: int):
         """Persist attenuation limit (applies on next start)."""
-        self.atten_val_label.setText(f"{value} dB")
         try:
             self.settings.atten_lim_db = float(value)
         except Exception:
@@ -922,7 +832,7 @@ class MainWindow(QMainWindow):
         # Input routing is always automatic via VB-Cable: capture from
         # CABLE Output after switching default playback to CABLE Input.
         self.worker.configure(
-            model=self.model_combo.currentText() if hasattr(self, 'model_combo') else self.settings.model,
+            model=self.model_cards.currentText() or self.settings.model,
             onnx_path=self.settings.onnx_model_path,
             input_device=None,
             output_device=self.output_selector.selected_device_id,
@@ -934,8 +844,10 @@ class MainWindow(QMainWindow):
 
     def _set_controls_enabled(self, enabled: bool):
         self.output_selector.setEnabled(enabled)
-        if hasattr(self, 'model_combo'):
-            self.model_combo.setEnabled(enabled)
+        self.output_selector.set_subtitle(
+            "Where the clean audio plays" if enabled
+            else "Locked while running")
+        self.model_cards.setEnabled(enabled)
 
     def _on_worker_started(self):
         """Called when worker successfully starts."""
@@ -973,7 +885,7 @@ class MainWindow(QMainWindow):
 
         # Re-enable controls
         self._set_controls_enabled(True)
-        self.stats_panel.reset()
+        self.stats_bar.reset()
 
         if not self._error_state:
             self.update_status("Ready")
@@ -989,12 +901,14 @@ class MainWindow(QMainWindow):
         self.thresh_val_label.setText(f"{value} dB")
         if not self.worker.is_running:
             self.settings.aad_threshold = float(value)
+        self._refresh_summary()
         # TODO: Support live updates to worker
 
     def _on_aad_toggled(self, checked):
         """Handle AAD switch toggle."""
         self.thresh_slider.setEnabled(checked)
         self.settings.aad_enabled = checked
+        self._refresh_summary()
 
     def update_status(self, message: str):
         """Update status line message."""
@@ -1008,8 +922,6 @@ class MainWindow(QMainWindow):
                 message = MSG_DEVICE_SWITCHING_FIRST_TIME
         except Exception:
             pass
-        self.status_label.setText(message)
-
         # Update status state
         state = "ready"
         if "Error" in message:
@@ -1020,11 +932,32 @@ class MainWindow(QMainWindow):
                   "Installing", "Setting up")):
             state = "processing"
 
+        title_key, sub = self._home_copy(message, state)
+        self.home_title.setText(HOME_TITLES[title_key])
+        self.status_label.setText(sub)
         self.status_label.setProperty("state", state)
         self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
+        word = {"ready": "standby", "error": "error"}.get(
+            state, "isolating" if title_key == "isolating" else "working")
+        self.stats_bar.set_state(state, word)
 
         _logger.info(f"Status update: {message}")
+
+    @staticmethod
+    def _home_copy(message: str, state: str):
+        """(HOME_TITLES key, subtitle) for a worker status message."""
+        if state == "error":
+            return "error", message
+        if state == "ready":
+            return "ready", (
+                HOME_READY_SUB if message.strip() in ("", "Ready") else message)
+        lowered = message.lower()
+        if lowered.startswith("isolating"):
+            return "isolating", HOME_ISOLATING_SUB
+        if lowered.startswith("stopping"):
+            return "stopping", message
+        return "starting", message
 
     def _start_status_pulse(self) -> None:
         """Breathe the status line while isolating (live-indicator feel)."""

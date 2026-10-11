@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayo
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from .phosphor import PhosphorIcon
+from .chip import IconChip
 from .combo import AnimatedComboBox
 from ..scaling import sp
 
@@ -28,13 +29,15 @@ class DeviceSelector(QWidget):
     
     device_changed = pyqtSignal(object)  # Emits device ID (int or None)
     
-    def __init__(self, label: str, device_type: str = "input", parent=None):
+    def __init__(self, label: str, device_type: str = "input",
+                 subtitle: str = "", parent=None):
         """
         Initialize device selector.
         
         Args:
-            label: Label text for the selector
+            label: Title text for the selector
             device_type: "input" or "output"
+            subtitle: One-line caption under the title
             parent: Parent widget
         """
         super().__init__(parent)
@@ -42,24 +45,32 @@ class DeviceSelector(QWidget):
         self._device_type = device_type
         self._devices: List[Dict[str, Any]] = []
         
-        self._setup_ui(label)
+        self._setup_ui(label, subtitle)
         self.refresh_devices()
     
-    def _setup_ui(self, label: str):
-        """Setup the widget UI (icon + caption row, underline combo)."""
+    def _setup_ui(self, label: str, subtitle: str = ""):
+        """Setup the widget UI (icon chip + title row, boxed combo)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(14)
 
         header = QHBoxLayout()
-        header.setSpacing(20)
-        header.addWidget(PhosphorIcon(
-            "monitor" if self._device_type == "input" else "speaker", size=22))
-        self._label = QLabel(label.upper())
+        header.setSpacing(14)
+        self._chip = IconChip(
+            "monitor" if self._device_type == "input" else "speaker")
+        header.addWidget(self._chip)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        self._label = QLabel(label)
         self._label.setObjectName("device-title")
         self._label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        header.addWidget(self._label)
+        titles.addWidget(self._label)
+        self._subtitle = QLabel(subtitle)
+        self._subtitle.setObjectName("row-sub")
+        self._subtitle.setVisible(bool(subtitle))
+        titles.addWidget(self._subtitle)
+        header.addLayout(titles)
         header.addStretch()
 
         self._refresh_btn = QPushButton()
@@ -159,6 +170,14 @@ class DeviceSelector(QWidget):
         # If not found, select default
         self._combo.setCurrentIndex(0)
     
+    def set_subtitle(self, text: str) -> None:
+        """Change the caption (e.g. the lock note while running)."""
+        self._subtitle.setText(text)
+        self._subtitle.setVisible(bool(text))
+
+    def refresh_theme(self) -> None:
+        self._chip.refresh_theme()
+
     def set_enabled(self, enabled: bool):
         """Enable or disable the selector."""
         self._combo.setEnabled(enabled)

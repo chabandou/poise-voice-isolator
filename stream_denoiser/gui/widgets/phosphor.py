@@ -130,3 +130,13 @@ class PhosphorIcon(QLabel):
         painter.drawPixmap(0, 0, _tinted_pixmap(
             self._name, self._size, color))
         painter.end()
+
+
+def icon(name: str, size: int = 16, color: str = None):
+    """QIcon of a Phosphor glyph (for buttons), tinted and scaled like
+    PhosphorIcon. Re-create it after a theme switch to re-tint."""
+    from PyQt6.QtGui import QIcon
+    if name not in FILES:
+        name = "waveform"
+    return QIcon(_tinted_pixmap(
+        name, isp(size), color or current_theme()["accent"]))

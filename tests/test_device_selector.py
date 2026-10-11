@@ -39,24 +39,36 @@ def _header_layout(selector):
     raise AssertionError("header row not found")
 
 
+def _flat_widgets(layout):
+    """Widgets of a layout, descending into nested layouts."""
+    out = []
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item.widget() is not None:
+            out.append(item.widget())
+        elif item.layout() is not None:
+            out.extend(_flat_widgets(item.layout()))
+    return out
+
+
 def test_title_appears_once_and_sits_left(app):
     from stream_denoiser.gui import scaling
     from stream_denoiser.gui.widgets.device_selector import DeviceSelector
     try:
         scaling.set_scale_factor(1.5)
-        selector = DeviceSelector("Input Device", "input")
+        selector = DeviceSelector("Input Device", "input", "Caption")
         selector.resize(1055, 90)
         selector.show()
         _pump(app)
         header = _header_layout(selector)
-        refs = sum(1 for i in range(header.count())
-                   if header.itemAt(i).widget() is selector._label)
+        refs = sum(1 for w in _flat_widgets(header) if w is selector._label)
         assert refs == 1, "title label must be added exactly once"
-        items = [header.itemAt(i).widget() for i in range(header.count())]
-        icon = next(w for w in items if w is not None
-                    and w is not selector._label)
-        gap = selector._label.x() - (icon.x() + icon.width())
+        # The icon chip leads the row; the title sits one spacing after it.
+        chip = selector._chip
+        assert header.itemAt(0).widget() is chip
+        gap = selector._label.x() - (chip.x() + chip.width())
         assert gap == header.spacing(), (gap, header.spacing())
+        assert selector._label.text() == "Input Device"
     finally:
         scaling.init_scaling()
     selector.close()

@@ -1,7 +1,8 @@
 """Responsive layout modes (needs Qt; skipped without it).
 
-Wide keeps the dashboard mockup; compact tightens chrome; narrow stacks
-rows, re-grids theme tiles, and collapses the sidebar to an icon rail.
+Wide puts the dial card beside the cards; compact tightens chrome;
+narrow stacks the cards, re-grids theme tiles, shrinks the dial and
+collapses the sidebar to an icon rail.
 """
 import os
 import time
@@ -43,20 +44,22 @@ def _wide(app, window, w=1250, h=760):
     _pump(app)
 
 
-def test_wide_mode_is_the_mockup(app):
-    from PyQt6.QtWidgets import QBoxLayout
+def test_wide_mode_is_the_layout(app):
+    from PyQt6.QtWidgets import QBoxLayout, QLabel
     from stream_denoiser.gui.scaling import sp
     window = _make_window(app)
     _wide(app, window)
     assert window._resp == "wide"
-    assert window._devices_row.direction() == QBoxLayout.Direction.LeftToRight
-    assert window._bottom_row.direction() == QBoxLayout.Direction.LeftToRight
+    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert (window._settings_bottom.direction()
+            == QBoxLayout.Direction.LeftToRight)
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     m = window._home_layout.contentsMargins()
-    assert (m.left(), m.top()) == (26, 26)
+    assert (m.left(), m.top()) == (sp(26), sp(26))
+    assert window.power_btn.width() == sp(300)
     # Routing note explains automatic VB-Cable capture (no input selector).
-    notes = [l for l in window.findChildren(type(window.status_label))
+    notes = [l for l in window.findChildren(QLabel)
              if "VB-Cable" in l.text()]
     assert notes, "expected automatic VB-Cable routing note"
     window.close()
@@ -64,51 +67,50 @@ def test_wide_mode_is_the_mockup(app):
 
 def test_compact_mode_tightens_chrome(app):
     from PyQt6.QtWidgets import QBoxLayout
+    from stream_denoiser.gui.scaling import sp
     window = _make_window(app)
     _wide(app, window, w=1000, h=700)
     assert window._resp == "compact"
-    assert window._devices_row.direction() == QBoxLayout.Direction.LeftToRight
-    assert window._bottom_row.direction() == QBoxLayout.Direction.LeftToRight
+    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert (window._settings_bottom.direction()
+            == QBoxLayout.Direction.LeftToRight)
     assert not window.sidebar.is_compact
     m = window._home_layout.contentsMargins()
-    assert (m.left(), m.top()) == (16, 16)
-    assert window._home_layout.spacing() == 24
+    assert (m.left(), m.top()) == (sp(16), sp(16))
+    assert window._home_layout.spacing() == sp(16)
+    assert window.power_btn.width() == sp(270)
     window.close()
 
 
 def test_narrow_mode_reflows(app):
     from PyQt6.QtWidgets import QBoxLayout
+    from PyQt6.QtCore import QPoint
     from stream_denoiser.gui.scaling import sp
     window = _make_window(app)
     _wide(app, window, w=720, h=640)
     assert window._resp == "narrow"
-    assert window._devices_row.direction() == QBoxLayout.Direction.TopToBottom
-    assert window._bottom_row.direction() == QBoxLayout.Direction.TopToBottom
-    # Stacked order: power button first, then output (input is automatic).
-    row = window._devices_row
-    assert row.itemAt(0).layout() is window._power_wrap
-    assert row.itemAt(1).widget() is window._output_wrap
+    assert window._home_layout.direction() == QBoxLayout.Direction.TopToBottom
+    assert (window._settings_bottom.direction()
+            == QBoxLayout.Direction.TopToBottom)
+    assert window.power_btn.width() == sp(240)
     # Icon rail.
     assert window.sidebar.is_compact
     assert window.sidebar.width() == sp(68)
     for btn in window.sidebar._buttons:
         assert not btn._label.isVisible()
-    # Lowered output column lifts when stacked.
-    assert window._output_wrap.layout().contentsMargins().top() == 0
-    # Theme tiles wrap 2x2 (settings page must be visible to lay out).
+    # Theme tiles wrap 4 across when the cards stack.
     window._on_page_requested(1)
     _pump(app)
     tiles = window.theme_tiles
     assert tiles[1].y() == tiles[0].y()
-    assert tiles[2].y() > tiles[0].y()
+    assert tiles[3].y() == tiles[0].y()
     window._on_page_requested(0)
     _pump(app)
-    # Indicator still tracks after the reflow.
+    # The sliding highlight still tracks after the reflow.
     window.sidebar.set_active_page(2)
     _pump(app)
     ind = window.sidebar._indicator.geometry()
     btn = window.sidebar._buttons[2]
-    from PyQt6.QtCore import QPoint
     top = btn.mapTo(window.sidebar, QPoint(0, 0)).y()
     assert abs((top + btn.height() / 2)
                - (ind.y() + ind.height() / 2)) < 2
@@ -123,23 +125,22 @@ def test_roundtrip_restores_wide(app):
     assert window._resp == "narrow"
     _wide(app, window, w=1250, h=760)
     assert window._resp == "wide"
-    assert window._devices_row.direction() == QBoxLayout.Direction.LeftToRight
-    assert window._bottom_row.direction() == QBoxLayout.Direction.LeftToRight
-    # Wide order restored: power, output.
-    row = window._devices_row
-    assert row.itemAt(0).layout() is window._power_wrap
-    assert row.itemAt(1).widget() is window._output_wrap
+    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert (window._settings_bottom.direction()
+            == QBoxLayout.Direction.LeftToRight)
+    assert window.power_btn.width() == sp(300)
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     assert window.sidebar._buttons[0]._label.isVisible()
+    # Theme tiles back to two across (2x2 inside the Appearance card).
     window._on_page_requested(1)
     _pump(app)
     tiles = window.theme_tiles
     assert tiles[1].x() > tiles[0].x()
     assert tiles[1].y() == tiles[0].y()
+    assert tiles[2].y() > tiles[0].y()
     window._on_page_requested(0)
     _pump(app)
-    assert window._output_wrap.layout().contentsMargins().top() > 0
     window.close()
 
 

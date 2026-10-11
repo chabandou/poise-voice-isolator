@@ -88,3 +88,43 @@ def test_mono_is_cyan_free():
     for cyan in ("#5fd5eb", "#22d3ee", "95, 213, 235", "34, 211, 238"):
         assert cyan not in css
     assert "201, 209, 219" in css  # mono accent rgb
+
+
+def _rgb(hex_color):
+    return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _luminance(hex_color):
+    def lin(c):
+        c /= 255.0
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in _rgb(hex_color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a, b):
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_secondary_matches_its_rgb_and_stays_legible():
+    for theme_id in themes.theme_ids():
+        p = themes.get_theme(theme_id)
+        assert ", ".join(str(c) for c in _rgb(p["secondary"])) \
+            == p["secondary_rgb"], theme_id
+        # Chips, ring and markers must read against the card surface.
+        assert _contrast(p["secondary"], p["card"]) >= 4.5, theme_id
+
+
+def test_secondary_is_a_distinct_second_colour():
+    for theme_id in themes.theme_ids():
+        p = themes.get_theme(theme_id)
+        a, s = _rgb(p["accent"]), _rgb(p["secondary"])
+        distance = sum((x - y) ** 2 for x, y in zip(a, s)) ** 0.5
+        assert distance >= 45, (theme_id, distance)
+
+
+def test_secondary_reaches_the_stylesheet():
+    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+    assert "#E8C468" in css                      # model-card checked border
+    assert "232, 196, 104" in css                # chip wash

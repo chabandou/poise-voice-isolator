@@ -22,12 +22,16 @@ MODEL_INFO = {
         "label": "DeepFilterNet3",
         # Picker modal: quality/CPU tradeoff.
         "picker_blurb": "Music/voice isolation · medium CPU load",
+        # GUI model card: plain-language summary.
+        "card_blurb": "Removes music and keeps voices. Medium CPU use.",
         # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",
         "picker_blurb": "Worse isolation · lower CPU load",
+        "card_blurb": "Reduces steady noise like fans and hiss, but not "
+                      "music. Light CPU use.",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
     },
 }

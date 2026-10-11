@@ -1,8 +1,12 @@
 """
 Poise Voice Isolator - Sidebar Navigation
 
-Left navigation rail matching the mockup: logo row, nav buttons with an
-active indicator, and a version label pinned to the bottom.
+Left navigation rail: logo row, nav buttons with a sliding active
+highlight, and a version label pinned to the bottom.
+
+The highlight is a soft accent wash that fades out to the right and
+glides between items. Set INDICATOR_EDGE_BAR = True for the older thin
+bar flush against the window edge instead.
 """
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
@@ -15,6 +19,9 @@ from ..scaling import isp, sp
 from ..themes import current as current_theme
 from ..utils import get_icon_path
 from ... import __version__
+
+
+INDICATOR_EDGE_BAR = False
 
 
 class NavButton(QPushButton):
@@ -34,7 +41,7 @@ class NavButton(QPushButton):
             self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(26, 0, 8, 0)
+        self._layout.setContentsMargins(14, 0, 8, 0)
         self._layout.setSpacing(12)
         self._icon = PhosphorIcon(
             icon, color=current_theme()["nav_muted"], size=20)
@@ -58,7 +65,7 @@ class NavButton(QPushButton):
             self._layout.setAlignment(
                 self._icon, Qt.AlignmentFlag.AlignCenter)
         else:
-            self._layout.setContentsMargins(26, 0, 8, 0)
+            self._layout.setContentsMargins(14, 0, 8, 0)
             self._layout.setAlignment(
                 self._icon,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -72,7 +79,7 @@ class NavButton(QPushButton):
         self.setChecked(active)
         self.setProperty("active", active)
         self._icon.set_color(
-            palette["accent_light"] if active else palette["nav_muted"])
+            palette["accent"] if active else palette["nav_muted"])
         # Repolish the label too: polishing only the button leaves the
         # child's QSS color (nav-text) frozen on its previous state.
         for widget in (self, self._label):
@@ -102,13 +109,13 @@ class Sidebar(QFrame):
         self.setFixedWidth(sp(self.FULL_W))
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 24, 16, 22)
+        layout.setContentsMargins(12, 24, 12, 22)
         layout.setSpacing(8)
 
         # Logo row (keeps its 16px from the edge via its own margins).
         self._logo_widget = QWidget()
         logo_widget_layout = QHBoxLayout(self._logo_widget)
-        logo_widget_layout.setContentsMargins(16, 0, 0, 0)
+        logo_widget_layout.setContentsMargins(10, 0, 0, 0)
         logo_widget_layout.setSpacing(12)
         self._logo_layout = logo_widget_layout
         self._logo_spacer = False
@@ -159,7 +166,10 @@ class Sidebar(QFrame):
         # positioned — never in the layout — so it animates for free.
         self._indicator = QFrame(self)
         self._indicator.setObjectName("nav-indicator")
-        self._indicator.setFixedWidth(max(2, sp(3)))
+        self._indicator.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        if INDICATOR_EDGE_BAR:
+            self._indicator.setFixedWidth(max(2, sp(3)))
         self._indicator_anim = None
         self._active_index = 0
         self._refresh_indicator_style()
@@ -209,6 +219,9 @@ class Sidebar(QFrame):
             btn.set_compact(compact)
         # Logo mark stays (no text); center it with a balancing spacer.
         self._logo_label.setVisible(not compact)
+        # The rail is narrower than icon + gutter: drop the left inset so
+        # the centred logo is not clipped.
+        self._logo_layout.setContentsMargins(0 if compact else 10, 0, 0, 0)
         if compact and not self._logo_spacer:
             self._logo_layout.insertStretch(0, 1)
             self._logo_spacer = True
@@ -239,11 +252,20 @@ class Sidebar(QFrame):
     # -- sliding indicator ---------------------------------------------------
     def _refresh_indicator_style(self) -> None:
         try:
-            accent = current_theme()["accent"]
-            radius = max(1, sp(3) // 2)
+            palette = current_theme()
+            if INDICATOR_EDGE_BAR:
+                radius = max(1, sp(3) // 2)
+                self._indicator.setStyleSheet(
+                    f"QFrame#nav-indicator {{ background-color: "
+                    f"{palette['accent']}; border: none; "
+                    f"border-radius: {radius}px; }}")
+                return
+            rgb = palette["accent_rgb"]
             self._indicator.setStyleSheet(
-                f"QFrame#nav-indicator {{ background-color: {accent}; "
-                f"border: none; border-radius: {radius}px; }}")
+                "QFrame#nav-indicator { background: qlineargradient("
+                "x1:0, y1:0, x2:1, y2:0, "
+                f"stop:0 rgba({rgb}, 0.22), stop:1 rgba({rgb}, 0.0)); "
+                f"border: none; border-radius: {sp(10)}px; }}")
         except Exception:
             pass
 
@@ -253,8 +275,10 @@ class Sidebar(QFrame):
             # Buttons live in the nav cluster: map to sidebar coords.
             # The strip spans the full row height like a left border.
             top_left = btn.mapTo(self, QPoint(0, 0))
-            w = self._indicator.width() or max(2, sp(3))
-            return 0, top_left.y(), w, btn.height()
+            if INDICATOR_EDGE_BAR:
+                w = self._indicator.width() or max(2, sp(3))
+                return 0, top_left.y(), w, btn.height()
+            return top_left.x(), top_left.y(), btn.width(), btn.height()
         except Exception:
             return 0, 0, max(2, sp(3)), 24
 
@@ -268,16 +292,22 @@ class Sidebar(QFrame):
             x, y, w, h = self._indicator_target()
             self._indicator.setGeometry(x, y, w, h)
             self._indicator.show()
-            self._indicator.raise_()
+            self._send_indicator_back()
         except Exception:
             pass
+
+    def _send_indicator_back(self) -> None:
+        if INDICATOR_EDGE_BAR:
+            self._indicator.raise_()
+        else:
+            self._indicator.lower()
 
     def _slide_indicator(self, animated: bool = True) -> None:
         try:
             from ..animations import motion_ok
             x, y, w, h = self._indicator_target()
             self._indicator.show()
-            self._indicator.raise_()
+            self._send_indicator_back()
             if not animated or not motion_ok():
                 self._indicator.setGeometry(x, y, w, h)
                 return
