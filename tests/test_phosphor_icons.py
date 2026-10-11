@@ -28,6 +28,7 @@ EXPECTED = {
     "palette": "palette",
     "cpu": "cpu",
     "sliders": "sliders-horizontal",
+    "heart": "heart",
 }
 
 

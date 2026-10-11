@@ -66,6 +66,8 @@ HOME_ISOLATING_SUB = "Music and noise are removed."
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
 VB_AUDIO_URL = "https://vb-audio.com/"
+# Where the About page's Donate button goes. Empty hides the button.
+DONATE_URL = ""
 
 
 class MainWindow(QMainWindow):
@@ -146,22 +148,23 @@ class MainWindow(QMainWindow):
         """Responsive margins as scaled pixels (a 4-tuple per mode)."""
         return tuple(sp(v) for v in self._rv(wide, compact, narrow))
 
-    def _icon_button(self, text: str, icon_name: str) -> QPushButton:
-        """Ghost button with a secondary-tinted Phosphor icon."""
+    def _icon_button(self, text: str, icon_name: str,
+                     color_key: str = "secondary") -> QPushButton:
+        """Ghost button with a theme-tinted Phosphor icon (palette key)."""
         from PyQt6.QtCore import QSize
         from .scaling import isp
         btn = QPushButton(text)
         btn.setObjectName("ghost")
         btn.setIconSize(QSize(isp(16), isp(16)))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._icon_buttons.append((btn, icon_name))
+        self._icon_buttons.append((btn, icon_name, color_key))
         self._tint_icon_buttons()
         return btn
 
     def _tint_icon_buttons(self) -> None:
-        color = theme_store.current()["secondary"]
-        for btn, name in self._icon_buttons:
-            btn.setIcon(phosphor_icon(name, 16, color))
+        palette = theme_store.current()
+        for btn, name, key in self._icon_buttons:
+            btn.setIcon(phosphor_icon(name, 16, palette[key]))
 
     # -- responsive ----------------------------------------------------------
     def resizeEvent(self, event):  # noqa: N802 (Qt override)
@@ -649,6 +652,18 @@ class MainWindow(QMainWindow):
         issues_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
         links.addWidget(issues_btn)
+        # Poise is free: an inverse (light-filled) button stands apart from
+        # the ghost links. Hidden until DONATE_URL is set.
+        donate_btn = self._icon_button("Donate", "heart", color_key="bg")
+        donate_btn.setObjectName("donate")
+        donate_btn.setToolTip(
+            "Poise is free. If it helps you, you can support its "
+            "development.")
+        donate_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)))
+        donate_btn.setVisible(bool(DONATE_URL))
+        self.donate_btn = donate_btn
+        links.addWidget(donate_btn)
         links.addStretch()
         layout.addLayout(links)
 

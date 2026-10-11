@@ -451,6 +451,23 @@ QPushButton#ghost:pressed {
     background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
 }
 
+/* Donate: the ghost button's inverse (light fill, dark label). */
+QPushButton#donate {
+    background-color: {text};
+    border: 1px solid {text};
+    border-radius: 10px;
+    padding: 9px 18px;
+    color: {bg};
+    font-weight: 700;
+    font-size: 13px;
+}
+
+QPushButton#donate:hover,
+QPushButton#donate:pressed {
+    background-color: {secondary};
+    border-color: {secondary};
+}
+
 QPushButton#icon-btn {
     background-color: transparent;
     border: none;

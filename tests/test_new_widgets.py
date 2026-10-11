@@ -339,3 +339,44 @@ def test_about_credits_vb_audio_with_an_embedded_link(app, monkeypatch):
     label.linkHovered.emit("")
     assert "text-decoration:none" in label.text()
     window.close()
+
+
+def test_donate_button_is_hidden_until_a_url_is_set(app):
+    from stream_denoiser.gui import main_window as mw
+    assert mw.DONATE_URL == "" or mw.DONATE_URL.startswith("https://")
+    window = mw.MainWindow()
+    assert window.donate_btn.isHidden() == (not mw.DONATE_URL)
+    window.close()
+
+
+def test_donate_button_is_the_inverse_of_the_ghost_buttons(app, monkeypatch):
+    import re
+    from stream_denoiser.gui import main_window as mw
+    from stream_denoiser.gui import themes
+    monkeypatch.setattr(mw, "DONATE_URL", "https://example.org/donate")
+    window = mw.MainWindow()
+    window.show()
+    _pump(app)
+    btn = window.donate_btn
+    assert not btn.isHidden()
+    assert btn.text() == "Donate" and btn.objectName() == "donate"
+
+    css = window.styleSheet().lower()
+    pal = themes.current()
+    donate = re.search(r"qpushbutton#donate\s*\{([^}]*)\}", css).group(1)
+    ghost = re.search(r"qpushbutton#ghost\s*\{([^}]*)\}", css).group(1)
+    # Ghost: translucent dark fill, light label. Donate: light fill, dark label.
+    assert f"background-color: {pal['text'].lower()}" in donate
+    assert re.search(rf"[^-]color: {pal['bg'].lower()}", donate)
+    assert re.search(rf"[^-]color: {pal['text'].lower()}", ghost)
+    # Heart icon is dark (palette 'bg'), re-tinted per theme, and hover
+    # fades to the secondary colour.
+    assert (btn, "heart", "bg") in window._icon_buttons
+    assert btn._hover_fade is not None
+
+    opened = []
+    monkeypatch.setattr(mw.QDesktopServices, "openUrl",
+                        staticmethod(lambda url: opened.append(url.toString())))
+    btn.click()
+    assert opened == ["https://example.org/donate"]
+    window.close()
