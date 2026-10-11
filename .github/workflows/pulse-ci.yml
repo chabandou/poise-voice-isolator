@@ -28,8 +28,11 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test deps
+        # Runtime deps minus the GUI: stream_denoiser/__init__ pulls in the
+        # resampler (scipy, samplerate) and the engines (onnxruntime).
         run: |
-          pip install pytest numpy pulsectl
+          grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
+          pip install -r /tmp/requirements-ci.txt pytest pulsectl
       - name: Run unit tests (no server needed)
         run: |
           python -m pytest tests/test_pulse_simple.py tests/test_linux_monitor.py tests/test_health.py -v
@@ -38,13 +41,17 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
+    env:
+      # The runner mounts /github/home, which root in the container cannot
+      # use: PulseAudio then fails to take its autospawn lock.
+      HOME: /root
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-pytest
+            pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-scipy python3-pytest
           test -f /usr/lib/x86_64-linux-gnu/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)
       - name: Start headless PulseAudio
@@ -52,7 +59,9 @@ jobs:
           pulseaudio --start --exit-idle-time=-1 --disallow-exit
           pactl info
       - name: Install python deps
-        run: pip3 install --break-system-packages pulsectl pytest numpy || pip3 install pulsectl pytest numpy
+        run: |
+          grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
+          pip3 install --break-system-packages -r /tmp/requirements-ci.txt pulsectl pytest
       - name: Unit + integration tests
         run: python3 -m pytest tests/ -v -m "not integration or integration"
 
@@ -60,20 +69,31 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: fedora:41
+    env:
+      HOME: /root
+      XDG_RUNTIME_DIR: /tmp/xdg-runtime
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
-          dnf install -y pipewire pipewire-pulseaudio pulseaudio-utils pulse-libs python3 python3-pip python3-numpy python3-pytest
+          dnf install -y pipewire pipewire-pulseaudio wireplumber dbus-daemon pulseaudio-utils pulseaudio-libs python3 python3-pip python3-numpy python3-scipy python3-pytest
           test -f /usr/lib64/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)
       - name: Start PipeWire with pipewire-pulse
         run: |
+          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           pipewire &
+          sleep 1
+          wireplumber &
           pipewire-pulse &
           sleep 3
           pactl info
       - name: Install python deps
-        run: pip3 install pulsectl pytest numpy
+        run: |
+          grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
+          pip3 install -r /tmp/requirements-ci.txt pulsectl pytest
       - name: Unit + integration tests
         run: python3 -m pytest tests/ -v
