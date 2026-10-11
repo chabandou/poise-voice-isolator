@@ -50,8 +50,11 @@ QPushButton#nav {
     font-weight: 500;
 }
 
+/* Hover mirrors the active highlight's shape: a wash fading out to the
+   right (neutral tone, softer than the accent wash of the active item). */
 QPushButton#nav:hover {
-    background-color: rgba(148, 163, 184, 0.08);
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(148, 163, 184, 0.17), stop:1 rgba(148, 163, 184, 0.0));
     color: {text};
 }
 

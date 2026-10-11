@@ -3,6 +3,7 @@
 Regression: sidebar items only showed their hover wash on the thin
 margin not covered by the icon/label children, so hover seemed to work
 "sometimes". Child widgets inside buttons must not take mouse events.
+The sidebar wash itself fades out to the right (like the active item's).
 """
 import os
 import time
@@ -64,15 +65,15 @@ def _hover_changes_pixel(app, root, widget, pt):
     return hovered != base
 
 
-def test_nav_hover_paints_over_icon_label_and_margin(app):
+def test_nav_hover_paints_over_icon_and_label(app):
     from PyQt6.QtCore import QPoint
     from stream_denoiser.gui.widgets.sidebar import NavButton
     nav = NavButton(1, "gear", "Settings")      # inactive item
     root = _styled_root(app, nav)
     h = nav.height() // 2
+    # The wash fades out toward the right, so probe where it is visible.
     for where, pt in (("icon", QPoint(24, h)),
-                      ("label", QPoint(90, h)),
-                      ("margin", QPoint(nav.width() - 4, h))):
+                      ("label", QPoint(90, h))):
         assert _hover_changes_pixel(app, root, nav, pt), where
     root.close()
 
