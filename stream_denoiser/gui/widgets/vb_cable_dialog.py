@@ -153,6 +153,8 @@ class VbCableDialog(QDialog):
         foot.addWidget(close_btn)
         root.addLayout(foot)
         self.cable_btn = cable_btn
+        from ..animations import install_hover_fades
+        install_hover_fades(self)
 
 
 def show_vb_cable_error(parent, error_message: str) -> None:

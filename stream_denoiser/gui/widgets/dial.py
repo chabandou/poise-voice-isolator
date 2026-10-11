@@ -21,6 +21,7 @@ from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 
 from .power_button import PowerButton
+from ..animations import Blend
 from ..fonts import heading_family
 from ..scaling import sp
 from ..themes import current as current_theme
@@ -101,6 +102,7 @@ class DialButton(PowerButton):
         self._drag_frac = 0.0
         self._key_focus = False
         self._hot = False
+        self._hot_blend = Blend(self, self.update, 140)  # head needle glow
         self._wheel_acc = 0
         self.setAccessibleName("Start isolating")
         self.setToolTip(
@@ -190,6 +192,7 @@ class DialButton(PowerButton):
     def _update_hover_cursor(self, pos) -> None:
         zone = self._zone(pos)
         self._hot = zone in ("ring", "disc")   # head needle lights on both
+        self._sync_hot()
         if self._dragging:
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif zone == "ring":
@@ -204,6 +207,7 @@ class DialButton(PowerButton):
         if (event.button() == Qt.MouseButton.LeftButton and self.isEnabled()
                 and self._zone(event.position()) == "ring"):
             self._dragging = True
+            self._sync_hot()
             self._drag_frac = strength_fraction(self._strength_db)
             self._drag_to(event.position())
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -222,13 +226,18 @@ class DialButton(PowerButton):
     def mouseReleaseEvent(self, event):  # noqa: N802 (Qt override)
         if self._dragging:
             self._dragging = False
-            self._update_hover_cursor(event.position())
+            self._update_hover_cursor(event.position())   # re-syncs the glow
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
+    def _sync_hot(self) -> None:
+        self._hot_blend.set_target(1.0 if (self._hot or self._dragging)
+                                   else 0.0)
+
     def leaveEvent(self, event):  # noqa: N802 (Qt override)
         self._hot = False
+        self._sync_hot()
         self.update()
         super().leaveEvent(event)
 
@@ -325,7 +334,10 @@ class DialButton(PowerButton):
 
         # Tick ring: lit ticks show the reduction strength.
         lit = int(round(TICKS * strength_fraction(self._strength_db)))
-        head_hot = self._dragging or self._hot
+        # Head needle: always bright while running, otherwise it fades up
+        # on hover/drag and back down on leave.
+        head_t = 1.0 if active else (
+            1.0 if self._dragging else self._hot_blend.value)
         for i in range(TICKS):
             angle, r_in, r_out = tick_geometry(i)
             width = 4.0
@@ -335,8 +347,9 @@ class DialButton(PowerButton):
                     col.setAlpha(int(205 + 50 * self._breathe))
             else:
                 col = QColor(unlit)
-            if i == lit - 1 and lit > 0 and (active or head_hot):
-                col, width = QColor(text), 5.0
+            if i == lit - 1 and lit > 0 and head_t > 0.01:
+                col = self._blend(col, QColor(text), head_t)
+                width = 4.0 + head_t
             if self._is_transitioning:
                 d = abs(((angle - self._spin) + 180.0) % 360.0 - 180.0)
                 if d < 28.0:
@@ -380,10 +393,10 @@ class DialButton(PowerButton):
         big = QFont(heading_family())
         big.setPixelSize(30)
         big.setWeight(QFont.Weight.Bold)
-        self._centered_text(p, f"{self._strength_db} dB", c, 266.0, big, text)
+        self._centered_text(p, f"{self._strength_db} dB", c, 276.0, big, text)
         small = QFont(self.font())
         small.setPixelSize(12)
-        self._centered_text(p, "reduction strength", c, 284.0, small, muted)
-        self._centered_text(p, "gentle", 52.0, 268.0, small, muted)
-        self._centered_text(p, "strong", 248.0, 268.0, small, muted)
+        self._centered_text(p, "reduction strength", c, 294.0, small, muted)
+        self._centered_text(p, "gentle", 52.0, 278.0, small, muted)
+        self._centered_text(p, "strong", 248.0, 278.0, small, muted)
         p.end()

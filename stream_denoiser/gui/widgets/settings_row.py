@@ -13,6 +13,7 @@ from PyQt6.QtGui import (
     QColor, QLinearGradient, QPainter, QPainterPath,
 )
 
+from ..animations import Blend
 from ..scaling import sp
 from ..themes import current as current_theme
 
@@ -31,6 +32,7 @@ class SettingsRow(QFrame):
         self.setMinimumHeight(sp(74))
         self._hover = False
         self._focus_within = False
+        self._lit_blend = Blend(self, self.update, 150)
         self._first = False
         self._last = False
         self._subtitle = subtitle
@@ -87,20 +89,23 @@ class SettingsRow(QFrame):
                 Qt.FocusReason.TabFocusReason,
                 Qt.FocusReason.BacktabFocusReason,
                 Qt.FocusReason.ShortcutFocusReason)
-            self.update()
+            self._sync_lit()
         elif kind == QEvent.Type.FocusOut:
             self._focus_within = False
-            self.update()
+            self._sync_lit()
         return super().eventFilter(obj, event)
+
+    def _sync_lit(self) -> None:
+        self._lit_blend.set_target(1.0 if self.is_lit else 0.0)
 
     def enterEvent(self, event):  # noqa: N802 (Qt override)
         self._hover = True
-        self.update()
+        self._sync_lit()
         super().enterEvent(event)
 
     def leaveEvent(self, event):  # noqa: N802 (Qt override)
         self._hover = False
-        self.update()
+        self._sync_lit()
         super().leaveEvent(event)
 
     @property
@@ -109,7 +114,8 @@ class SettingsRow(QFrame):
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
         super().paintEvent(event)
-        if not self.is_lit:
+        lit = self._lit_blend.value
+        if lit <= 0.01:
             return
         palette = current_theme()
         w, h = self.width(), self.height()
@@ -131,7 +137,7 @@ class SettingsRow(QFrame):
         accent = QColor(palette["accent"])
         wash = QLinearGradient(0, 0, w * 0.75, 0)
         start = QColor(accent)
-        start.setAlpha(int(255 * 0.14))
+        start.setAlpha(int(255 * 0.14 * lit))
         end = QColor(accent)
         end.setAlpha(0)
         wash.setColorAt(0.0, start)
@@ -140,9 +146,11 @@ class SettingsRow(QFrame):
 
         p.setClipping(False)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(palette["secondary"]))
-        d = sp(5)
+        marker = QColor(palette["secondary"])
+        marker.setAlphaF(lit)
+        p.setBrush(marker)
+        d = sp(5) * (0.6 + 0.4 * lit)
         p.translate(QPointF(sp(26), h / 2))
         p.rotate(45)
-        p.drawRoundedRect(-d, -d, 2 * d, 2 * d, 2, 2)
+        p.drawRoundedRect(QRectF(-d, -d, 2 * d, 2 * d), 2, 2)
         p.end()

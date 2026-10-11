@@ -157,8 +157,10 @@ def _lit_row_image(app, first, last):
     row.show()
     _pump(app)
     row._hover = False
+    row._lit_blend.snap(0.0)          # the wash is eased; jump to the ends
     unlit = row.grab().toImage()
     row._hover = True
+    row._lit_blend.snap(1.0)
     lit = row.grab().toImage()
     row.close()
     return unlit, lit

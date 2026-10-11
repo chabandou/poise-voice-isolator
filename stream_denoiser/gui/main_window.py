@@ -22,6 +22,7 @@ from PyQt6.QtGui import QIcon, QCloseEvent, QPixmap, QDesktopServices
 from .styles import get_stylesheet
 from .scaling import init_scaling, sp
 from .fonts import load_fonts
+from .animations import install_hover_fades
 from . import themes as theme_store
 from .settings import get_settings
 from .. import __version__
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         self._icon_buttons = []  # (button, icon name) re-tinted per theme
 
         self.setup_ui()
+        install_hover_fades(self)
 
         self.setup_worker()
         self.setup_tray()
@@ -729,7 +731,15 @@ class MainWindow(QMainWindow):
         self.theme_blurb.setText(theme_store.theme_blurb(theme_id))
 
     def _apply_theme(self, theme_id: str):
-        """Switch palette everywhere (persisted)."""
+        """Switch palette everywhere (persisted), crossfading when live."""
+        snapshot = None
+        if self.isVisible() and theme_id != theme_store.current_id():
+            try:
+                from .animations import motion_ok
+                if motion_ok():
+                    snapshot = self.grab()
+            except Exception:
+                snapshot = None
         self.settings.theme = theme_id
         theme_store.set_current(theme_id)
         self.setStyleSheet(get_stylesheet())
@@ -743,6 +753,9 @@ class MainWindow(QMainWindow):
         self.power_btn.update()
         self.stats_bar.update()
         self.update()
+        if snapshot is not None:
+            from .animations import crossfade_from
+            crossfade_from(self, snapshot)
 
     def _refresh_app_icon(self):
         """Reload window, taskbar, tray, and About icons for the theme."""

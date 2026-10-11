@@ -11,17 +11,19 @@ bar flush against the window edge instead.
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
 )
-from PyQt6.QtCore import QPoint, pyqtSignal, Qt
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtCore import QPoint, QRectF, pyqtSignal, Qt
+from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
 
 from .phosphor import PhosphorIcon
 from ..scaling import isp, sp
 from ..themes import current as current_theme
+from ..animations import Blend
 from ..utils import get_icon_path
 from ... import __version__
 
 
 INDICATOR_EDGE_BAR = False
+HOVER_WASH_ALPHA = 0.17
 
 
 class NavButton(QPushButton):
@@ -56,12 +58,45 @@ class NavButton(QPushButton):
             child.setAttribute(
                 Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
+        # Hover wash: painted (QSS cannot fade) with an eased blend, same
+        # shape as the active highlight but a neutral, softer tone.
+        self._hover_blend = Blend(self, self.update, 150)
+
         # Apple-style press dip (opacity only — layout-safe).
         try:
             from ..animations import install_press_fade
             install_press_fade(self, pressed_opacity=0.6)
         except Exception:
             pass
+
+    def enterEvent(self, event):  # noqa: N802 (Qt override)
+        if not self.property("active"):
+            self._hover_blend.set_target(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):  # noqa: N802 (Qt override)
+        self._hover_blend.set_target(0.0)
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        super().paintEvent(event)
+        t = self._hover_blend.value
+        if t <= 0.01 or self.property("active"):
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect())
+        wash = QLinearGradient(rect.left(), 0, rect.right(), 0)
+        start = QColor(148, 163, 184)
+        start.setAlphaF(HOVER_WASH_ALPHA * t)
+        end = QColor(148, 163, 184)
+        end.setAlphaF(0.0)
+        wash.setColorAt(0.0, start)
+        wash.setColorAt(1.0, end)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(wash)
+        p.drawRoundedRect(rect, sp(10), sp(10))
+        p.end()
 
     def set_compact(self, compact: bool) -> None:
         """Icon-rail mode: hide the label, center the icon."""
@@ -84,6 +119,10 @@ class NavButton(QPushButton):
         palette = current_theme()
         self.setChecked(active)
         self.setProperty("active", active)
+        if active:
+            self._hover_blend.set_target(0.0)   # the active wash takes over
+        elif self.underMouse():
+            self._hover_blend.set_target(1.0)
         self._icon.set_color(
             palette["accent"] if active else palette["nav_muted"])
         # Repolish the label too: polishing only the button leaves the

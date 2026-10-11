@@ -50,14 +50,8 @@ QPushButton#nav {
     font-weight: 500;
 }
 
-/* Hover mirrors the active highlight's shape: a wash fading out to the
-   right (neutral tone, softer than the accent wash of the active item). */
-QPushButton#nav:hover {
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(148, 163, 184, 0.17), stop:1 rgba(148, 163, 184, 0.0));
-    color: {text};
-}
-
+/* Hover wash is painted by NavButton (animated, same shape as the
+   active highlight); QSS has no transitions. */
 QPushButton#nav[active="true"] {
     background-color: transparent;
     color: {text};
@@ -181,28 +175,7 @@ QLabel#home-title {
     color: {text};
 }
 
-/* Model cards */
-QPushButton#model-card {
-    background-color: {pill};
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 12px;
-    text-align: left;
-}
-
-QPushButton#model-card:hover {
-    border: 1px solid rgba({secondary_rgb}, 0.6);
-}
-
-QPushButton#model-card:checked {
-    border: 1px solid {secondary};
-    background-color: rgba({secondary_rgb}, 0.08);
-}
-
-QPushButton#model-card:disabled {
-    background-color: transparent;
-    border: 1px dashed rgba(148, 163, 184, 0.22);
-}
-
+/* Model cards: the card surface is painted by _ModelCard (animated). */
 QLabel#model-name {
     font-family: {HEADING_FONT};
     font-size: 24px;

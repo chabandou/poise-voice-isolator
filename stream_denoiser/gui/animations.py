@@ -8,6 +8,9 @@ Small, dependency-free micro-interaction toolkit for Qt Widgets:
   (snapshot slide-out + slide-in, no cascade)
 - press-fade filter for standard QPushButtons (no layout churn)
 - looping pulse (status dot / live indicator)
+- Blend: an eased 0..1 state value (hover / checked / lit) for painted widgets
+- QssHoverFade: crossfades QSS :hover colours on stock buttons and fields
+- crossfade_from: fades a snapshot of the old look away (theme switches)
 - shared Apple-like timings + easings
 
 QSS cannot animate, so all motion lives here in code. Every helper
@@ -41,11 +44,14 @@ import os
 
 from PyQt6.QtCore import (
     QEasingCurve,
+    QEvent,
     QObject,
     QPropertyAnimation,
     Qt,
     QTimer,
+    QVariantAnimation,
 )
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QGraphicsOpacityEffect,
@@ -698,5 +704,220 @@ def tween_float(target: QObject, prop: bytes, end: float,
         _keep(target, anim)  # type: ignore[arg-type]
         anim.start()
         return anim
+    except Exception:
+        return None
+
+
+# -- eased state blends --------------------------------------------------------
+def mix_rgba(a: QColor, b: QColor, t: float) -> QColor:
+    """Linear blend of two colours including alpha (t clamped to 0..1)."""
+    t = max(0.0, min(1.0, t))
+    return QColor(
+        int(a.red() + (b.red() - a.red()) * t),
+        int(a.green() + (b.green() - a.green()) * t),
+        int(a.blue() + (b.blue() - a.blue()) * t),
+        int(a.alpha() + (b.alpha() - a.alpha()) * t),
+    )
+
+
+class Blend(QObject):
+    """An eased 0..1 value that glides toward a target.
+
+    One per animated visual state of a painted widget (hover, checked,
+    lit...). The owner repaints in `on_change`. Under reduced motion every
+    change snaps, so end states are always reached.
+    """
+
+    def __init__(self, owner: QObject, on_change, duration_ms: int = D_OUT,
+                 easing=EASE_OUT, value: float = 0.0):
+        super().__init__(owner)
+        self._on_change = on_change
+        self._value = float(value)
+        self._target = float(value)
+        self._duration = int(duration_ms)
+        self._anim = QVariantAnimation(self)
+        self._anim.setEasingCurve(easing)
+        self._anim.valueChanged.connect(self._step)
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    @property
+    def target(self) -> float:
+        return self._target
+
+    @property
+    def running(self) -> bool:
+        return self._anim.state() == QVariantAnimation.State.Running
+
+    def _step(self, v) -> None:
+        self._value = float(v)
+        self._on_change()
+
+    def set_target(self, target: float, animated: bool = True,
+                   duration_ms: int | None = None) -> None:
+        target = float(target)
+        if target == self._target:
+            return
+        self._target = target
+        if (not animated or not motion_ok()
+                or abs(self._value - target) < 1e-4):
+            self.snap(target)
+            return
+        self._anim.stop()
+        self._anim.setDuration(max(1, int(duration_ms or self._duration)))
+        self._anim.setStartValue(self._value)
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def snap(self, value: float) -> None:
+        """Jump to `value` (no animation)."""
+        self._anim.stop()
+        self._value = self._target = float(value)
+        self._on_change()
+
+
+class QssHoverFade(QObject):
+    """Crossfade QSS :hover colours (QSS itself cannot transition).
+
+    `colors()` returns {css-property: (rest QColor, hover QColor)} and is
+    evaluated on every run, so theme switches stay live. While fading, a
+    widget-local sheet (which always beats the app sheet) carries the
+    in-between colour; once settled the local sheet is removed and the
+    plain QSS rest/:hover rules apply, identical by construction.
+    """
+
+    def __init__(self, widget: QWidget, selector: str, colors,
+                 duration_ms: int = D_OUT):
+        super().__init__(widget)
+        self._w = widget
+        self._selector = selector
+        self._colors = colors
+        self._blend = Blend(self, self._apply, duration_ms)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        try:
+            if obj is self._w:
+                kind = event.type()
+                if kind == QEvent.Type.Enter and self._w.isEnabled():
+                    self._begin(1.0)
+                elif kind == QEvent.Type.Leave:
+                    self._begin(0.0)
+                elif (kind == QEvent.Type.EnabledChange
+                        and not self._w.isEnabled()):
+                    self._blend.snap(0.0)
+        except Exception:
+            pass
+        return False
+
+    def _begin(self, target: float) -> None:
+        # Pin the current look before Qt flips :hover on this very event;
+        # otherwise one frame paints at the wrong colour.
+        self._apply(force=True)
+        self._blend.set_target(target)
+
+    def _css(self, t: float) -> str:
+        parts = []
+        for prop, (rest, hover) in self._colors().items():
+            c = mix_rgba(rest, hover, t)
+            parts.append(f"{prop}: rgba({c.red()}, {c.green()}, "
+                         f"{c.blue()}, {c.alphaF():.3f});")
+        return f"{self._selector} {{ {' '.join(parts)} }}"
+
+    def _apply(self, force: bool = False) -> None:
+        try:
+            t, target = self._blend.value, self._blend.target
+            settled = ((t <= 0.001 and target == 0.0)
+                       or (t >= 0.999 and target == 1.0))
+            if settled and not force:
+                if self._w.styleSheet():
+                    self._w.setStyleSheet("")
+                return
+            self._w.setStyleSheet(self._css(t))
+        except Exception:
+            pass
+
+
+def _hover_specs():
+    """(class name, objectName) -> palette -> {property: (rest, hover)}."""
+    from .themes import ACCENT_WASH_ALPHA
+
+    def slate(alpha):
+        c = QColor(148, 163, 184)
+        c.setAlphaF(alpha)
+        return c
+
+    def wash(p, alpha):
+        c = QColor(p["accent"])
+        c.setAlphaF(alpha)
+        return c
+
+    return {
+        ("QPushButton", "ghost"): lambda p: {
+            "border-color": (slate(0.18), QColor(p["secondary"]))},
+        ("QPushButton", "icon-btn"): lambda p: {
+            "background-color": (wash(p, 0.0),
+                                 wash(p, ACCENT_WASH_ALPHA))},
+        ("QPushButton", "primary"): lambda p: {
+            "background-color": (QColor(p["accent"]),
+                                 QColor(p["accent_light"]))},
+        ("QComboBox", "device-combo"): lambda p: {
+            "border-color": (slate(0.25), QColor(p["secondary"]))},
+    }
+
+
+def install_hover_fades(root: QWidget) -> int:
+    """Attach hover crossfades to the stock buttons/fields under `root`.
+
+    Idempotent; returns how many widgets were wired. Call again after
+    building new widgets (e.g. a dialog).
+    """
+    from PyQt6.QtWidgets import QComboBox, QPushButton
+    from .themes import current
+
+    specs = _hover_specs()
+    wired = 0
+    for cls in (QPushButton, QComboBox):
+        for w in root.findChildren(cls):
+            spec = specs.get((cls.__name__, w.objectName()))
+            if spec is None or getattr(w, "_hover_fade", None) is not None:
+                continue
+            w._hover_fade = QssHoverFade(
+                w, f"{cls.__name__}#{w.objectName()}",
+                lambda spec=spec: spec(current()))
+            wired += 1
+    return wired
+
+
+def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260):
+    """Fade a snapshot of the previous look away to reveal the new one.
+
+    `snapshot` is a QPixmap grabbed before the change. The overlay is a
+    plain label (safe to fade; see the module's safety rules) and is
+    detached synchronously when done.
+    """
+    try:
+        if not motion_ok() or snapshot is None or snapshot.isNull():
+            return None
+        from PyQt6.QtWidgets import QLabel
+        overlay = QLabel(widget)
+        overlay.setPixmap(snapshot)
+        overlay.setGeometry(widget.rect())
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        overlay.show()
+        overlay.raise_()
+        effect = QGraphicsOpacityEffect(overlay)
+        overlay.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", overlay)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(EASE_OUT)
+        anim.finished.connect(lambda: _drop_overlay(overlay))
+        overlay._anim = anim
+        anim.start()
+        return overlay
     except Exception:
         return None
