@@ -1,52 +1,96 @@
 """
 Poise Voice Isolator - Main Window
 
-Main GUI application window assembling all widgets and logic.
+Dashboard layout: sidebar navigation with Home / Settings / Logs / About
+pages. Home is the tick-ring dial (Start/Stop + reduction strength) next
+to the output device and a summary of the current setup; everything else
+lives in Settings. Live performance stats sit in the status bar.
 """
-import sys
 import os
+import sys
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QGroupBox, QSlider, QCheckBox, QComboBox,
-    QMessageBox, QSystemTrayIcon, QApplication,
-    QScrollArea, QFrame, QSizePolicy, QGraphicsDropShadowEffect
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel,
+    QMessageBox, QApplication, QFrame, QStackedWidget,
+    QTextEdit, QPushButton, QButtonGroup, QScrollArea, QBoxLayout,
 )
-from PyQt6.QtCore import Qt, QTimer, QEvent
-from PyQt6.QtGui import QIcon, QCloseEvent, QColor
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QIcon, QCloseEvent, QPixmap, QDesktopServices
 
-from .styles import POISE_STYLESHEET, COLORS
+from .styles import get_stylesheet
+from .scaling import init_scaling, sp
+from .fonts import load_fonts
+from .animations import install_hover_fades
+from . import themes as theme_store
 from .settings import get_settings
-from ..constants import MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED
+from .. import __version__
+from ..constants import (
+    MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED,
+    MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHING_FIRST_TIME,
+)
 from .worker import AudioWorker
 from .system_tray import SystemTray
-from .widgets.toggle_button import ToggleButton
+from .widgets.phosphor import (
+    clear_cache as clear_icon_cache, icon as phosphor_icon,
+)
+from .widgets.theme_tile import ThemeTile
+from .widgets.dial import DialButton
+from .widgets.donate_button import DonateButton
+from .widgets.switch import ToggleSwitch
+from .widgets.slider import HoverSlider
+from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
-from .widgets.stats_panel import StatsPanel
-from ..logging_config import get_logger
+from .widgets.chip import IconChip
+from .widgets.model_cards import ModelCards
+from .widgets.settings_row import SettingsRow
+from .widgets.setup_summary import SetupSummary
+from .widgets.stats_bar import StatsBar
+from .widgets.emblem import Emblem
+from .widgets.pattern_card import PatternCard
+from ..logging_config import get_logger, get_log_file_path
 from .utils import get_icon_path
 
 _logger = get_logger(__name__)
+
+HOME_TITLES = {
+    "ready": "Ready to isolate",
+    "starting": "Getting ready...",
+    "isolating": "Isolating voices",
+    "stopping": "Stopping...",
+    "error": "Couldn't start",
+}
+HOME_READY_SUB = "Press the dial to start."
+HOME_ISOLATING_SUB = "Music and noise are removed."
+
+GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
+ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
+VB_AUDIO_URL = "https://vb-audio.com/"
+# Where the About page's Donate button goes. Empty hides the button.
+DONATE_URL = ""
 
 
 class MainWindow(QMainWindow):
     """
     Main application window for Poise Voice Isolator.
     """
-    
+
     def __init__(self):
         super().__init__()
-        
+
         self.settings = get_settings()
         self.worker: Optional[AudioWorker] = None
         self.tray: Optional[SystemTray] = None
         self._forcing_quit = False
-        
-        # Setup UI
+        self._error_state = False
+
+        init_scaling()
+        load_fonts()
+        theme_store.set_current(self.settings.theme)
 
         self.setWindowTitle("Poise Voice Isolator")
-        
+
         # Set App Icon
         icon_path = get_icon_path()
         if icon_path:
@@ -54,269 +98,723 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(app_icon)
             # Also set for the application instance to ensure it propagates
             QApplication.instance().setWindowIcon(app_icon)
-            
-        self.resize(500, 300) # Increased width for horizontal layout
-        self.setMinimumSize(500, 300)
-        self.setStyleSheet(POISE_STYLESHEET)
-        
+
+        self.resize(*self._window_size(1180, 760))
+        self.setMinimumSize(*self._window_size(700, 560))
+        self.setStyleSheet(get_stylesheet())
+        self._resp = None  # responsive mode: wide / compact / narrow
+        self._icon_buttons = []  # (button, icon name) re-tinted per theme
+
         self.setup_ui()
+        install_hover_fades(self)
 
         self.setup_worker()
         self.setup_tray()
-        
+
         # Load persistent state
         self.restore_state()
-        
-        # Status update timer
-        self.status_timer = QTimer()
-        self.status_timer.timeout.connect(self.reset_status)
-        self.status_timer.setSingleShot(True)
-    
-    def setup_ui(self):
-        """Initialize all UI components."""
-        # Main wrapper to hold scroll area and fixed footer
-        main_wrapper = QWidget()
-        main_layout = QVBoxLayout(main_wrapper)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        self.setCentralWidget(main_wrapper)
 
-        # Scroll Area for Content
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Transparent background for scroll area
-        scroll.setStyleSheet("QScrollArea { background: transparent; } QWidget#content_widget { background: transparent; }")
-        
-        main_layout.addWidget(scroll)
-        
-        content_widget = QWidget()
-        content_widget.setObjectName("content_widget")
-        scroll.setWidget(content_widget)
-        
-        layout = QVBoxLayout(content_widget)
-        layout.setSpacing(15) 
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # --- Header (Centered) ---
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(4) # Mimic single space
-        header_layout.addStretch()
-        title_label = QLabel("Poise Voice Isolator")
-        title_label.setObjectName("title")
-        # Removed text bottom alignment so they align centrally by default
-        
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        layout.addLayout(header_layout)
-
-        
-        # --- Main Toggle Button ---
-        btn_layout = QHBoxLayout()
-        self.toggle_btn = ToggleButton()
-        
-        # Add glow effect to button
-        self.btn_shadow = QGraphicsDropShadowEffect(self)
-        self.btn_shadow.setBlurRadius(40)
-        self.btn_shadow.setColor(QColor(165, 243, 252, 80)) # Lighter Cyan glow
-        self.btn_shadow.setOffset(0, 5)
-        self.toggle_btn.setGraphicsEffect(self.btn_shadow)
-        
-        self.toggle_btn.toggled_state.connect(self.toggle_processing)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.toggle_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-        layout.addSpacing(15) # Formatting: Extra space below button
-        
-        # --- Device Selection Group ---
-        self.device_group = QGroupBox()
-        device_main_layout = QVBoxLayout(self.device_group)
-        device_main_layout.setSpacing(10)
-        
-        # Horizontal row for input/output dropdowns
-        devices_row = QHBoxLayout()
-        devices_row.setSpacing(20)
-        
-        self.input_selector = DeviceSelector("Input Device", "input")
-        self.input_selector.device_changed.connect(lambda id: setattr(self.settings, 'input_device', id))
-        devices_row.addWidget(self.input_selector)
-        
-        self.output_selector = DeviceSelector("Output Device", "output")
-        self.output_selector.device_changed.connect(lambda id: setattr(self.settings, 'output_device', id))
-        devices_row.addWidget(self.output_selector)
-    
-        device_main_layout.addLayout(devices_row)
-        
-        # VB Cable Auto-switch
-        self.vb_cable_check = QCheckBox("Auto-switch Default Playback Device (VB Cable)")
-        self.vb_cable_check.setChecked(self.settings.vb_cable_enabled)
-        self.vb_cable_check.toggled.connect(self._on_vb_cable_toggled)
-        self.vb_cable_check.setToolTip("Automatically switches Windows default playback device to VB Cable input when running")
-        device_main_layout.addWidget(self.vb_cable_check)
-        
-        # Initial state
-        self.input_selector.setEnabled(not self.settings.vb_cable_enabled)
-        
-        layout.addWidget(self.device_group)
-        
-        # --- Controls & Stats Row ---
-        # Combined row for VAD controls and Stats
-        
-        controls_group = QGroupBox()
-        controls_layout = QHBoxLayout(controls_group)
-        controls_layout.setSpacing(20)
-        
-        # Left Side: VAD Controls
-        self.vad_panel = QFrame()
-        self.vad_panel.setObjectName("vad-panel")
-        vad_layout = QVBoxLayout(self.vad_panel)
-        vad_layout.setSpacing(10)
-        vad_layout.setContentsMargins(12, 12, 12, 12)
-
-        # Model selector
-        model_container = QWidget()
-        model_layout = QHBoxLayout(model_container)
-        model_layout.setContentsMargins(0, 0, 0, 0)
-
-        model_label = QLabel("Model:")
-        self.model_combo = QComboBox()
+        # Apple-style juice: window fade + staggered home entrance.
+        self._status_pulse = None
+        self._shown_once = False
         try:
-            from ..engines import available_models
-            _models = available_models()
-        except Exception:
-            from ..constants import DEFAULT_MODEL as _default
-            _models = [_default]
-        self.model_combo.addItems(_models)
-        try:
-            _saved = self.settings.model
-            if _saved in _models:
-                self.model_combo.setCurrentText(_saved)
+            from .animations import install_press_fade
+            for btn in self.findChildren(QPushButton):
+                try:
+                    name = btn.objectName()
+                    if name in ("ghost", "icon-btn", "refresh-btn"):
+                        install_press_fade(btn)
+                except Exception:
+                    continue
         except Exception:
             pass
-        self.model_combo.setToolTip(
-            "deepfilternet3 (default): music/voice isolation. "
-            "rnnoise: light noise suppression (same as EasyEffects, "
-            "Linux needs the rnnoise package)."
-        )
-        self.model_combo.currentTextChanged.connect(self._on_model_changed)
-        model_layout.addWidget(model_label)
-        model_layout.addWidget(self.model_combo, stretch=1)
-        vad_layout.addWidget(model_container)
-        
-        # VAD Enable
-        self.vad_check = QCheckBox("Enable VAD (Save CPU)")
-        self.vad_check.setChecked(self.settings.vad_enabled)
-        vad_layout.addWidget(self.vad_check)
-        
-        # Threshold Slider
-        thresh_container = QWidget()
-        thresh_layout = QHBoxLayout(thresh_container)
-        thresh_layout.setContentsMargins(0,0,0,0)
-        
-        thresh_label = QLabel("Threshold:")
-        self.thresh_val_label = QLabel(f"{self.settings.vad_threshold:.0f} dB")
-        self.thresh_val_label.setFixedWidth(50)
-        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        
-        self.thresh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.thresh_slider.setRange(-80, -10)
-        self.thresh_slider.setValue(int(self.settings.vad_threshold))
-        self.thresh_slider.valueChanged.connect(self._on_threshold_changed)
-        # Set initial enabled state matching the checkbox
-        self.thresh_slider.setEnabled(self.settings.vad_enabled)
-        
-        thresh_layout.addWidget(thresh_label)
-        thresh_layout.addWidget(self.thresh_slider)
-        thresh_layout.addWidget(self.thresh_val_label)
-        
-        # Connect VAD toggle now that slider exists
-        self.vad_check.toggled.connect(self._on_vad_toggled)
-        vad_layout.addWidget(thresh_container)
-        
-        vad_layout.addStretch() # Push configs to top
-        
-        controls_layout.addWidget(self.vad_panel, stretch=3)
-        
-        # Right Side: Stats Panel (Vertical)
-        self.stats_panel = StatsPanel()
-        controls_layout.addWidget(self.stats_panel, stretch=2)
-        
-        layout.addWidget(controls_group)
-        layout.addStretch() # Push everything up
-        
-        # --- Fixed Footer (Outside Scroll) ---
-        footer_widget = QWidget()
-        footer_layout = QHBoxLayout(footer_widget)
-        footer_layout.setContentsMargins(20, 5, 20, 10) # Match side margins of content
-        footer_layout.setSpacing(6)
-        
-        # Status Light
-        self.status_light = QLabel()
-        self.status_light.setObjectName("status-light")
-        self.status_light.setProperty("state", "ready")
-        self.status_light.setFixedSize(10, 10)
-        
-        # Glow for status light
-        light_shadow = QGraphicsDropShadowEffect(self)
-        light_shadow.setBlurRadius(10)
-        light_shadow.setColor(QColor(74, 222, 128, 150))
-        light_shadow.setOffset(0, 0)
-        self.status_light.setGraphicsEffect(light_shadow)
-        
-        # Status Text
-        self.status_label = QLabel("Ready")
-        self.status_label.setObjectName("status-text")
+
+    def _layout_theme_grid(self, cols: int) -> None:
+        """Arrange theme tiles in rows of `cols` (re-parenting is safe)."""
+        for i, tile in enumerate(self.theme_tiles):
+            self.theme_grid.addWidget(tile, i // cols, i % cols)
+        # Equal-width columns; the tiles stretch to fill the card.
+        for c in range(max(cols, len(self.theme_tiles))):
+            self.theme_grid.setColumnStretch(c, 1 if c < cols else 0)
+
+    def _rv(self, wide, compact, narrow):
+        """Pick a responsive value for the current mode."""
+        if self._resp == "narrow":
+            return narrow
+        if self._resp == "compact":
+            return compact
+        return wide
+
+    def _rm(self, wide, compact, narrow):
+        """Responsive margins as scaled pixels (a 4-tuple per mode)."""
+        return tuple(sp(v) for v in self._rv(wide, compact, narrow))
+
+    def _icon_button(self, text: str, icon_name: str,
+                     color_key: str = "secondary",
+                     button_cls=QPushButton) -> QPushButton:
+        """Ghost button with a theme-tinted Phosphor icon (palette key)."""
+        from PyQt6.QtCore import QSize
+        from .scaling import isp
+        btn = button_cls(text)
+        btn.setObjectName("ghost")
+        btn.setIconSize(QSize(isp(16), isp(16)))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._icon_buttons.append((btn, icon_name, color_key))
+        self._tint_icon_buttons()
+        return btn
+
+    def _tint_icon_buttons(self) -> None:
+        palette = theme_store.current()
+        for btn, name, key in self._icon_buttons:
+            btn.setIcon(phosphor_icon(name, 16, palette[key]))
+
+    # -- responsive ----------------------------------------------------------
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self._apply_responsive()
+
+    def _apply_responsive(self) -> None:
+        """Adapt chrome density and row direction to the window width.
+
+        Wide puts the dial card beside the cards; compact tightens it;
+        narrow stacks everything and collapses the sidebar to an icon
+        rail. Runs only on mode changes, so live resizes stay cheap. The
+        window width alone drives the mode (internal changes never feed
+        back into it), so this cannot oscillate.
+        """
+        w = self.width()
+        # Design pixels, not window pixels: content scales with the UI
+        # factor (e.g. 1.5x on HiDPI xcb), so a 1240px window can hold
+        # only ~827px of layout. Without this the modes misjudge and
+        # wide rows overflow on scaled displays.
+        try:
+            from .scaling import ui_scale
+            w = w / max(0.5, ui_scale())
+        except Exception:
+            pass
+        mode = ("narrow" if w < 850
+                else "compact" if w < 1150 else "wide")
+        if mode == self._resp:
+            return
+        self._resp = mode
+        narrow = mode == "narrow"
+        V = QBoxLayout.Direction.TopToBottom
+        H = QBoxLayout.Direction.LeftToRight
+
+        # Home
+        self._home_layout.setDirection(V if narrow else H)
+        self._home_layout.setContentsMargins(
+            *self._rm((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._home_layout.setSpacing(sp(self._rv(20, 16, 12)))
+        self._stage_layout.setContentsMargins(
+            *self._rm((26, 28, 26, 24), (20, 24, 20, 20), (16, 20, 16, 18)))
+        self._right_col.setSpacing(sp(self._rv(20, 16, 12)))
+        self.power_btn.set_dial_size(sp(self._rv(300, 270, 240)))
+
+        # Settings
+        self._settings_layout.setContentsMargins(
+            *self._rm((26, 24, 26, 24), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._settings_layout.setSpacing(sp(self._rv(20, 16, 12)))
+        self._settings_bottom.setDirection(V if narrow else H)
+        self._settings_bottom.setSpacing(sp(self._rv(20, 16, 12)))
+        for card_layout in (self._model_layout, self._appearance_layout):
+            card_layout.setContentsMargins(
+                *self._rm((24, 22, 24, 22), (20, 18, 20, 18),
+                          (16, 16, 16, 16)))
+        self._layout_theme_grid(3)
+
+        # Logs / About
+        for page_layout in (self._logs_layout, self._about_layout):
+            page_layout.setContentsMargins(
+                *self._rm((34, 32, 34, 32), (20, 20, 20, 20),
+                          (12, 12, 12, 12)))
+        self._logs_layout.setSpacing(sp(self._rv(14, 10, 8)))
+        self._about_layout.setSpacing(sp(self._rv(10, 8, 8)))
+
+        # Sidebar rail on narrow windows.
+        self.sidebar.set_compact(narrow)
+
+    @staticmethod
+    def _window_size(base_w: int, base_h: int):
+        """Scaled window size, clamped to fit the available screen."""
+        w, h = sp(base_w), sp(base_h)
+        screen = QApplication.instance().primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = min(w, int(avail.width() * 0.96))
+            h = min(h, int(avail.height() * 0.94))
+        return w, h
+
+    # -- layout ------------------------------------------------------------
+    def setup_ui(self):
+        """Initialize all UI components."""
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.setCentralWidget(root)
+
+        self.sidebar = Sidebar()
+        self.sidebar.page_requested.connect(self._on_page_requested)
+        root_layout.addWidget(self.sidebar)
+
+        self.stack = QStackedWidget()
+        for page in (self._build_home_page(),      # 0
+                     self._build_settings_page(),  # 1
+                     self._build_logs_page(),      # 2
+                     self._build_about_page()):    # 3
+            scroll = QScrollArea()
+            scroll.setObjectName("page-scroll")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            # The viewport paints the style's light Base color by default;
+            # leave it unfilled so the dark window shows through.
+            scroll.viewport().setAutoFillBackground(False)
+            page.setObjectName("page")
+            page.setAutoFillBackground(False)
+            scroll.setWidget(page)
+            self.stack.addWidget(scroll)
+        root_layout.addWidget(self.stack, stretch=1)
+
+        # Performance readout lives in the status bar (not on Home).
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        bar.setContentsMargins(0, 0, 0, 0)
+        self.stats_bar = StatsBar()
+        bar.addWidget(self.stats_bar, 1)
+
+    # -- Home page ----------------------------------------------------------
+    def _saved_atten_db(self) -> int:
+        try:
+            return int(self.settings.atten_lim_db)
+        except Exception:
+            return -60
+
+    def _divider(self) -> QFrame:
+        line = QFrame()
+        line.setObjectName("divider")
+        line.setFrameShape(QFrame.Shape.HLine)
+        return line
+
+    def _build_home_page(self) -> QWidget:
+        page = QWidget()
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, page)
+        layout.setContentsMargins(sp(26), sp(26), sp(26), sp(26))
+        layout.setSpacing(sp(20))
+        self._home_layout = layout
+        center = Qt.AlignmentFlag.AlignCenter
+
+        # --- Left: dial card (state headline, Start/Stop, strength) ---
+        stage = PatternCard()
+        stage.setObjectName("card")
+        stage_layout = QVBoxLayout(stage)
+        stage_layout.setContentsMargins(sp(26), sp(28), sp(26), sp(24))
+        stage_layout.setSpacing(sp(8))
+        self._stage_layout = stage_layout
+
+        self.home_title = QLabel(HOME_TITLES["ready"])
+        self.home_title.setObjectName("home-title")
+        self.home_title.setAlignment(center)
+        self.home_title.setWordWrap(True)
+        stage_layout.addWidget(self.home_title)
+
+        self.status_label = QLabel(HOME_READY_SUB)
+        self.status_label.setObjectName("status-line")
         self.status_label.setProperty("state", "ready")
-        
-        footer_layout.addWidget(self.status_light)
-        footer_layout.addWidget(self.status_label)
-        footer_layout.addStretch()
-        
-        main_layout.addWidget(footer_widget)
-    
+        self.status_label.setAlignment(center)
+        self.status_label.setWordWrap(True)
+        stage_layout.addWidget(self.status_label)
+
+        stage_layout.addStretch(1)
+        self.power_btn = DialButton()
+        self.power_btn.toggled_state.connect(self.toggle_processing)
+        self.power_btn.set_strength_db(self._saved_atten_db())
+        self.power_btn.strength_changed.connect(self._on_atten_changed)
+        stage_layout.addWidget(
+            self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        stage_layout.addStretch(1)
+
+        hint = QLabel("Drag the ring to set the reduction strength. "
+                      "It applies the next time you start.")
+        hint.setObjectName("row-sub")
+        hint.setAlignment(center)
+        hint.setWordWrap(True)
+        stage_layout.addWidget(hint)
+        layout.addWidget(stage, stretch=2)
+
+        # --- Right: output device + current setup ---
+        right = QVBoxLayout()
+        right.setSpacing(sp(20))
+        self._right_col = right
+
+        output_card = QFrame()
+        output_card.setObjectName("card")
+        output_layout = QVBoxLayout(output_card)
+        output_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(20))
+        output_layout.setSpacing(sp(12))
+        self.output_selector = DeviceSelector(
+            "Output device", "output", "Where the clean audio plays")
+        self.output_selector.device_changed.connect(
+            lambda id: setattr(self.settings, 'output_device', id))
+        output_layout.addWidget(self.output_selector)
+        # Input is always VB-Cable: say so once, plainly.
+        routing_note = QLabel(
+            "System audio is captured through VB-Cable (CABLE Output), "
+            "cleaned by Poise, then played here. If routing fails, Poise "
+            "stops and shows manual steps.")
+        routing_note.setObjectName("row-sub")
+        routing_note.setWordWrap(True)
+        output_layout.addWidget(routing_note)
+        right.addWidget(output_card)
+
+        self.setup_summary = SetupSummary()
+        self.setup_summary.open_settings.connect(
+            lambda: self._on_page_requested(1))
+        right.addWidget(self.setup_summary, stretch=1)
+        layout.addLayout(right, stretch=3)
+        return page
+
+    # -- Settings page -------------------------------------------------------
+    def _build_settings_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(sp(26), sp(24), sp(26), sp(24))
+        layout.setSpacing(sp(20))
+        self._settings_layout = layout
+
+        title = QLabel("Settings")
+        title.setObjectName("page-title")
+        layout.addWidget(title)
+        subtitle = QLabel("Silence skipping, model, appearance, and app "
+                          "behavior. Reduction strength is the dial on Home.")
+        subtitle.setObjectName("page-subtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        # List card: menu-style rows.
+        list_card = QFrame()
+        list_card.setObjectName("card")
+        list_layout = QVBoxLayout(list_card)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(0)
+
+        self.aad_switch = ToggleSwitch(checked=self.settings.aad_enabled)
+        self.aad_switch.toggled.connect(self._on_aad_toggled)
+        aad_row = SettingsRow(
+            "Skip silence",
+            "Audio Activity detection. Saves CPU while nothing plays.",
+            self.aad_switch)
+
+        thresh_box = QWidget()
+        thresh_layout = QHBoxLayout(thresh_box)
+        thresh_layout.setContentsMargins(0, 0, 0, 0)
+        thresh_layout.setSpacing(sp(14))
+        self.thresh_slider = HoverSlider(Qt.Orientation.Horizontal)
+        self.thresh_slider.setRange(-80, -10)
+        self.thresh_slider.setValue(int(self.settings.aad_threshold))
+        self.thresh_slider.valueChanged.connect(self._on_threshold_changed)
+        self.thresh_slider.setEnabled(self.settings.aad_enabled)
+        self.thresh_slider.setMinimumWidth(sp(230))
+        thresh_layout.addWidget(self.thresh_slider, stretch=1)
+        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
+        self.thresh_val_label.setObjectName("thresh-value")
+        self.thresh_val_label.setFixedWidth(sp(64))
+        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        thresh_layout.addWidget(self.thresh_val_label)
+        thresh_row = SettingsRow(
+            "Silence threshold", "Anything quieter counts as silence.",
+            thresh_box)
+
+        self.tray_switch = ToggleSwitch(
+            checked=self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True))
+        self.tray_switch.toggled.connect(self._on_tray_toggled)
+        tray_row = SettingsRow(
+            "Show tray icon", "Keep Poise in the system tray.",
+            self.tray_switch)
+
+        self.min_tray_switch = ToggleSwitch(
+            checked=self.settings.minimize_to_tray)
+        self.min_tray_switch.toggled.connect(
+            lambda checked: setattr(self.settings, 'minimize_to_tray', checked))
+        min_tray_row = SettingsRow(
+            "Keep running in the tray when closed",
+            "Closing the window does not stop Poise.", self.min_tray_switch)
+
+        rows = [aad_row, thresh_row, tray_row, min_tray_row]
+        for i, row in enumerate(rows):
+            row.set_position(i == 0, i == len(rows) - 1)
+            list_layout.addWidget(row)
+            if i < len(rows) - 1:
+                list_layout.addWidget(self._divider())
+        self._aad_row = aad_row
+        layout.addWidget(list_card)
+
+        # Bottom: model cards + appearance.
+        bottom = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        bottom.setSpacing(sp(20))
+        self._settings_bottom = bottom
+
+        model_card = QFrame()
+        model_card.setObjectName("card")
+        model_layout = QVBoxLayout(model_card)
+        model_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+        model_layout.setSpacing(sp(16))
+        self._model_layout = model_layout
+        model_layout.addLayout(self._card_head(
+            "cpu", "Model", "Takes effect the next time you start."))
+        self.model_cards = ModelCards()
+        try:
+            self.model_cards.setCurrentText(self.settings.model)
+        except Exception:
+            pass
+        self.model_cards.currentTextChanged.connect(self._on_model_changed)
+        model_layout.addWidget(self.model_cards)
+        model_layout.addStretch(1)
+        bottom.addWidget(model_card, stretch=3)
+
+        appearance_card = QFrame()
+        appearance_card.setObjectName("card")
+        appearance_layout = QVBoxLayout(appearance_card)
+        appearance_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+        appearance_layout.setSpacing(sp(16))
+        self._appearance_layout = appearance_layout
+        appearance_layout.addLayout(self._card_head(
+            "palette", "Appearance", ""))
+
+        theme_grid = QGridLayout()
+        theme_grid.setContentsMargins(0, 0, 0, 0)
+        theme_grid.setSpacing(sp(14))
+        self.theme_grid = theme_grid
+        self.theme_tiles = []
+        self.theme_group = QButtonGroup(self)
+        self.theme_group.setExclusive(True)
+        for index, theme_id in enumerate(theme_store.theme_ids()):
+            tile = ThemeTile(theme_id, parent=self)
+            self.theme_group.addButton(tile, index)
+            self.theme_tiles.append(tile)
+        appearance_layout.addLayout(theme_grid)
+        self._layout_theme_grid(3)
+        try:
+            saved = theme_store.theme_ids().index(self.settings.theme)
+        except ValueError:
+            saved = 0
+        checked = self.theme_group.button(saved)
+        if checked is not None:
+            checked.setChecked(True)
+        self.theme_group.idClicked.connect(self._on_theme_changed)
+
+        self.theme_blurb = QLabel()
+        self.theme_blurb.setObjectName("row-sub")
+        self.theme_blurb.setWordWrap(True)
+        appearance_layout.addWidget(self.theme_blurb)
+        appearance_layout.addStretch(1)
+        self._update_theme_blurb(self.settings.theme)
+        bottom.addWidget(appearance_card, stretch=2)
+
+        layout.addLayout(bottom)
+        layout.addStretch()
+        self._refresh_summary()
+        return page
+
+    def _card_head(self, icon: str, title: str, subtitle: str):
+        """Chip + title (+ caption) header row used by Settings cards."""
+        head = QHBoxLayout()
+        head.setSpacing(sp(14))
+        head.addWidget(IconChip(icon))
+        titles = QVBoxLayout()
+        titles.setSpacing(sp(2))
+        name = QLabel(title)
+        name.setObjectName("card-title")
+        titles.addWidget(name)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setObjectName("row-sub")
+            titles.addWidget(sub)
+        head.addLayout(titles)
+        head.addStretch(1)
+        return head
+
+    # -- Logs page ------------------------------------------------------------
+    def _build_logs_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 32, 34, 32)
+        layout.setSpacing(14)
+        self._logs_layout = layout
+
+        title = QLabel("Logs")
+        title.setObjectName("page-title")
+        layout.addWidget(title)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(10)
+        self.log_path_label = QLabel()
+        self.log_path_label.setObjectName("log-path")
+        bar.addWidget(self.log_path_label, stretch=1)
+
+        refresh_btn = self._icon_button("Refresh", "refresh")
+        refresh_btn.clicked.connect(self._refresh_logs)
+        bar.addWidget(refresh_btn)
+
+        folder_btn = self._icon_button("Open Folder", "folder")
+        folder_btn.clicked.connect(self._open_log_folder)
+        bar.addWidget(folder_btn)
+        layout.addLayout(bar)
+
+        self.log_view = QTextEdit()
+        self.log_view.setObjectName("logs")
+        self.log_view.setReadOnly(True)
+        layout.addWidget(self.log_view, stretch=1)
+
+        self._refresh_logs()
+        return page
+
+    def _refresh_logs(self):
+        """Load the tail of the current log file into the viewer."""
+        path = get_log_file_path()
+        if not path or not os.path.exists(path):
+            self.log_path_label.setText("No log file active this session.")
+            self.log_view.setPlainText(
+                "File logging is not enabled.\n"
+                "Start the app with --log-file <path> or POISE_LOG_FILE "
+                "to capture logs here.")
+            return
+        self.log_path_label.setText(path)
+        try:
+            with open(path, "r", errors="replace") as f:
+                lines = f.readlines()
+            tail = lines[-400:]
+            self.log_view.setPlainText("".join(tail))
+            self.log_view.verticalScrollBar().setValue(
+                self.log_view.verticalScrollBar().maximum())
+        except OSError as e:
+            self.log_view.setPlainText(f"Could not read log file: {e}")
+
+    def _open_log_folder(self):
+        path = get_log_file_path()
+        if path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
+
+    # -- About page -------------------------------------------------------------
+    def _build_about_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 32, 34, 32)
+        layout.setSpacing(10)
+        self._about_layout = layout
+        layout.addStretch()
+
+        self._about_icon = Emblem()
+        icon_path = get_icon_path()
+        if icon_path:
+            self._about_icon.set_pixmap(QPixmap(icon_path))
+        layout.addWidget(
+            self._about_icon, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        name = QLabel("Poise Voice Isolator")
+        name.setObjectName("page-title")
+        name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(name)
+
+        version = QLabel(f"v{__version__}")
+        version.setObjectName("about-version")
+        version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version)
+
+        tagline = QLabel("Real-time voice isolation. Runs 100% on-device.")
+        tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(tagline)
+        layout.addSpacing(12)
+
+        credits = QLabel()
+        credits.setObjectName("card-subtitle")
+        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits.setTextFormat(Qt.TextFormat.RichText)
+        credits.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        credits.linkActivated.connect(
+            lambda url: QDesktopServices.openUrl(QUrl(url)))
+        credits.linkHovered.connect(
+            lambda url: self._refresh_credits(hover=bool(url)))
+        self.about_credits = credits
+        self._refresh_credits()
+        layout.addWidget(credits)
+        layout.addSpacing(8)
+
+        links = QHBoxLayout()
+        links.addStretch()
+        github_btn = self._icon_button("GitHub", "info")
+        github_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(GITHUB_URL)))
+        links.addWidget(github_btn)
+        issues_btn = self._icon_button("Report an issue", "doc")
+        issues_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
+        links.addWidget(issues_btn)
+        # Poise is free: a filled button (dark label on the secondary
+        # colour) stands apart from the ghost links. Hidden until
+        # DONATE_URL is set.
+        donate_btn = self._icon_button(
+            "Donate", "heart", color_key="bg", button_cls=DonateButton)
+        donate_btn.setObjectName("donate")
+        donate_btn.setToolTip(
+            "Poise is free. If it helps you, you can support its "
+            "development.")
+        donate_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(DONATE_URL)))
+        donate_btn.setVisible(bool(DONATE_URL))
+        self.donate_btn = donate_btn
+        links.addWidget(donate_btn)
+        links.addStretch()
+        layout.addLayout(links)
+
+        layout.addStretch()
+        return page
+
+    def _refresh_credits(self, hover: bool = False) -> None:
+        """About credits as rich text; VB-Audio's name is an embedded link.
+
+        The link takes the theme accent, underlines on hover and carries
+        an external-link arrow. Rebuilt on theme switches.
+        """
+        accent = theme_store.current()["accent"]
+        underline = "underline" if hover else "none"
+        link = (f'<a href="{VB_AUDIO_URL}" style="color:{accent}; '
+                f'text-decoration:{underline};">VB-Audio Software \u2197</a>')
+        self.about_credits.setText(
+            "Denoising: DeepFilterNet3 · RNNoise (xiph.org)<br>"
+            f"Audio routing: VB-CABLE by {link} · third-party, donationware"
+            "<br>Built with Python and PyQt6 · MIT licensed")
+
+    # -- navigation ------------------------------------------------------------
+    def _on_page_requested(self, index: int):
+        self.sidebar.set_active_page(index)
+        try:
+            from .animations import slide_stack
+            slide_stack(self.stack, index)
+        except Exception:
+            self.stack.setCurrentIndex(index)
+        if index == 2:  # Logs
+            self._refresh_logs()
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        if self._shown_once:
+            return
+        self._shown_once = True
+        try:
+            from .animations import motion_ok
+            from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+            # Window fade-in (Apple launch feel).
+            if motion_ok():
+                try:
+                    self.setWindowOpacity(0.0)
+                    anim = QPropertyAnimation(self, b"windowOpacity", self)
+                    anim.setDuration(220)
+                    anim.setStartValue(0.0)
+                    anim.setEndValue(1.0)
+                    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                    anim.start()
+                    self._window_fade = anim  # keep alive
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    # -- worker / tray / state (unchanged behavior) ------------------------------
     def setup_worker(self):
         """Initialize audio worker thread."""
         self.worker = AudioWorker()
-        
+
         # Connect signals
         self.worker.started_processing.connect(self._on_worker_started)
         self.worker.stopped_processing.connect(self._on_worker_stopped)
-        self.worker.stats_updated.connect(self.stats_panel.update_stats)
+        self.worker.stats_updated.connect(self.stats_bar.update_stats)
         self.worker.status_changed.connect(self.update_status)
         self.worker.error_occurred.connect(self.handle_error)
-        
+
         # Initial config
         self._configure_worker()
-    
+
     def setup_tray(self):
         """Initialize system tray."""
         if self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True):
-            self.tray = SystemTray(self)
-            self.tray.restore_requested.connect(self.bring_to_front)
-            self.tray.start_requested.connect(self._start_processing)
-            self.tray.stop_requested.connect(self._stop_processing)
-            self.tray.quit_requested.connect(self._quit_app)
-            self.tray.show()
-    
+            if self.tray is None:
+                self.tray = SystemTray(self)
+                self.tray.restore_requested.connect(self.bring_to_front)
+                self.tray.start_requested.connect(self._start_processing)
+                self.tray.stop_requested.connect(self._stop_processing)
+                self.tray.quit_requested.connect(self._quit_app)
+                self.tray.show()
+
     def restore_state(self):
         """Restore previous window state and selections."""
         # Restore window geometry
         geometry = self.settings.load_window_geometry()
         if geometry:
             self.restoreGeometry(geometry)
-        
-        # Restore devices
-        self.input_selector.selected_device_id = self.settings.input_device
+
+        # Restore devices (output only — input is always VB-Cable)
         self.output_selector.selected_device_id = self.settings.output_device
-    
-    def _on_vb_cable_toggled(self, checked):
-        """Handle VB Cable auto-switch toggle."""
-        self.settings.vb_cable_enabled = checked
-        # Disable input selector when VB Cable switch is enabled
-        # (Implies we are capturing from VB Cable)
-        self.input_selector.setEnabled(not checked)
+        self._refresh_summary()
+
+    def _on_theme_changed(self, index: int):
+        """Persist the selected theme and apply it live."""
+        theme_ids = theme_store.theme_ids()
+        if index < 0 or index >= len(theme_ids):
+            return
+        theme_id = theme_ids[index]
+        self._update_theme_blurb(theme_id)
+        self._apply_theme(theme_id)
+
+    def _update_theme_blurb(self, theme_id: str):
+        self.theme_blurb.setText(theme_store.theme_blurb(theme_id))
+
+    def _apply_theme(self, theme_id: str):
+        """Switch palette everywhere (persisted), crossfading when live."""
+        snapshot = None
+        if self.isVisible() and theme_id != theme_store.current_id():
+            try:
+                from .animations import motion_ok
+                if motion_ok():
+                    snapshot = self.grab()
+            except Exception:
+                snapshot = None
+        self.settings.theme = theme_id
+        theme_store.set_current(theme_id)
+        self.setStyleSheet(get_stylesheet())
+        clear_icon_cache()
+        self.sidebar.refresh_theme()
+        self._refresh_app_icon()
+        for chip in self.findChildren(IconChip):
+            chip.refresh_theme()
+        self.output_selector.refresh_theme()
+        self._refresh_credits()
+        self._tint_icon_buttons()
+        self.power_btn.update()
+        self.stats_bar.update()
+        self.update()
+        if snapshot is not None:
+            from .animations import crossfade_from
+            crossfade_from(self, snapshot)
+
+    def _refresh_app_icon(self):
+        """Reload window, taskbar, tray, and About icons for the theme."""
+        icon_path = get_icon_path()
+        if not icon_path:
+            return
+        app_icon = QIcon(icon_path)
+        self.setWindowIcon(app_icon)
+        app = QApplication.instance()
+        if app is not None:
+            app.setWindowIcon(app_icon)
+        if self.tray is not None:
+            self.tray.setIcon(app_icon)
+        if hasattr(self, "_about_icon"):
+            self._about_icon.set_pixmap(QPixmap(icon_path))
 
     def _on_model_changed(self, model: str):
         """Persist selected denoising engine."""
@@ -324,138 +822,266 @@ class MainWindow(QMainWindow):
             self.settings.model = model
         except Exception:
             pass
+        self._refresh_summary()
+
+    def _refresh_summary(self) -> None:
+        """Keep Home's "Current setup" card in step with Settings."""
+        if not hasattr(self, "setup_summary") or not hasattr(self, "aad_switch"):
+            return
+        self.setup_summary.refresh(
+            self.model_cards.currentText(),
+            self.aad_switch.isChecked(),
+            float(self.thresh_slider.value()))
+
+    def _on_atten_changed(self, value: int):
+        """Persist attenuation limit (applies on next start)."""
+        try:
+            self.settings.atten_lim_db = float(value)
+        except Exception:
+            pass
+
+    def _on_tray_toggled(self, checked: bool):
+        self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
+        if checked:
+            self.setup_tray()
+        elif self.tray is not None:
+            self.tray.hide()
+            self.tray = None
 
     def toggle_processing(self, start: bool):
-        """Handle toggle button click."""
+        """Handle power button click."""
         if start:
             self._start_processing()
         else:
             self._stop_processing()
-    
+
     def _start_processing(self):
         """Start the audio processing worker."""
         if self.worker.is_running:
             return
-            
-        self.toggle_btn.set_transitioning(True)
-        # Switch glow to Red immediately (sync with button state)
-        self.btn_shadow.setColor(QColor(239, 68, 68, 150)) # Red glow
-        
+
+        self._error_state = False
+        self.power_btn.set_error(False)
+        self.power_btn.set_transitioning(True)
+        self.update_status("Starting...")
+
         self._configure_worker()
         self.worker.start()
-    
+
     def _stop_processing(self):
         """Stop the audio processing worker."""
         if not self.worker.is_running:
             return
-            
-        self.toggle_btn.set_transitioning(True)
-        # Switch glow back to Cyan immediately
-        self.btn_shadow.setColor(QColor(165, 243, 252, 100)) # Lighter Cyan glow
-        
+
+        self.power_btn.set_transitioning(True)
+        self.update_status("Stopping...")
+
         self.worker.stop()
-    
+
     def _configure_worker(self):
         """Pass current UI settings to worker."""
+        # Input routing is always automatic via VB-Cable: capture from
+        # CABLE Output after switching default playback to CABLE Input.
         self.worker.configure(
-            model=self.model_combo.currentText() if hasattr(self, 'model_combo') else self.settings.model,
+            model=self.model_cards.currentText() or self.settings.model,
             onnx_path=self.settings.onnx_model_path,
-            input_device=self.input_selector.selected_device_id,
+            input_device=None,
             output_device=self.output_selector.selected_device_id,
-            vad_enabled=self.vad_check.isChecked(),
-            vad_threshold=self.thresh_slider.value(),
+            aad_enabled=self.aad_switch.isChecked(),
+            aad_threshold=self.thresh_slider.value(),
             atten_lim_db=self.settings.atten_lim_db,
-            vb_cable_enabled=self.vb_cable_check.isChecked()
+            vb_cable_enabled=True
         )
-    
+
+    def _set_controls_enabled(self, enabled: bool):
+        self.output_selector.setEnabled(enabled)
+        self.output_selector.set_subtitle(
+            "Where the clean audio plays" if enabled
+            else "Locked while running")
+        self.model_cards.setEnabled(enabled)
+
     def _on_worker_started(self):
         """Called when worker successfully starts."""
-        self.toggle_btn.set_transitioning(False)
-        self.toggle_btn.set_active(True)
-        
+        self.power_btn.set_transitioning(False)
+        self.power_btn.set_active(True)
+        # First successful start: device switching (incl. one-time
+        # AudioDeviceCmdlets install) has completed, so future runs
+        # show the short "Switching audio device..." status.
+        try:
+            if not self.settings.device_switch_done:
+                self.settings.device_switch_done = True
+        except Exception:
+            pass
+        self.update_status("Isolating audio")
+        self._start_status_pulse()
+
         # Disable controls while running
-        self.device_group.setEnabled(False)
-        if hasattr(self, 'model_combo'):
-            self.model_combo.setEnabled(False)
-        
+        self._set_controls_enabled(False)
+
         # Update tray
         if self.tray:
             self.tray.set_processing_state(True)
             self.tray.notify(
-                "Poise Started", 
+                "Poise Started",
                 "Noise cancellation is active."
             )
 
         _logger.info(MSG_PROCESSING_STARTED)
-    
+
     def _on_worker_stopped(self):
         """Called when worker stops."""
-        self.toggle_btn.set_transitioning(False)
-        self.toggle_btn.set_active(False)
-        
+        self.power_btn.set_transitioning(False)
+        self.power_btn.set_active(False)
+        self._stop_status_pulse()
+
         # Re-enable controls
-        self.device_group.setEnabled(True)
-        if hasattr(self, 'model_combo'):
-            self.model_combo.setEnabled(True)
-        self.stats_panel.reset()
-        
+        self._set_controls_enabled(True)
+        self.stats_bar.reset()
+
+        if not self._error_state:
+            self.update_status("Ready")
+
         # Update tray
         if self.tray:
             self.tray.set_processing_state(False)
 
         _logger.info(MSG_PROCESSING_STOPPED)
-    
+
     def _on_threshold_changed(self, value):
-        """Handle VAD threshold slider change."""
+        """Handle AAD threshold slider change."""
         self.thresh_val_label.setText(f"{value} dB")
         if not self.worker.is_running:
-            self.settings.vad_threshold = float(value)
+            self.settings.aad_threshold = float(value)
+        self._refresh_summary()
         # TODO: Support live updates to worker
-    
-    def _on_vad_toggled(self, checked):
-        """Handle VAD checkbox toggle."""
+
+    def _on_aad_toggled(self, checked):
+        """Handle AAD switch toggle."""
         self.thresh_slider.setEnabled(checked)
-        self.settings.vad_enabled = checked
-    
+        self.settings.aad_enabled = checked
+        self._refresh_summary()
+
     def update_status(self, message: str):
-        """Update status bar message."""
-        self.status_label.setText(message)
-        
-        # Update light state
+        """Update status line message."""
+        # First-ever switch needs the AudioDeviceCmdlets one-time
+        # install, which can take a few seconds with no other feedback.
+        # Expand only that message, and only until the first successful
+        # start flips device_switch_done.
+        try:
+            if (message == MSG_DEVICE_SWITCHING
+                    and not self.settings.device_switch_done):
+                message = MSG_DEVICE_SWITCHING_FIRST_TIME
+        except Exception:
+            pass
+        # Update status state
         state = "ready"
         if "Error" in message:
             state = "error"
-        elif "Processing" in message or "Started" in message:
+        elif any(word in message for word in
+                 ("Starting", "Stopping", "Loading", "Isolating", "Processing",
+                  "Switching", "Switched", "Initializing", "Downloading",
+                  "Installing", "Setting up")):
             state = "processing"
-            
-        self.status_light.setProperty("state", state)
-        self.status_light.style().unpolish(self.status_light)
-        self.status_light.style().polish(self.status_light)
 
+        title_key, sub = self._home_copy(message, state)
+        self.home_title.setText(HOME_TITLES[title_key])
+        self.status_label.setText(sub)
         self.status_label.setProperty("state", state)
         self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().unpolish(self.status_label)
         self.status_label.style().polish(self.status_label)
-        
-        self.status_label.style().polish(self.status_label)
-        
+        word = {"ready": "standby", "error": "error"}.get(
+            state, "isolating" if title_key == "isolating" else "working")
+        self.stats_bar.set_state(state, word)
+
         _logger.info(f"Status update: {message}")
-    
-    def reset_status(self):
-        """Reset status to ready."""
-        if not self.worker.is_running:
-            self.update_status("Ready")
-    
+
+    @staticmethod
+    def _home_copy(message: str, state: str):
+        """(HOME_TITLES key, subtitle) for a worker status message."""
+        if state == "error":
+            return "error", message
+        if state == "ready":
+            return "ready", (
+                HOME_READY_SUB if message.strip() in ("", "Ready") else message)
+        lowered = message.lower()
+        if lowered.startswith("isolating"):
+            return "isolating", HOME_ISOLATING_SUB
+        if lowered.startswith("stopping"):
+            return "stopping", message
+        return "starting", message
+
+    def _start_status_pulse(self) -> None:
+        """Breathe the status line while isolating (live-indicator feel)."""
+        try:
+            from .animations import cancel_fade, motion_ok
+            from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
+            from PyQt6.QtWidgets import QGraphicsOpacityEffect
+            self._stop_status_pulse()
+            if not motion_ok():
+                return
+            # The pulse owns the label's effect exclusively: void any
+            # entrance fade first so two animations never fight over it
+            # (that replaces the effect mid-paint -> QPainter errors).
+            cancel_fade(self.status_label)
+            eff = QGraphicsOpacityEffect(self.status_label)
+            self.status_label.setGraphicsEffect(eff)
+            eff.setOpacity(1.0)
+            anim = QPropertyAnimation(eff, b"opacity", self)
+            anim.setDuration(1400)
+            anim.setStartValue(1.0)
+            anim.setKeyValueAt(0.5, 0.55)
+            anim.setEndValue(1.0)
+            anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+            anim.setLoopCount(-1)
+            anim.start()
+            self._status_pulse = anim
+        except Exception:
+            pass
+
+    def _stop_status_pulse(self) -> None:
+        try:
+            if self._status_pulse is not None:
+                try:
+                    self._status_pulse.stop()
+                except Exception:
+                    pass
+                self._status_pulse = None
+            if hasattr(self, "status_label"):
+                try:
+                    self.status_label.setGraphicsEffect(None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def handle_error(self, message: str):
         """Handle error from worker."""
+        self._error_state = True
+        self.power_btn.set_error(True)
+        self._stop_status_pulse()
         self.update_status(f"Error: {message}")
-        if self.tray:
+        if self._is_vb_cable_error(message):
+            # Blocking modal: processing cannot start without VB-Cable
+            # routing. Always show it, even when a tray icon exists.
+            self.bring_to_front()
+            try:
+                from .widgets.vb_cable_dialog import show_vb_cable_error
+                show_vb_cable_error(self, message)
+            except Exception:
+                QMessageBox.critical(self, "VB-Cable routing failed", message)
+        elif self.tray:
             self.tray.notify("Poise Error", message, is_error=True)
         else:
             QMessageBox.critical(self, "Error", message)
 
         _logger.error(f"Error: {message}")
-    
+
+    @staticmethod
+    def _is_vb_cable_error(message: str) -> bool:
+        """Check whether a worker error is a VB-Cable routing failure."""
+        text = (message or "").upper()
+        return "VB-CABLE" in text or ("CABLE" in text and "LOOPBACK" in text)
+
     def closeEvent(self, event: QCloseEvent):
         """Handle window close event (minimize to tray logic)."""
         # If minimize to tray is enabled
@@ -463,28 +1089,28 @@ class MainWindow(QMainWindow):
             # Check if we should ask first
             if not self.settings.minimize_to_tray_asked:
                 reply = QMessageBox.question(
-                    self, 
+                    self,
                     "Minimize to Tray",
                     "Poise will keep running in the system tray.\n\n"
                     "Do you want to minimize to tray instead of exiting?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.Yes
                 )
-                
+
                 minimize = (reply == QMessageBox.StandardButton.Yes)
                 self.settings.minimize_to_tray = minimize
                 self.settings.minimize_to_tray_asked = True
-            
+
             if self.settings.minimize_to_tray:
                 event.ignore()
                 self.hide()
                 # Notification removed as requested
                 return
-        
+
         # Actually closing
         self._quit_app()
         event.accept()
-    
+
     def bring_to_front(self):
         """Bring window to front and restore if minimized."""
         if sys.platform == 'win32':
@@ -497,23 +1123,23 @@ class MainWindow(QMainWindow):
                 ctypes.windll.user32.BringWindowToTop(hwnd)
             except Exception:
                 pass
-        
+
         self.show()
         self.raise_()
         self.activateWindow()
-    
+
     def _quit_app(self):
         """Clean shutdown."""
         self._forcing_quit = True
         # Save state
         self.settings.save_window_geometry(self.saveGeometry())
         self.settings.sync()
-        
+
         # Stop worker
         if self.worker.is_running:
             self.worker.stop()
             self.worker.wait(2000)
-        
+
         # Clean up shared memory and local server
         try:
             from PyQt6.QtCore import QSharedMemory
@@ -525,5 +1151,5 @@ class MainWindow(QMainWindow):
             QLocalServer.removeServer("poise.voiceisolator.singleinstance")
         except Exception:
             pass
-            
+
         QApplication.quit()

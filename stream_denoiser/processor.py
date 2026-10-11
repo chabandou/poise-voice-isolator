@@ -2,7 +2,7 @@
 Denoiser Audio Processor
 
 Core audio processing pipeline: a pluggable denoising engine (DeepFilterNet3
-via ONNX Runtime, or RNNoise) plus VAD, resampling, and streaming state
+via ONNX Runtime, or RNNoise) plus AAD, resampling, and streaming state
 management.
 """
 import time
@@ -12,15 +12,15 @@ from typing import Optional, Tuple
 from .constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_FRAME_SIZE,
-    DEFAULT_VAD_THRESHOLD_DB,
-    DEFAULT_VAD_HANG_TIME_MS,
+    DEFAULT_AAD_THRESHOLD_DB,
+    DEFAULT_AAD_HANG_TIME_MS,
     SOFT_LIMITER_THRESHOLD,
     AUDIO_CLIP_MIN,
     AUDIO_CLIP_MAX,
     OUTPUT_GAIN_DB,
 )
 from .engines import DenoiseEngine
-from .vad import VoiceActivityDetector
+from .aad import AudioActivityDetector
 from .resampler import StreamingResampler
 from .logging_config import get_logger
 
@@ -30,14 +30,14 @@ _logger = get_logger(__name__)
 class DenoiserAudioProcessor:
     """
     Audio processor for denoiser models.
-    Handles direct time-domain processing, engine inference, resampling, and VAD.
+    Handles direct time-domain processing, engine inference, resampling, and AAD.
     """
     
     def __init__(self, engine,
                  target_sr: int = DEFAULT_SAMPLE_RATE, 
                  frame_size: int = DEFAULT_FRAME_SIZE, 
-                 enable_vad: bool = True, 
-                 vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB, 
+                 enable_aad: bool = True, 
+                 aad_threshold_db: float = DEFAULT_AAD_THRESHOLD_DB, 
                  atten_lim_db: float = -60.0):
         """
         Initialize audio processor.
@@ -47,8 +47,8 @@ class DenoiserAudioProcessor:
             target_sr: Target sample rate for model (default: 48000)
             frame_size: Frame size in samples (default: 480; engines with a
                 fixed frame size, e.g. deepfilternet3=512, override this)
-            enable_vad: Enable Voice Activity Detection (default: True)
-            vad_threshold_db: VAD threshold in dB (default: -40.0)
+            enable_aad: Enable Audio Activity detection (default: True)
+            aad_threshold_db: AAD threshold in dB (default: -40.0)
             atten_lim_db: Attenuation limit in dB. informational only —
                 engines created via create_engine() carry their own.
         """
@@ -68,7 +68,7 @@ class DenoiserAudioProcessor:
         self.engine = engine
         self.target_sr = target_sr
         self.frame_size = frame_size
-        self.enable_vad = enable_vad
+        self.enable_aad = enable_aad
         self.atten_lim_db = atten_lim_db
         # Fixed makeup gain (linear) applied to every output frame before
         # the soft limiter. Not user-configurable by design.
@@ -100,13 +100,13 @@ class DenoiserAudioProcessor:
         self._input_block_err: float = 0.0
         self.output_sr: int = target_sr
         
-        # VAD
-        self.vad = VoiceActivityDetector(
-            vad_threshold_db, 
-            hang_time_ms=DEFAULT_VAD_HANG_TIME_MS, 
+        # AAD
+        self.aad = AudioActivityDetector(
+            aad_threshold_db, 
+            hang_time_ms=DEFAULT_AAD_HANG_TIME_MS, 
             sample_rate=target_sr,
             frame_size=frame_size
-        ) if enable_vad else None
+        ) if enable_aad else None
         
         # Statistics
         self.frame_count = 0
@@ -116,8 +116,8 @@ class DenoiserAudioProcessor:
         self._abs_scratch = np.zeros(frame_size, dtype=np.float32)
         
         _logger.info(f"Denoise engine: {engine.name}")
-        if enable_vad:
-            _logger.info(f"VAD enabled with threshold: {vad_threshold_db} dB")
+        if enable_aad:
+            _logger.info(f"AAD enabled with threshold: {aad_threshold_db} dB")
     
     def setup_resampler(self, input_sr: int) -> None:
         """
@@ -315,8 +315,8 @@ class DenoiserAudioProcessor:
         # Ensure correct size
         audio_chunk = self._normalize_frame_size(audio_chunk)
         
-        # VAD check - bypass processing if silence detected
-        if self.vad and not self.vad.is_speech(audio_chunk):
+        # AAD check - bypass processing if silence detected
+        if self.aad and not self.aad.is_audio(audio_chunk):
             # Bypassed frames get the same makeup gain + limiter chain as
             # processed frames so loudness stays consistent and the boosted
             # signal still can't clip. Still runs through the output
@@ -400,15 +400,15 @@ class DenoiserAudioProcessor:
             stats['avg_time_ms'] = avg_time
             stats['rtf'] = rtf
         
-        # Add VAD stats
-        if self.vad:
-            vad_stats = self.vad.get_stats()
+        # Add AAD stats
+        if self.aad:
+            aad_stats = self.aad.get_stats()
             stats.update({
-                'vad_total': vad_stats['total'],
-                'vad_active': vad_stats['active'],
-                'vad_bypassed': vad_stats['bypassed'],
-                'vad_bypass_ratio': vad_stats['bypass_ratio'],
-                'vad_bypass_active': self.vad.bypass_active,
+                'aad_total': aad_stats['total'],
+                'aad_active': aad_stats['active'],
+                'aad_bypassed': aad_stats['bypassed'],
+                'aad_bypass_ratio': aad_stats['bypass_ratio'],
+                'aad_bypass_active': self.aad.bypass_active,
             })
 
         return stats
@@ -417,7 +417,7 @@ class DenoiserAudioProcessor:
         """
         Extra counters for file-log diagnosis (does not affect UI numbers).
 
-        Distinguishes "RTF=0 because VAD bypassed everything (silence)"
+        Distinguishes "RTF=0 because AAD bypassed everything (silence)"
         from "RTF=0 because no frames reached the engine (resampler
         starvation / empty reads)".
         """
@@ -440,7 +440,7 @@ class DenoiserAudioProcessor:
         diag['output_resampler_dropped'] = (
             self.output_resampler.dropped_samples if self.output_resampler else 0
         )
-        diag['vad_threshold_db'] = self.vad.threshold_db if self.vad else None
+        diag['aad_threshold_db'] = self.aad.threshold_db if self.aad else None
         return diag
     
     def reset(self):
@@ -450,8 +450,8 @@ class DenoiserAudioProcessor:
             self.resampler.reset()
         if self.output_resampler:
             self.output_resampler.reset()
-        if self.vad:
-            self.vad.reset()
+        if self.aad:
+            self.aad.reset()
         self.frame_count = 0
         self.total_processing_time = 0.0
         self._input_block_err = 0.0

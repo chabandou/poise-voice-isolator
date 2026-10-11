@@ -34,7 +34,7 @@ const downloadOptions: InstallGuide[] = [
 			"Launch Poise Voice Isolator from your Desktop or Start Menu.",
 		],
 		links: [
-			{ label: "Download Poise_Setup.exe", url: "https://github.com/chabandou/poise-voice-isolator/releases/download/launch/Poise_Setup.exe" },
+			{ label: "Download Poise_Setup.exe", url: "https://github.com/chabandou/poise-voice-isolator/releases/latest/download/Poise_Setup.exe" },
 			{ label: "Install VB Cable", url: "https://vb-audio.com/Cable/index.htm" },
 		],
 	},

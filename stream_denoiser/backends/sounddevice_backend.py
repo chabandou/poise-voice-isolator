@@ -95,8 +95,22 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
     _logger = get_logger(__name__)
     
     try:
-        # Try to open streams
+        # Try to open streams.
+        # NOTE: always capture stereo and downmix in software. Opening a
+        # stereo WASAPI endpoint (e.g. VB-Cable Output) with channels=1
+        # yields sample-doubled garbage on this driver (every sample
+        # repeated twice = effective half rate in a full-rate container:
+        # dull, muffled, incomprehensible). Stereo capture is bit-clean.
         try:
+            input_stream = sd.InputStream(
+                device=input_dev_id,
+                samplerate=input_sr,
+                channels=2,
+                dtype='float32',
+                blocksize=in_block_size
+            )
+        except sd.PortAudioError:
+            # Fall back to mono capture for genuinely mono devices.
             input_stream = sd.InputStream(
                 device=input_dev_id,
                 samplerate=input_sr,
@@ -168,8 +182,15 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                 if audio_chunk is None or len(audio_chunk) == 0:
                     continue
                 
-                # Flatten to mono
-                audio_chunk = audio_chunk.flatten()
+                # Downmix to mono in software (mean). See the channels=2
+                # note at stream open: a mono open corrupts the capture.
+                if audio_chunk.ndim == 2:
+                    if audio_chunk.shape[1] > 1:
+                        audio_chunk = audio_chunk.mean(axis=1).astype(np.float32)
+                    else:
+                        audio_chunk = audio_chunk.flatten()
+                else:
+                    audio_chunk = audio_chunk.flatten()
                 
                 # Process through unified processor
                 audio_output = processor.process_chunk(audio_chunk)
@@ -195,13 +216,13 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                     stats = processor.get_stats()
                     diag = processor.get_diagnostics()
                     _logger.info(
-                        "perf: frames=%s avg_ms=%.2f rtf=%.3f vad_total=%s "
-                        "vad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs "
+                        "perf: frames=%s avg_ms=%.2f rtf=%.3f aad_total=%s "
+                        "aad_bypassed=%s bypass_ratio=%.2f elapsed=%.1fs "
                         "in_block=%s backlog=%s dropped=%s",
                         stats.get("frame_count"), stats.get("avg_time_ms", 0.0),
-                        stats.get("rtf", 0.0), stats.get("vad_total"),
-                        stats.get("vad_bypassed"),
-                        stats.get("vad_bypass_ratio", 0.0),
+                        stats.get("rtf", 0.0), stats.get("aad_total"),
+                        stats.get("aad_bypassed"),
+                        stats.get("aad_bypass_ratio", 0.0),
                         current_time - start_time,
                         diag.get("input_block_size"),
                         diag.get("resampler_backlog"),

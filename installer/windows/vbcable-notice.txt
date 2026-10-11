@@ -1,0 +1,16 @@
+Third-party software: VB-CABLE
+==============================
+
+Poise includes VB-CABLE, a virtual audio cable developed by
+VB-Audio Software.
+
+Origin of VB-CABLE: https://www.vb-cable.com/
+VB-CABLE is donationware, all participations are welcome.
+Licensing and donations: https://vb-audio.com/Services/licensing.htm
+
+VB-CABLE is a third-party component and is not covered by
+Poise's MIT licence.
+
+This installer bundles the base VB-CABLE package and runs its
+setup silently, only when CABLE endpoints are not already
+present on your system. VB-CABLE A+B / C+D are NOT included.

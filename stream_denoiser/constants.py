@@ -23,12 +23,16 @@ MODEL_INFO = {
         "label": "DeepFilterNet3",
         # Picker modal: quality/CPU tradeoff.
         "picker_blurb": "Music/voice isolation · medium CPU load",
+        # GUI model card: plain-language summary.
+        "card_blurb": "Removes music and keeps voices. Medium CPU use.",
         # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",
         "picker_blurb": "Worse isolation · lower CPU load",
+        "card_blurb": "Reduces steady noise like fans and hiss, but not "
+                      "music. Light CPU use.",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
     },
 }
@@ -36,16 +40,16 @@ MODEL_INFO = {
 # RNNoise constants (RNNoise expects float samples in 16-bit range, not [-1, 1])
 RNNOISE_SCALE = 32768.0
 
-# VAD constants
-DEFAULT_VAD_THRESHOLD_DB = -40.0
-DEFAULT_VAD_HANG_TIME_MS = 300.0
+# AAD constants
+DEFAULT_AAD_THRESHOLD_DB = -40.0
+DEFAULT_AAD_HANG_TIME_MS = 300.0
 
 # Audio processing constants
 SOFT_LIMITER_THRESHOLD = 0.98
 AUDIO_CLIP_MIN = -1.0
 AUDIO_CLIP_MAX = 1.0
 
-# Fixed makeup gain applied to all output (voiced + VAD-bypassed frames)
+# Fixed makeup gain applied to all output (voiced + AAD-bypassed frames)
 # before the soft limiter. Denoisers strip noise energy, so processed
 # speech measures quieter than the raw mix at the same sink volume.
 # 6 dB ~= x2 amplitude; the limiter + clip stage after it guarantees
@@ -66,12 +70,14 @@ STATS_PRINT_INTERVAL_SEC = 1.0  # 1 second
 POWERSHELL_CHECK_TIMEOUT_SEC = 2
 POWERSHELL_DEFAULT_TIMEOUT_SEC = 5
 POWERSHELL_MODULE_CHECK_TIMEOUT_SEC = 10
-POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC = 30
+POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC = 120
+POWERSHELL_PROVIDER_INSTALL_TIMEOUT_SEC = 60
 
 # Device switching constants
 DEVICE_SWITCH_SETTLE_TIME_SEC = 0.2
 DEVICE_SWITCH_INIT_DELAY_SEC = 0.8
 DEVICE_SWITCH_STREAM_DELAY_SEC = 0.3
+DEVICE_SWITCH_SUCCESS_HOLD_SEC = 3.0
 OUTPUT_STREAM_RETRY_COUNT = 3
 OUTPUT_STREAM_RETRY_DELAY_SEC = 0.5
 
@@ -80,9 +86,25 @@ MSG_RNNOISE_NOT_FOUND = (
     "RNNoise library (librnnoise) not found: {}\n"
     "Install it with your package manager, e.g. 'sudo pacman -S rnnoise' on Arch."
 )
-MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux."
+MSG_RNNOISE_WINDOWS_NOT_FOUND = (
+    "RNNoise library (rnnoise.dll) not found: {}\n"
+    "Reinstall Poise — rnnoise.dll should sit next to Poise.exe."
+)
+MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux and Windows."
 MSG_NO_BACKEND = "No audio backend available"
 MSG_POWERSHELL_UNAVAILABLE = "PowerShell not available - VB Cable switching disabled"
 MSG_DEVICE_SWITCH_ERROR = "Error switching device: {}"
+MSG_DEVICE_SWITCHING = "Switching audio device..."
+MSG_DEVICE_SWITCHING_FIRST_TIME = (
+    "Switching audio device... First time may take a few seconds "
+    "(installing AudioDeviceCmdlets)..."
+)
+MSG_AUDIO_TOOLS_DOWNLOADING = (
+    "Downloading audio tools... First time may take a few seconds..."
+)
+MSG_AUDIO_MODULE_INSTALLING = (
+    "Installing AudioDeviceCmdlets... First time may take a few seconds..."
+)
+MSG_DEVICE_SWITCHED = "Switched to VB-Cable (CABLE Input)"
 MSG_PROCESSING_STARTED = "Processing started"
 MSG_PROCESSING_STOPPED = "Processing stopped"

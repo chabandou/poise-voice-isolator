@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Poise Voice Isolator"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Poise"
 #define MyAppExeName "Poise.exe"
 
@@ -20,10 +20,11 @@ DisableProgramGroupPage=yes
 ;PrivilegesRequired=lowest
 OutputDir=installer
 OutputBaseFilename=Poise_Setup
-SetupIconFile=c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\stream_denoiser\gui\assets\icon.ico
+SetupIconFile=stream_denoiser\gui\assets\icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+InfoBeforeFile=installer\windows\vbcable-notice.txt
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -32,9 +33,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "c:\Users\ADMIN\OneDrive\Bureau\Projects\Personal Projects\AI\speechehancer\48k model\dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\Poise\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\Poise\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+; PyInstaller >= 6 stages datas under dist\Poise\_internal\ (older layouts
+; put them in dist\Poise\ directly). Remap the driver pack to a stable
+; {app}\vbcable so the [Code] driver install below finds it regardless.
+; Skipped silently when the source dir is absent (old layout: the blanket
+; copy above already covers dist\Poise\vbcable\).
+Source: "dist\Poise\_internal\vbcable\*"; DestDir: "{app}\vbcable"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -42,3 +49,87 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  VbcableNeedsReboot: Boolean;
+
+{ Scan the MMDevices registry for a CABLE Input render endpoint.
+  Needs no AudioDeviceCmdlets module, so it works on fresh machines.
+  Running the VB-Cable setup while already installed offers REMOVAL,
+  so this gate must stay: never run the setup blindly. }
+function NeedsVbcableInstall(): Boolean;
+var
+  PsPath, OutPath: String;
+  { SaveStringToFile/LoadStringFromFile take AnsiString (var param needs an
+    exact-type match, so plain String fails compile with "Type mismatch"). }
+  Script, Output: AnsiString;
+  ResultCode: Integer;
+begin
+  Result := True;
+  PsPath := ExpandConstant('{tmp}\poise_vbcable_detect.ps1');
+  OutPath := ExpandConstant('{tmp}\poise_vbcable_detect.txt');
+  Script :=
+    '$names = Get-ChildItem ''HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render'' -ErrorAction SilentlyContinue | ForEach-Object {' + #13#10 +
+    '    $p = $_.PSPath + ''\Properties'';' + #13#10 +
+    '    (Get-ItemProperty -Path $p -Name ''{a45c254e-df1c-4efd-8020-67d146a850e0},2'' -ErrorAction SilentlyContinue).''{a45c254e-df1c-4efd-8020-67d146a850e0},2''' + #13#10 +
+    '};' + #13#10 +
+    '$found = $names | Where-Object { $_ -like ''CABLE Input*'' };' + #13#10 +
+    'if ($found) { $verdict = ''CABLE-PRESENT'' } else { $verdict = ''CABLE-MISSING'' };' + #13#10 +
+    'Out-File -FilePath ''' + OutPath + ''' -InputObject $verdict -Encoding ascii;' + #13#10;
+  if not SaveStringToFile(PsPath, Script, False) then
+    Exit;
+  if not Exec('powershell.exe',
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + PsPath + '"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;
+  if LoadStringFromFile(OutPath, Output) then
+    Result := Pos('CABLE-PRESENT', Output) = 0;
+  { Fail closed: any detection failure reports "no install needed" so a
+    broken probe can never trigger the setup's removal-offer path. The
+    in-app Install button remains as fallback. }
+  if Result then
+    Log('Poise: CABLE endpoints missing, VB-Cable setup will run')
+  else
+    Log('Poise: CABLE endpoints present, skipping VB-Cable setup');
+end;
+
+{ Silent-install the vendored driver after files land, only when CABLE
+  is missing. 3010/1641 mean "installed, reboot to activate". }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  SetupExe: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  { Canonical location (remapped by [Files] above); fall back to the raw
+    PyInstaller >= 6 layout in case the remap was skipped. }
+  SetupExe := ExpandConstant('{app}\vbcable\VBCABLE_Setup_x64.exe');
+  if not FileExists(SetupExe) then
+    SetupExe := ExpandConstant('{app}\_internal\vbcable\VBCABLE_Setup_x64.exe');
+  if not FileExists(SetupExe) then
+  begin
+    Log('Poise: vendored VB-Cable setup not found, skipping driver install');
+    Exit;
+  end;
+  if not NeedsVbcableInstall() then
+    Exit;
+  Log('Poise: running vendored VB-Cable setup (silent)');
+  { Run from the setup's own directory: it resolves its sibling driver
+    files (.sys/.cat/.inf) relative to the working directory. }
+  if Exec(SetupExe, '-i -h', ExtractFileDir(SetupExe),
+      SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log(Format('Poise: VB-Cable setup exited with code %d', [ResultCode]));
+    if (ResultCode = 3010) or (ResultCode = 1641) then
+      VbcableNeedsReboot := True;
+  end
+  else
+    Log('Poise: failed to launch VB-Cable setup');
+end;
+
+function NeedRestart(): Boolean;
+begin
+  Result := VbcableNeedsReboot;
+end;

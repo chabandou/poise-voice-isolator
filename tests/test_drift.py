@@ -8,7 +8,7 @@ accumulated without bound (~45 samples/frame -> ~14s of delay after 3min),
 so the processed audio lagged further and further behind the video.
 
 The fix scales the input read size (`processor.input_block_size`) so each
-read yields ~one engine frame, routes VAD-bypassed frames through the
+read yields ~one engine frame, routes AAD-bypassed frames through the
 output resampler too, and caps resampler backlogs so latency stays bounded.
 """
 import numpy as np
@@ -56,9 +56,9 @@ class _FakeEngine512(DenoiseEngine):
         pass
 
 
-def _make_processor(input_sr, output_sr=TARGET_SR, enable_vad=False):
+def _make_processor(input_sr, output_sr=TARGET_SR, enable_aad=False):
     proc = DenoiserAudioProcessor(_FakeEngine(), target_sr=TARGET_SR,
-                                 frame_size=FRAME, enable_vad=enable_vad)
+                                 frame_size=FRAME, enable_aad=enable_aad)
     proc.setup_resampler(input_sr)
     proc.setup_output_resampler(output_sr)
     return proc
@@ -117,12 +117,12 @@ def test_resampler_cap_bounds_latency_directly():
     assert r.dropped_samples > 0
 
 
-def test_vad_bypass_applies_output_resampling():
-    """Silence (VAD bypass) frames must come out at the output device rate,
+def test_aad_bypass_applies_output_resampling():
+    """Silence (AAD bypass) frames must come out at the output device rate,
     otherwise bypassed frames have the wrong length/timing vs processed ones."""
-    proc = _make_processor(TARGET_SR, output_sr=44100, enable_vad=True)
+    proc = _make_processor(TARGET_SR, output_sr=44100, enable_aad=True)
     # Threshold above any content of a silent frame -> always bypass.
-    proc.vad.set_threshold(10.0)
+    proc.aad.set_threshold(10.0)
     assert proc.output_resample_size == 441
 
     lengths = []
@@ -141,14 +141,14 @@ def test_next_input_block_size_averages_exact():
     (a periodic ~10ms output gap / sync wobble)."""
     from stream_denoiser.processor import DenoiserAudioProcessor
     proc = DenoiserAudioProcessor(_FakeEngine(), target_sr=TARGET_SR,
-                                  frame_size=FRAME, enable_vad=False)
+                                  frame_size=FRAME, enable_aad=False)
     # 44100Hz input with the default 480-frame: exact size is whole (441).
     proc.setup_resampler(44100)
     assert proc.input_block_size == 441
     assert all(proc.next_input_block_size() == 441 for _ in range(50))
 
     proc512 = DenoiserAudioProcessor(_FakeEngine512(), target_sr=TARGET_SR,
-                                     frame_size=512, enable_vad=False)
+                                     frame_size=512, enable_aad=False)
     proc512.setup_resampler(44100)
     assert proc512.input_block_size == 470  # round(470.4)
     sizes = [proc512.next_input_block_size() for _ in range(1000)]
@@ -170,7 +170,7 @@ def test_next_output_block_size_averages_exact():
 
     from stream_denoiser.processor import DenoiserAudioProcessor
     proc512 = DenoiserAudioProcessor(_FakeEngine512(), target_sr=TARGET_SR,
-                                    frame_size=512, enable_vad=False)
+                                    frame_size=512, enable_aad=False)
     proc512.setup_resampler(TARGET_SR)
     proc512.setup_output_resampler(44100)
     assert proc512.output_resample_size == 470  # round(470.4)

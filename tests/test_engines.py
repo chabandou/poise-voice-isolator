@@ -112,7 +112,7 @@ def test_processor_uses_engine_frame_size_for_df3():
         proc = DenoiserAudioProcessor(
             engine,
             frame_size=engine.required_frame_size,
-            enable_vad=False,
+            enable_aad=False,
         )
         n = engine.required_frame_size
         rng = np.random.default_rng(0)
@@ -213,7 +213,7 @@ def test_processor_works_with_stub_engine_without_onnx():
             pass
 
     proc = DenoiserAudioProcessor(
-        StubEngine(), enable_vad=False, atten_lim_db=-60.0
+        StubEngine(), enable_aad=False, atten_lim_db=-60.0
     )
     frame = np.ones(DEFAULT_FRAME_SIZE, dtype=np.float32) * 0.4
     out = proc.process_chunk(frame)

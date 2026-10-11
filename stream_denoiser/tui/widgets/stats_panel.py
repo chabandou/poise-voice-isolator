@@ -28,7 +28,7 @@ class StatsPanel(Static):
         MODEL_INFO.get(DEFAULT_MODEL, {}).get("blurb", "")
     )
     model_frame: reactive[str] = reactive("")
-    vad_state: reactive[str] = reactive("Active")
+    aad_state: reactive[str] = reactive("Active")
     rtf: reactive[float] = reactive(0.0)
     avg_ms: reactive[float] = reactive(0.0)
     frames: reactive[int] = reactive(0)
@@ -72,10 +72,10 @@ class StatsPanel(Static):
             
             yield Rule(line_style="dashed")
                 
-            # VAD Bypass
+            # AAD Bypass
             with Horizontal(classes="stat-row"):
-                yield Static("Voice Activity Detection Bypass", classes="stat-label")
-                yield Static("Active", classes="stat-value", id="val-vad")
+                yield Static("Audio Activity detection Bypass", classes="stat-label")
+                yield Static("Active", classes="stat-value", id="val-aad")
             
             yield Rule(line_style="dashed")
                 
@@ -120,11 +120,11 @@ class StatsPanel(Static):
         self.rtf = stats.get('rtf', 0.0)
         self.avg_ms = stats.get('avg_time_ms', 0.0)
         self.frames = stats.get('frame_count', 0)
-        if 'vad_bypass_active' in stats:
+        if 'aad_bypass_active' in stats:
             # Bypass engaged (silence) -> Active; speech passing through -> Inactive
-            self.vad_state = "Active" if stats['vad_bypass_active'] else "Inactive"
+            self.aad_state = "Active" if stats['aad_bypass_active'] else "Inactive"
         else:
-            self.vad_state = "Off"
+            self.aad_state = "Off"
         self.running_time = running_time
         if 'model' in stats:
             model_id = stats['model']
@@ -149,7 +149,7 @@ class StatsPanel(Static):
             self.query_one("#val-rtf", Static).update(f"{self.rtf:.3f}")
             self.query_one("#val-avg", Static).update(f"{self.avg_ms:.2f} ms")
             self.query_one("#val-frames", Static).update(f"{self.frames}")
-            self.query_one("#val-vad", Static).update(f"{self.vad_state}")
+            self.query_one("#val-aad", Static).update(f"{self.aad_state}")
             self.query_one("#val-time", Static).update(f"{time_str}")
         except Exception:
             pass

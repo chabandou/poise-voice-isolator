@@ -17,7 +17,7 @@ from .engines.base import DenoiseEngine
 from .constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_FRAME_SIZE,
-    DEFAULT_VAD_THRESHOLD_DB,
+    DEFAULT_AAD_THRESHOLD_DB,
     DEVICE_SWITCH_INIT_DELAY_SEC,
     MSG_POWERSHELL_UNAVAILABLE,
     ALL_MODELS,
@@ -29,7 +29,6 @@ from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import (
-    USE_PYAUDIOWPATCH,
     USE_SOUNDDEVICE,
     sd,
 )
@@ -41,8 +40,8 @@ _logger = get_logger(__name__)
 def process_system_audio_realtime(engine: DenoiseEngine,
                                  input_device: Optional[int] = None,
                                  output_device: Optional[int] = None,
-                                 enable_vad: bool = True,
-                                 vad_threshold_db: float = DEFAULT_VAD_THRESHOLD_DB,
+                                 enable_aad: bool = True,
+                                 aad_threshold_db: float = DEFAULT_AAD_THRESHOLD_DB,
                                  atten_lim_db: float = -60.0,
                                  use_vb_cable: bool = True,
                                  vb_cable_name: Optional[str] = None,
@@ -57,8 +56,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             InferenceSession is also accepted for backward compatibility)
         input_device: Input device ID (Windows only; errors on Linux)
         output_device: Output device ID (Windows only; errors on Linux)
-        enable_vad: Enable Voice Activity Detection
-        vad_threshold_db: VAD threshold in dB
+        enable_aad: Enable Audio Activity detection
+        aad_threshold_db: AAD threshold in dB
         atten_lim_db: Attenuation limit in dB
         use_vb_cable: Whether to automatically switch devices (VB Cable on Windows, null sink on Linux)
         vb_cable_name: Custom name for VB Cable device (auto-detected if None)
@@ -136,8 +135,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                 engine,
                 target_sr=PULSE_TARGET_SR,
                 frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_vad=enable_vad,
-                vad_threshold_db=vad_threshold_db,
+                enable_aad=enable_aad,
+                aad_threshold_db=aad_threshold_db,
                 atten_lim_db=atten_lim_db
             )
             from .backends.pulse_backend import process_with_pulse
@@ -169,22 +168,14 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             engine,
             target_sr=DEFAULT_SAMPLE_RATE,
             frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-            enable_vad=enable_vad,
-            vad_threshold_db=vad_threshold_db,
+            enable_aad=enable_aad,
+            aad_threshold_db=aad_threshold_db,
             atten_lim_db=atten_lim_db
         )
 
-        # Get the actual VB Cable name that was switched to
-        actual_vb_cable_name = None
-        if vb_cable_switcher is not None:
-            actual_vb_cable_name = vb_cable_switcher.vb_cable_name
-
-        # Select backend
-        if USE_PYAUDIOWPATCH:
-            _logger.info("Using PyAudioWPatch + sounddevice backend")
-            from .backends.pyaudio_backend import process_with_pyaudiowpatch
-            process_with_pyaudiowpatch(processor, input_device, output_device, vb_cable_name=actual_vb_cable_name)
-        elif USE_SOUNDDEVICE:
+        # Select backend (sounddevice-only; CABLE Output is a regular
+        # WASAPI capture device, no loopback extension needed)
+        if USE_SOUNDDEVICE:
             _logger.info("Using sounddevice backend")
             from .backends.sounddevice_backend import process_with_sounddevice
             process_with_sounddevice(processor, input_device, output_device)
@@ -205,12 +196,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process system audio (default with VAD and VB Cable switching):
+  # Process system audio (default with AAD and VB Cable switching):
   python -m stream_denoiser
 
 
-  # Disable VAD:
-  python -m stream_denoiser --no-vad
+  # Disable AAD:
+  python -m stream_denoiser --no-aad
 
   # Use the RNNoise engine (same model as EasyEffects, light on CPU):
   python -m stream_denoiser --model rnnoise
@@ -218,8 +209,8 @@ Examples:
   # Use DeepFilterNet3 (faster, ~2x less CPU):
   python -m stream_denoiser --model deepfilternet3
 
-  # Adjust VAD sensitivity (lower = more sensitive):
-  python -m stream_denoiser --vad-threshold -50
+  # Adjust AAD sensitivity (lower = more sensitive):
+  python -m stream_denoiser --aad-threshold -50
 
   # Adjust attenuation limit:
   python -m stream_denoiser --atten-lim-db -80
@@ -245,7 +236,9 @@ Examples:
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
                         choices=list(ALL_MODELS),
                         help=f'Denoising engine to use (default: {DEFAULT_MODEL}). '
-                             f'rnnoise uses the system librnnoise (same as EasyEffects).')
+                             f'rnnoise uses the system librnnoise on Linux '
+                             f'(same as EasyEffects) or the bundled rnnoise.dll '
+                             f'on Windows.')
     parser.add_argument('--onnx', type=str, default=DEFAULT_DF3_ONNX,
                         help='Path to ONNX model file (deepfilternet3 only, '
                              'default: denoiser_model_df3.onnx; a '
@@ -260,10 +253,16 @@ Examples:
     parser.add_argument('--sink', type=str, default=None,
                         help='Pulse sink name for playback (Linux only, '
                              'default: original hardware sink)')
+    parser.add_argument('--no-aad', action='store_true',
+                        help='Disable Audio Activity detection')
+    parser.add_argument('--aad-threshold', type=float, default=DEFAULT_AAD_THRESHOLD_DB,
+                        help=f'AAD threshold in dB (default: {DEFAULT_AAD_THRESHOLD_DB}, lower = more sensitive)')
+    # Deprecated aliases: old scripts keep working, hidden from --help.
     parser.add_argument('--no-vad', action='store_true',
-                        help='Disable Voice Activity Detection')
-    parser.add_argument('--vad-threshold', type=float, default=DEFAULT_VAD_THRESHOLD_DB,
-                        help=f'VAD threshold in dB (default: {DEFAULT_VAD_THRESHOLD_DB}, lower = more sensitive)')
+                        dest='no_aad', help=argparse.SUPPRESS)
+    parser.add_argument('--vad-threshold', type=float,
+                        default=DEFAULT_AAD_THRESHOLD_DB,
+                        dest='aad_threshold', help=argparse.SUPPRESS)
     parser.add_argument('--atten-lim-db', type=float, default=-60.0,
                         help='Attenuation limit in dB (default: -60.0)')
     parser.add_argument('--list-devices', action='store_true',
@@ -291,9 +290,14 @@ Examples:
     # checks, engine creation, and routing decisions are all captured.
     # The path is announced so users (and remote support) can find it even
     # when the TUI takes over the console or a fallback dir was used.
-    from .logging_config import ensure_from_log_args, get_log_file_path
+    from .logging_config import (
+        ensure_from_log_args,
+        get_log_file_path,
+        enable_crash_traceback,
+    )
     _path = ensure_from_log_args(args) or get_log_file_path()
     if _path:
+        enable_crash_traceback()
         _level = 'DEBUG' if args.verbose else args.log_level
         _logger.info("file log: %s (level=%s)", _path, _level)
         # TUI suppresses console; point the user at the file. In CLI mode
@@ -427,8 +431,8 @@ Examples:
             engine,
             input_device=args.input_device,
             output_device=args.output_device,
-            enable_vad=not args.no_vad,
-            vad_threshold_db=args.vad_threshold,
+            enable_aad=not args.no_aad,
+            aad_threshold_db=args.aad_threshold,
             atten_lim_db=args.atten_lim_db,
             use_vb_cable=not args.no_vb_cable,
             vb_cable_name=args.vb_cable_name,

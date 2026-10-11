@@ -18,6 +18,7 @@ def main(argv=None):
         announce_log_path,
         ensure_from_log_args,
         get_log_file_path,
+        enable_crash_traceback,
     )
     parser = argparse.ArgumentParser(description='Poise Voice Isolator TUI')
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
@@ -35,6 +36,7 @@ def main(argv=None):
     try:
         path = ensure_from_log_args(args) or get_log_file_path()
         announce_log_path(path)
+        enable_crash_traceback()
     except Exception:
         pass
     # One-shot maintenance commands (no TUI needed). The binary IS the TUI,

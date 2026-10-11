@@ -2,12 +2,12 @@
 Stream Denoiser Package
 
 Real-time audio denoising using ONNX model inference with support for
-WASAPI loopback capture, Voice Activity Detection, and VB Cable switching.
+WASAPI loopback capture, Audio Activity detection, and VB Cable switching.
 
 Features:
 - Direct time-domain processing (no STFT/ISTFT)
 - Engine-native frames at 48kHz (deepfilternet3: 512 samples / 10.67ms)
-- Voice Activity Detection (VAD) for 2-3x performance boost
+- Audio Activity detection (AAD) for 2-3x performance boost
 - Lock-free ring buffers for reduced latency
 - Streaming state management for continuous processing
 """
@@ -15,10 +15,10 @@ Features:
 from .constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_FRAME_SIZE,
-    DEFAULT_VAD_THRESHOLD_DB,
+    DEFAULT_AAD_THRESHOLD_DB,
 )
 from .ring_buffer import RingBuffer
-from .vad import VoiceActivityDetector
+from .aad import AudioActivityDetector
 from .resampler import StreamingResampler
 from .processor import DenoiserAudioProcessor
 from .vb_cable import VB_CableSwitcher
@@ -42,10 +42,10 @@ __all__ = [
     # Constants
     "DEFAULT_SAMPLE_RATE",
     "DEFAULT_FRAME_SIZE",
-    "DEFAULT_VAD_THRESHOLD_DB",
+    "DEFAULT_AAD_THRESHOLD_DB",
     # Classes
     "RingBuffer",
-    "VoiceActivityDetector",
+    "AudioActivityDetector",
     "StreamingResampler",
     "DenoiserAudioProcessor",
     "VB_CableSwitcher",

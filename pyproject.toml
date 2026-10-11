@@ -30,7 +30,6 @@ dependencies = [
     "numpy>=1.23.0,<2.0.0",
     "onnxruntime>=1.15.0",
     "sounddevice>=0.4.6; sys_platform == 'win32'",
-    "pyaudio>=0.2.13; sys_platform == 'win32'",
     "scipy>=1.10.0",
     "samplerate>=0.1.0",
 ]
@@ -68,7 +67,7 @@ where = ["."]
 include = ["stream_denoiser*"]
 
 [tool.setuptools.package-data]
-stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*"]
+stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*", "gui/assets/fonts/*", "gui/assets/icons/*", "native/*.dll"]
 
 [tool.pytest.ini_options]
 markers = [

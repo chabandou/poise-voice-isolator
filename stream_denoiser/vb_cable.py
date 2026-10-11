@@ -13,8 +13,11 @@ from .constants import (
     POWERSHELL_DEFAULT_TIMEOUT_SEC,
     POWERSHELL_MODULE_CHECK_TIMEOUT_SEC,
     POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC,
+    POWERSHELL_PROVIDER_INSTALL_TIMEOUT_SEC,
     DEVICE_SWITCH_SETTLE_TIME_SEC,
     MSG_DEVICE_SWITCH_ERROR,
+    MSG_AUDIO_TOOLS_DOWNLOADING,
+    MSG_AUDIO_MODULE_INSTALLING,
 )
 from .logging_config import get_logger
 
@@ -33,21 +36,24 @@ class VB_CableSwitcher:
     _PS_GET_DEVICE_LIST = f"{_PS_IMPORT_MODULE}; Get-AudioDevice -List"
     
     def __init__(self, vb_cable_name: str = "CABLE Input (VB-Audio Virtual Cable)", 
-                 auto_switch: bool = True):
+                 auto_switch: bool = True, status_cb=None):
         """
         Initialize VB Cable switcher.
         
         Args:
             vb_cable_name: Exact name of VB Cable playback device
             auto_switch: Whether to automatically switch to VB Cable on init
+            status_cb: Optional callable(str) for one-time setup progress
+                (e.g. worker status signal). Never raises.
         """
         self.vb_cable_name = vb_cable_name
         self.original_device: Optional[str] = None
         self.auto_switch = auto_switch
+        self._status_cb = status_cb
         self._powershell_available = self._check_powershell_available()
         
         if auto_switch and self._powershell_available:
-            self._ensure_powershell_module()
+            self._ensure_powershell_module(status_cb=status_cb)
             self.switch_to_vb_cable()
     
     def _run_powershell_command(self, command: str, timeout: int = 5) -> Optional[str]:
@@ -64,14 +70,17 @@ class VB_CableSwitcher:
         Returns:
             Stripped stdout on success (returncode 0), None on failure or timeout
         """
-        full_command = f'powershell -NoProfile -Command "{command}"'
+        # -NonInteractive + DEVNULL stdin: never block on Y/N prompts when
+        # the GUI has no console (e.g. NuGet provider prompt on first run).
+        full_command = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "{command}"'
         try:
             result = subprocess.run(
                 full_command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                stdin=subprocess.DEVNULL
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
@@ -85,40 +94,107 @@ class VB_CableSwitcher:
         """Check if PowerShell is available on the system."""
         try:
             subprocess.run(
-                ['powershell', '-NoProfile', '-Command', 'exit 0'],
+                ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 timeout=POWERSHELL_CHECK_TIMEOUT_SEC
             )
             return True
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
-    
-    def _ensure_powershell_module(self) -> None:
-        """Ensure AudioDeviceCmdlets module is installed."""
+
+    def _emit_status(self, message: str) -> None:
+        """Best-effort progress callback (never raises)."""
+        try:
+            if self._status_cb is not None:
+                self._status_cb(message)
+        except Exception:
+            pass
+
+    def _ensure_powershell_module(self, status_cb=None) -> None:
+        """Ensure AudioDeviceCmdlets module is installed.
+
+        Fully non-interactive: a bare ``Install-Module -Force`` still
+        prompts for the NuGet package provider (Y/N) on fresh Windows,
+        which hangs the GUI until timeout (no console to answer in).
+        Bootstrap NuGet + trust PSGallery first, with ``-Confirm:$false``
+        everywhere and stdin closed.
+
+        Split into two steps so the GUI can show downloading vs
+        installing progress. Same commands as the old combined call,
+        just run separately — idempotent, tolerant of partial failure.
+        """
+        if status_cb is not None:
+            self._status_cb = status_cb
         # Check if module exists
         check_result = self._run_powershell_command(
             "Get-Module -ListAvailable -Name AudioDeviceCmdlets",
             timeout=POWERSHELL_MODULE_CHECK_TIMEOUT_SEC
         )
-        
+
         if check_result:
             return  # Module already installed
-        
+
         # Install the module
         _logger.info("Installing AudioDeviceCmdlets PowerShell module (one-time setup)...")
-        install_cmd = "Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser -Force -AllowClobber"
-        
+        provider_cmd = (
+            "$ProgressPreference='SilentlyContinue'; "
+            "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; "
+            "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 "
+            "-Scope CurrentUser -Force -Confirm:$false -ErrorAction SilentlyContinue | Out-Null; "
+            "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted "
+            "-ErrorAction SilentlyContinue"
+        )
+        module_cmd = (
+            "$ProgressPreference='SilentlyContinue'; "
+            "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; "
+            "Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser "
+            "-Force -AllowClobber -SkipPublisherCheck -Confirm:$false"
+        )
+
         try:
+            # Step 1: provider bootstrap (download-ish phase).
+            self._emit_status(MSG_AUDIO_TOOLS_DOWNLOADING)
+            try:
+                subprocess.run(
+                    f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "{provider_cmd}"',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=POWERSHELL_PROVIDER_INSTALL_TIMEOUT_SEC,
+                    stdin=subprocess.DEVNULL
+                )
+            except subprocess.TimeoutExpired:
+                _logger.warning("Package provider bootstrap timed out, continuing anyway")
+            except Exception as e:
+                _logger.warning(f"Could not bootstrap package provider: {e}")
+
+            # Step 2: module install.
+            self._emit_status(MSG_AUDIO_MODULE_INSTALLING)
             result = subprocess.run(
-                f'powershell -NoProfile -Command "{install_cmd}"',
+                f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "{module_cmd}"',
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC
+                timeout=POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC,
+                stdin=subprocess.DEVNULL
             )
             if result.returncode != 0:
                 _logger.warning(f"Could not install AudioDeviceCmdlets: {result.stderr}")
-                _logger.warning("You may need to install it manually: Install-Module -Name AudioDeviceCmdlets")
+                _logger.warning("You may need to install it manually, run in PowerShell: "
+                                "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 "
+                                "-Scope CurrentUser -Force; "
+                                "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; "
+                                "Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser "
+                                "-Force -AllowClobber -SkipPublisherCheck")
+            else:
+                # Verify it actually landed (PSGallery hiccups return 0 with no module).
+                verify = self._run_powershell_command(
+                    "Get-Module -ListAvailable -Name AudioDeviceCmdlets",
+                    timeout=POWERSHELL_MODULE_CHECK_TIMEOUT_SEC
+                )
+                if not verify:
+                    _logger.warning("AudioDeviceCmdlets install reported success but module not found")
         except subprocess.TimeoutExpired:
             _logger.warning("PowerShell module installation timed out")
         except Exception as e:
@@ -212,11 +288,12 @@ class VB_CableSwitcher:
         
         try:
             result = subprocess.run(
-                f'powershell -NoProfile -Command "{cmd}"',
+                f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "{cmd}"',
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=POWERSHELL_DEFAULT_TIMEOUT_SEC
+                timeout=POWERSHELL_DEFAULT_TIMEOUT_SEC,
+                stdin=subprocess.DEVNULL
             )
             
             if result.returncode == 0:

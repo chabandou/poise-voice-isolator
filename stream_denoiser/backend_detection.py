@@ -1,9 +1,10 @@
-"""
-Backend Detection Module
+"""Backend Detection Module
 
 Single source of truth for audio backend availability.
 
-Windows: sounddevice and PyAudioWPatch (WASAPI loopback).
+Windows: sounddevice (PortAudio) only. CABLE Output is opened as a
+regular WASAPI capture device — no WASAPI-loopback extension
+(PyAudioWPatch) required.
 Linux: pulse-simple via libpulse-simple (no PortAudio runtime).
 """
 
@@ -27,35 +28,10 @@ else:
     sd = None
     USE_SOUNDDEVICE = False
 
-# Check for PyAudioWPatch (Windows-only, preferred for WASAPI loopback)
-USE_PYAUDIO = False
-USE_PYAUDIOWPATCH = False
-pyaudio = None
-
-if _IS_WIN32:
-    try:
-        import pyaudiowpatch as _pyaudio
-        pyaudio = _pyaudio
-        USE_PYAUDIOWPATCH = True
-        USE_PYAUDIO = True
-    except ImportError:
-        try:
-            import pyaudio as _pyaudio
-            pyaudio = _pyaudio
-            USE_PYAUDIO = True
-            USE_PYAUDIOWPATCH = False
-        except ImportError:
-            USE_PYAUDIO = False
-            USE_PYAUDIOWPATCH = False
-
 
 def get_available_backends() -> list[str]:
     """Return list of available audio backend names."""
     backends = []
-    if USE_PYAUDIOWPATCH:
-        backends.append("pyaudiowpatch")
-    elif USE_PYAUDIO:
-        backends.append("pyaudio")
     if USE_SOUNDDEVICE:
         backends.append("sounddevice")
     if sys.platform.startswith("linux"):
@@ -67,4 +43,4 @@ def has_any_backend() -> bool:
     """Check if at least one audio backend is available."""
     if sys.platform.startswith("linux"):
         return True  # pulse-simple loads lazily via libpulse-simple
-    return USE_PYAUDIO or USE_SOUNDDEVICE
+    return USE_SOUNDDEVICE

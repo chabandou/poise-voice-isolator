@@ -5,8 +5,14 @@ Dropdown widget for audio device selection with refresh capability.
 """
 from typing import Optional, List, Dict, Any
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QComboBox, QPushButton, QLabel, QVBoxLayout
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QVBoxLayout
+from PyQt6.QtCore import Qt, pyqtSignal
+
+from .phosphor import PhosphorIcon
+from ..themes import current as current_theme
+from .chip import IconChip
+from .combo import AnimatedComboBox
+from ..scaling import sp
 
 try:
     import sounddevice as sd
@@ -24,13 +30,15 @@ class DeviceSelector(QWidget):
     
     device_changed = pyqtSignal(object)  # Emits device ID (int or None)
     
-    def __init__(self, label: str, device_type: str = "input", parent=None):
+    def __init__(self, label: str, device_type: str = "input",
+                 subtitle: str = "", parent=None):
         """
         Initialize device selector.
         
         Args:
-            label: Label text for the selector
+            label: Title text for the selector
             device_type: "input" or "output"
+            subtitle: One-line caption under the title
             parent: Parent widget
         """
         super().__init__(parent)
@@ -38,23 +46,60 @@ class DeviceSelector(QWidget):
         self._device_type = device_type
         self._devices: List[Dict[str, Any]] = []
         
-        self._setup_ui(label)
+        self._setup_ui(label, subtitle)
         self.refresh_devices()
     
-    def _setup_ui(self, label: str):
-        """Setup the widget UI."""
+    def _setup_ui(self, label: str, subtitle: str = ""):
+        """Setup the widget UI (icon chip + title row, boxed combo)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        
-        # Label
+        layout.setSpacing(14)
+
+        header = QHBoxLayout()
+        header.setSpacing(14)
+        self._chip = IconChip(
+            "monitor" if self._device_type == "input" else "speaker")
+        header.addWidget(self._chip)
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
         self._label = QLabel(label)
-        layout.addWidget(self._label)
-        
+        self._label.setObjectName("device-title")
+        self._label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        titles.addWidget(self._label)
+        self._subtitle = QLabel(subtitle)
+        self._subtitle.setObjectName("row-sub")
+        self._subtitle.setVisible(bool(subtitle))
+        titles.addWidget(self._subtitle)
+        header.addLayout(titles)
+        header.addStretch()
+
+        self._refresh_btn = QPushButton()
+        self._refresh_btn.setObjectName("icon-btn")
+        self._refresh_btn.setFixedSize(sp(28), sp(28))
+        refresh_layout = QHBoxLayout(self._refresh_btn)
+        refresh_layout.setContentsMargins(6, 6, 6, 6)
+        self._refresh_icon = PhosphorIcon(
+            "refresh", color=current_theme()["secondary"], size=15)
+        # Let the button (not the icon) own hover so its wash paints.
+        self._refresh_icon.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        refresh_layout.addWidget(self._refresh_icon)
+        self._refresh_btn.setToolTip("Rescan audio devices")
+        self._refresh_btn.clicked.connect(self.refresh_devices)
+        header.addWidget(self._refresh_btn)
+        layout.addLayout(header)
+
         # Combo box only
-        self._combo = QComboBox()
+        self._combo = AnimatedComboBox()
+        self._combo.setObjectName("device-combo")
         self._combo.currentIndexChanged.connect(self._on_selection_changed)
         layout.addWidget(self._combo)
+
+        # Pin header + combo to the top: extra column height (the top
+        # card stretches on tall windows) must collect below, not
+        # between the label and the dropdown.
+        layout.addStretch(1)
     
     def refresh_devices(self):
         """Refresh the list of available devices."""
@@ -131,6 +176,15 @@ class DeviceSelector(QWidget):
         # If not found, select default
         self._combo.setCurrentIndex(0)
     
+    def set_subtitle(self, text: str) -> None:
+        """Change the caption (e.g. the lock note while running)."""
+        self._subtitle.setText(text)
+        self._subtitle.setVisible(bool(text))
+
+    def refresh_theme(self) -> None:
+        self._chip.refresh_theme()
+        self._refresh_icon.set_color(current_theme()["secondary"])
+
     def set_enabled(self, enabled: bool):
         """Enable or disable the selector."""
         self._combo.setEnabled(enabled)
