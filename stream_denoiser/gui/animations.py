@@ -860,9 +860,6 @@ def _hover_specs():
         ("QPushButton", "icon-btn"): lambda p: {
             "background-color": (wash(p, 0.0),
                                  wash(p, ACCENT_WASH_ALPHA))},
-        ("QPushButton", "donate"): lambda p: {
-            "background-color": (QColor(p["text"]), QColor(p["secondary"])),
-            "border-color": (QColor(p["text"]), QColor(p["secondary"]))},
         ("QPushButton", "primary"): lambda p: {
             "background-color": (QColor(p["accent"]),
                                  QColor(p["accent_light"]))},

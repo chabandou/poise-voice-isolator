@@ -37,6 +37,7 @@ from .widgets.phosphor import (
 )
 from .widgets.theme_tile import ThemeTile
 from .widgets.dial import DialButton
+from .widgets.donate_button import DonateButton
 from .widgets.switch import ToggleSwitch
 from .widgets.slider import HoverSlider
 from .widgets.sidebar import Sidebar
@@ -149,11 +150,12 @@ class MainWindow(QMainWindow):
         return tuple(sp(v) for v in self._rv(wide, compact, narrow))
 
     def _icon_button(self, text: str, icon_name: str,
-                     color_key: str = "secondary") -> QPushButton:
+                     color_key: str = "secondary",
+                     button_cls=QPushButton) -> QPushButton:
         """Ghost button with a theme-tinted Phosphor icon (palette key)."""
         from PyQt6.QtCore import QSize
         from .scaling import isp
-        btn = QPushButton(text)
+        btn = button_cls(text)
         btn.setObjectName("ghost")
         btn.setIconSize(QSize(isp(16), isp(16)))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -652,9 +654,11 @@ class MainWindow(QMainWindow):
         issues_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(ISSUES_URL)))
         links.addWidget(issues_btn)
-        # Poise is free: an inverse (light-filled) button stands apart from
-        # the ghost links. Hidden until DONATE_URL is set.
-        donate_btn = self._icon_button("Donate", "heart", color_key="bg")
+        # Poise is free: a filled button (dark label on the secondary
+        # colour) stands apart from the ghost links. Hidden until
+        # DONATE_URL is set.
+        donate_btn = self._icon_button(
+            "Donate", "heart", color_key="bg", button_cls=DonateButton)
         donate_btn.setObjectName("donate")
         donate_btn.setToolTip(
             "Poise is free. If it helps you, you can support its "

@@ -451,21 +451,16 @@ QPushButton#ghost:pressed {
     background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
 }
 
-/* Donate: the ghost button's inverse (light fill, dark label). */
+/* Donate: filled in the secondary colour with a dark label. The fill and
+   the offset hover ring are painted by DonateButton (QSS can't draw an
+   outline with a gap); the padding includes the ring's 5px margin. */
 QPushButton#donate {
-    background-color: {text};
-    border: 1px solid {text};
-    border-radius: 10px;
-    padding: 9px 18px;
+    background-color: transparent;
+    border: none;
+    padding: 14px 23px;
     color: {bg};
     font-weight: 700;
     font-size: 13px;
-}
-
-QPushButton#donate:hover,
-QPushButton#donate:pressed {
-    background-color: {secondary};
-    border-color: {secondary};
 }
 
 QPushButton#icon-btn {

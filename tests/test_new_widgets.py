@@ -349,30 +349,52 @@ def test_donate_button_is_hidden_until_a_url_is_set(app):
     window.close()
 
 
-def test_donate_button_is_the_inverse_of_the_ghost_buttons(app, monkeypatch):
+def test_donate_button_is_filled_with_a_hover_ring(app, monkeypatch):
+    """Idle: secondary fill + dark label. Hover: a text-colour ring set off
+    from the fill by a gap (not a colour swap)."""
     import re
+    from PyQt6.QtGui import QColor
     from stream_denoiser.gui import main_window as mw
     from stream_denoiser.gui import themes
+    from stream_denoiser.gui.scaling import sp
+    from stream_denoiser.gui.widgets.donate_button import (
+        DonateButton, RING_GAP, RING_WIDTH)
     monkeypatch.setattr(mw, "DONATE_URL", "https://example.org/donate")
+    themes.set_current("abyss")
     window = mw.MainWindow()
     window.show()
     _pump(app)
     btn = window.donate_btn
-    assert not btn.isHidden()
+    assert isinstance(btn, DonateButton) and not btn.isHidden()
     assert btn.text() == "Donate" and btn.objectName() == "donate"
+    pal = themes.current()
 
     css = window.styleSheet().lower()
-    pal = themes.current()
-    donate = re.search(r"qpushbutton#donate\s*\{([^}]*)\}", css).group(1)
-    ghost = re.search(r"qpushbutton#ghost\s*\{([^}]*)\}", css).group(1)
-    # Ghost: translucent dark fill, light label. Donate: light fill, dark label.
-    assert f"background-color: {pal['text'].lower()}" in donate
-    assert re.search(rf"[^-]color: {pal['bg'].lower()}", donate)
-    assert re.search(rf"[^-]color: {pal['text'].lower()}", ghost)
-    # Heart icon is dark (palette 'bg'), re-tinted per theme, and hover
-    # fades to the secondary colour.
-    assert (btn, "heart", "bg") in window._icon_buttons
-    assert btn._hover_fade is not None
+    block = re.search(r"qpushbutton#donate\s*\{([^}]*)\}", css).group(1)
+    assert "background-color: transparent" in block        # fill is painted
+    assert re.search(rf"[^-]color: {pal['bg'].lower()}", block)   # dark label
+    assert (btn, "heart", "bg") in window._icon_buttons    # dark heart
+
+    btn.resize(btn.sizeHint())
+    inset = sp(RING_WIDTH + RING_GAP)
+    fill = QColor(pal["secondary"])
+    ring = QColor(pal["text"])
+
+    def close(c, ref, tol=4):
+        return (abs(c.red() - ref.red()) <= tol
+                and abs(c.green() - ref.green()) <= tol
+                and abs(c.blue() - ref.blue()) <= tol)
+
+    btn._ring.snap(0.0)
+    idle = btn.grab().toImage()
+    assert close(idle.pixelColor(inset + 4, btn.height() // 2), fill)
+    assert idle.pixelColor(btn.width() // 2, 0).alpha() == 0     # no ring
+    btn._ring.snap(1.0)
+    hot = btn.grab().toImage()
+    assert close(hot.pixelColor(inset + 4, btn.height() // 2), fill)
+    assert close(hot.pixelColor(btn.width() // 2, 0), ring)       # the ring
+    gap = hot.pixelColor(btn.width() // 2, sp(RING_WIDTH) + 1)    # the gap
+    assert gap.alpha() == 0
 
     opened = []
     monkeypatch.setattr(mw.QDesktopServices, "openUrl",
@@ -380,3 +402,31 @@ def test_donate_button_is_the_inverse_of_the_ghost_buttons(app, monkeypatch):
     btn.click()
     assert opened == ["https://example.org/donate"]
     window.close()
+
+
+def test_donate_ring_eases_in_and_out(app):
+    from stream_denoiser.gui.widgets.donate_button import DonateButton
+    btn = DonateButton("Donate")
+    btn.show()
+    _pump(app, 0.1)
+    _leave(btn)                                  # offscreen pointer at (0, 0)
+    _pump(app, 0.3)
+    _enter(btn)
+    assert btn._ring.target == 1.0 and btn._ring.running
+    _pump(app, 0.4)
+    assert btn._ring.value == pytest.approx(1.0)
+    _leave(btn)
+    assert btn._ring.target == 0.0
+    btn.close()
+
+
+def _enter(widget):
+    from PyQt6.QtCore import QPointF
+    from PyQt6.QtGui import QEnterEvent
+    pt = QPointF(3, 3)
+    widget.enterEvent(QEnterEvent(pt, pt, pt))
+
+
+def _leave(widget):
+    from PyQt6.QtCore import QEvent
+    widget.leaveEvent(QEvent(QEvent.Type.Leave))
