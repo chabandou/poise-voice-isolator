@@ -167,7 +167,7 @@ def show_vb_cable_error(parent, error_message: str) -> None:
 def _on_install_vb_cable(parent, button) -> None:
     """Install the vendored VB-Cable driver, or fall back to the website."""
     try:
-        from ..platform.windows import (
+        from ...backends.platform.windows import (
             find_bundled_vbcable_setup,
             install_vbcable_driver,
             interpret_setup_exit_code,

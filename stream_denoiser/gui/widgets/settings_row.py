@@ -117,6 +117,9 @@ class SettingsRow(QFrame):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         clip = QPainterPath()
+        # Winding fill: the default odd-even rule turns the overlap of the
+        # rounded rect and the squaring rects into holes (half-lit rows).
+        clip.setFillRule(Qt.FillRule.WindingFill)
         r = sp(CARD_RADIUS)
         clip.addRoundedRect(QRectF(0, 0, w, h), r, r)
         if not self._first:

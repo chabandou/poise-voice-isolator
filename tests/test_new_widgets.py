@@ -146,3 +146,73 @@ def test_setup_summary_reflects_settings(app):
     assert summary._aad_value.text() == "Off"
     summary.settings_btn.click()
     assert opened == [True]
+
+
+def _lit_row_image(app, first, last):
+    from PyQt6.QtWidgets import QPushButton
+    from stream_denoiser.gui.widgets.settings_row import SettingsRow
+    row = SettingsRow("Title", "caption", QPushButton("x"))
+    row.set_position(first, last)
+    row.resize(900, 78)
+    row.show()
+    _pump(app)
+    row._hover = False
+    unlit = row.grab().toImage()
+    row._hover = True
+    lit = row.grab().toImage()
+    row.close()
+    return unlit, lit
+
+
+@pytest.mark.parametrize("first,last", [(True, False), (False, False),
+                                        (False, True), (True, True)])
+def test_row_highlight_covers_the_whole_row_height(app, first, last):
+    """Regression: an odd-even clip path left the overlap of the rounded
+    rect and the squaring rects unpainted, so rows lit only part-way."""
+    unlit, lit = _lit_row_image(app, first, last)
+    x = 120
+    for y in (12, 39, 66):                       # top, middle, bottom
+        assert lit.pixelColor(x, y) != unlit.pixelColor(x, y), (
+            first, last, y)
+
+
+def test_install_button_reaches_the_bundled_installer(app, monkeypatch):
+    """Regression: the dialog imported a module path that does not exist,
+    so Install VB-Cable always fell back to the website."""
+    import stream_denoiser.backends.platform.windows as win
+    from stream_denoiser.gui.widgets import vb_cable_dialog as dlg
+
+    calls = []
+    monkeypatch.setattr(win, "is_vbcable_installed", lambda: bool(calls))
+    monkeypatch.setattr(win, "find_bundled_vbcable_setup",
+                        lambda *a, **k: "C:/setup.exe")
+    monkeypatch.setattr(win, "install_vbcable_driver",
+                        lambda *a, **k: calls.append("install") or 0)
+    monkeypatch.setattr(dlg.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    opened = []
+    monkeypatch.setattr(dlg, "_open_cable_website",
+                        lambda: opened.append(True))
+
+    class Button:
+        def setEnabled(self, _):
+            pass
+
+    dlg._on_install_vb_cable(None, Button())
+    assert calls == ["install"]
+    assert opened == []
+
+
+def test_install_button_falls_back_to_website_without_a_bundled_setup(
+        app, monkeypatch):
+    import stream_denoiser.backends.platform.windows as win
+    from stream_denoiser.gui.widgets import vb_cable_dialog as dlg
+
+    monkeypatch.setattr(win, "is_vbcable_installed", lambda: False)
+    monkeypatch.setattr(win, "find_bundled_vbcable_setup",
+                        lambda *a, **k: None)
+    opened = []
+    monkeypatch.setattr(dlg, "_open_cable_website",
+                        lambda: opened.append(True))
+    dlg._on_install_vb_cable(None, object())
+    assert opened == [True]
