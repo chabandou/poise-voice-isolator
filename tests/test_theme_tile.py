@@ -1,8 +1,9 @@
 """ThemeTile paint guards (needs Qt; skipped without it).
 
-Hover/press/select animations must never push tile painting outside the
-widget bounds: the swatch is full-bleed, so any growth clips the rounded
-corners flat. Regression test for exactly that artifact.
+The tile is a miniature of its theme (background, wave in the accent,
+name in the text colour). Hover/press/select animations must never push
+painting outside the widget bounds: the outline sits on the widget edge,
+so any growth would clip it flat.
 """
 import os
 
@@ -19,82 +20,22 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-def _make_tile(checked=False):
+@pytest.fixture(autouse=True)
+def _abyss_current():
+    from stream_denoiser.gui import themes
+    prev = themes.current_id()
+    themes.set_current("abyss")
+    yield
+    themes.set_current(prev)
+
+
+def _make_tile(checked=False, theme_id="abyss", width=120):
     from stream_denoiser.gui.widgets.theme_tile import ThemeTile
-    tile = ThemeTile(accent="#5fd5eb", background="#0a111e",
-                     text_dark="#0a111e", name="Abyss")
-    tile.resize(120, 88)
+    tile = ThemeTile(theme_id)
+    tile.resize(width, tile.height())
     tile.show()
     tile.setChecked(checked)
     return tile
-
-
-def _patch(tile, x, y, w, h):
-    img = tile.grab().toImage()
-    return [img.pixelColor(px, py).getRgb()
-            for py in range(y, y + h) for px in range(x, x + w)]
-
-
-def _brightness(pixels):
-    return sum(r + g + b for r, g, b, _a in pixels) / max(1, len(pixels))
-
-
-def test_hover_only_brightens_unchecked(app):
-    """Hover must not move any geometry (growth would clip the corners).
-
-    Edge anti-aliasing legitimately re-blends as the fill brightens, so
-    instead of exact pixels we bound the change: fill alpha 110 -> 160
-    can shift a channel by at most ~46 levels, while a moved corner arc
-    would flip edge pixels by ~200 (covered <-> background).
-    """
-    tile = _make_tile(checked=False)
-    tile._hover = 0.0
-    img0 = tile.grab().toImage()
-    center0 = _brightness(_patch(tile, 50, 34, 20, 20))
-    tile._hover = 1.0
-    img1 = tile.grab().toImage()
-    assert (img0.width(), img0.height()) == (img1.width(), img1.height())
-    peak = 0
-    for y in range(img0.height()):
-        for x in range(img0.width()):
-            c0 = img0.pixelColor(x, y)
-            c1 = img1.pixelColor(x, y)
-            peak = max(peak, abs(c0.red() - c1.red()),
-                       abs(c0.green() - c1.green()),
-                       abs(c0.blue() - c1.blue()))
-    assert peak <= 50, peak
-    # Fill responds to hover (direction depends on what's behind the
-    # blend: brighter over dark cards, darker over light ones).
-    assert abs(_brightness(_patch(tile, 50, 34, 20, 20)) - center0) > 20
-
-
-def test_select_overshoot_never_clips(app):
-    """Spring overshoot past 1.0 must still render exactly at full size."""
-    tile = _make_tile(checked=True)
-    tile._select = 1.0
-    rest = _patch(tile, 0, 0, 120, 88)
-    tile._select = 1.1  # OutBack peak during the selection pop
-    assert _patch(tile, 0, 0, 120, 88) == rest
-
-
-def _ring_pixels(tile):
-    """Ring-colored pixels in the top half (name text lives at bottom).
-
-    Scoped above the label because text anti-aliasing fringe can land
-    near the ring tone and would otherwise pollute the count.
-    """
-    from PyQt6.QtGui import QColor
-    ring = QColor("#0a111e").lighter(150)
-    img = tile.grab().toImage()
-    n = 0
-    for y in range(img.height() // 2):
-        for x in range(img.width()):
-            c = img.pixelColor(x, y)
-            if (abs(c.red() - ring.red()) <= 5
-                    and abs(c.green() - ring.green()) <= 5
-                    and abs(c.blue() - ring.blue()) <= 5):
-                n += 1
-    return n
 
 
 def _pump(app, secs=0.5):
@@ -105,8 +46,97 @@ def _pump(app, secs=0.5):
         time.sleep(0.02)
 
 
-def test_ring_fades_in_and_out_with_selection(app):
-    """Ring crossfades both directions instead of snapping."""
+def test_tile_is_a_miniature_of_its_theme(app):
+    from stream_denoiser.gui import themes
+    for theme_id in themes.theme_ids():
+        palette = themes.get_theme(theme_id)
+        tile = _make_tile(theme_id=theme_id)
+        assert tile._bg.name() == palette["bg"].lower()
+        assert tile._accent.name() == palette["accent"].lower()
+        assert tile._text.name() == palette["text"].lower()
+        assert tile._name == palette["label"]
+        assert tile._logo.isValid()
+        tile.grab()                       # paints cleanly
+        tile.close()
+
+
+def test_body_is_filled_with_the_theme_background(app):
+    from stream_denoiser.gui import themes
+    tile = _make_tile(theme_id="verdant")
+    img = tile.grab().toImage()
+    # A point inside the body, clear of the wave (top-left) and name
+    # (bottom-left).
+    c = img.pixelColor(tile.width() * 3 // 4, tile.height() // 2)
+    assert c.name() == themes.get_theme("verdant")["bg"].lower()
+    tile.close()
+
+
+def test_every_tile_paints_at_its_minimum_width(app):
+    """Long names ("Ultraviolet") shrink to fit instead of clipping."""
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.theme_tile import ThemeTile
+    narrowest = ThemeTile("abyss").minimumSizeHint().width()
+    for theme_id in themes.theme_ids():
+        tile = _make_tile(theme_id=theme_id, width=narrowest)
+        tile.grab()
+        tile.close()
+
+
+def _patch(tile, x, y, w, h):
+    img = tile.grab().toImage()
+    return [img.pixelColor(px, py).getRgb()
+            for py in range(y, y + h) for px in range(x, x + w)]
+
+
+def test_hover_only_touches_the_edge(app):
+    """Hover warms the hairline edge; fill and geometry stay put."""
+    tile = _make_tile(checked=False)
+    tile._hover = 0.0
+    img0 = tile.grab().toImage()
+    tile._hover = 1.0
+    img1 = tile.grab().toImage()
+    assert (img0.width(), img0.height()) == (img1.width(), img1.height())
+    changed = [(x, y) for y in range(img0.height())
+               for x in range(img0.width())
+               if img0.pixelColor(x, y) != img1.pixelColor(x, y)]
+    assert changed, "hover should be visible"
+    band = 12   # outline gap + hairline + rounded-corner sweep
+    assert all(x < band or y < band
+               or x >= img0.width() - band
+               or y >= img0.height() - band
+               for x, y in changed), "hover changed more than the edge"
+    tile.close()
+
+
+def test_select_overshoot_never_clips(app):
+    """Spring overshoot past 1.0 must still render exactly at full size."""
+    tile = _make_tile(checked=True)
+    tile._select = 1.0
+    w, h = tile.width(), tile.height()
+    rest = _patch(tile, 0, 0, w, h)
+    tile._select = 1.1  # OutBack peak during the selection pop
+    assert _patch(tile, 0, 0, w, h) == rest
+
+
+def _ring_pixels(tile, color=None):
+    """Pixels in a colour (default: the current theme's secondary)."""
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui import themes
+    ring = QColor(color or themes.current()["secondary"])
+    img = tile.grab().toImage()
+    n = 0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if (abs(c.red() - ring.red()) <= 5
+                    and abs(c.green() - ring.green()) <= 5
+                    and abs(c.blue() - ring.blue()) <= 5):
+                n += 1
+    return n
+
+
+def test_outline_fades_in_and_out_with_selection(app):
+    """Outline crossfades both directions instead of snapping."""
     from PyQt6.QtCore import QAbstractAnimation
     tile = _make_tile(checked=False)
     assert _ring_pixels(tile) == 0
@@ -119,6 +149,20 @@ def test_ring_fades_in_and_out_with_selection(app):
     assert tile._sel_anim.state() == QAbstractAnimation.State.Running
     _pump(app)
     assert _ring_pixels(tile) == 0
+    tile.close()
+
+
+def test_outline_uses_the_current_themes_secondary(app):
+    from stream_denoiser.gui import themes
+    tile = _make_tile(checked=True, theme_id="mono")
+    _pump(app)
+    abyss_gold = themes.get_theme("abyss")["secondary"]
+    ember_teal = themes.get_theme("ember")["secondary"]
+    assert _ring_pixels(tile, abyss_gold) > 30
+    assert _ring_pixels(tile, ember_teal) == 0
+    themes.set_current("ember")
+    assert _ring_pixels(tile, ember_teal) > 30
+    assert _ring_pixels(tile, abyss_gold) == 0
     tile.close()
 
 

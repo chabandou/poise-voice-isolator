@@ -128,3 +128,15 @@ def test_secondary_reaches_the_stylesheet():
     css = styles.get_stylesheet(scale=1.0, theme="abyss")
     assert "#E8C468" in css                      # model-card checked border
     assert "232, 196, 104" in css                # chip wash
+
+
+def test_verdant_is_registered_with_gold_secondary():
+    assert "verdant" in themes.theme_ids()
+    p = themes.get_theme("verdant")
+    assert p["label"] == "Verdant"
+    assert p["accent"].lower() == "#35e0a8"
+    assert p["secondary"].lower() == "#e9c46a"
+    assert themes.DEFAULT_THEME == "abyss"      # default is unchanged
+    css = styles.get_stylesheet(scale=1.0, theme="verdant")
+    assert not LEFTOVER_TOKEN.search(css)
+    assert "53, 224, 168" in css

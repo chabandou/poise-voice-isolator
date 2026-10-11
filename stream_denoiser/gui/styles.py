@@ -509,29 +509,27 @@ QSlider {
 
 QSlider::groove:horizontal {
     border: none;
-    height: 10px;
+    height: 4px;
     background: {groove};
-    border-radius: 5px;
+    border-radius: 2px;
 }
 
 QSlider::sub-page:horizontal {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {accent}, stop:1 {accent_light});
-    border-radius: 5px;
+    background: {accent};
+    border-radius: 2px;
 }
 
 QSlider::handle:horizontal {
-    background: {text};
-    width: 20px;
-    height: 20px;
-    margin: -7px 0;
-    border-radius: 11px;
-    border: 2px solid {accent};
+    background: {secondary};
+    width: 14px;
+    height: 14px;
+    margin: -5px 0;
+    border-radius: 4px;
+    border: none;
 }
 
 QSlider::handle:horizontal:hover {
-    background: {accent_light};
-    border-radius: 11px;
-    border-color: {text};
+    background: {text};
 }
 
 QSlider::sub-page:horizontal:disabled {
@@ -540,7 +538,6 @@ QSlider::sub-page:horizontal:disabled {
 
 QSlider::handle:horizontal:disabled {
     background: #3f3f46;
-    border: 2px solid #27272a;
 }
 
 /* =================================================================================

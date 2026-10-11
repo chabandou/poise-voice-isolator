@@ -127,9 +127,9 @@ class MainWindow(QMainWindow):
         """Arrange theme tiles in rows of `cols` (re-parenting is safe)."""
         for i, tile in enumerate(self.theme_tiles):
             self.theme_grid.addWidget(tile, i // cols, i % cols)
-        for c in range(4):
-            self.theme_grid.setColumnStretch(c, 0)
-        self.theme_grid.setColumnStretch(cols, 1)
+        # Equal-width columns; the tiles stretch to fill the card.
+        for c in range(max(cols, len(self.theme_tiles))):
+            self.theme_grid.setColumnStretch(c, 1 if c < cols else 0)
 
     def _rv(self, wide, compact, narrow):
         """Pick a responsive value for the current mode."""
@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
             card_layout.setContentsMargins(
                 *self._rm((24, 22, 24, 22), (20, 18, 20, 18),
                           (16, 16, 16, 16)))
-        self._layout_theme_grid(4 if narrow else 2)
+        self._layout_theme_grid(5 if narrow else 3)
 
         # Logs / About
         for page_layout in (self._logs_layout, self._about_layout):
@@ -483,18 +483,11 @@ class MainWindow(QMainWindow):
         self.theme_group = QButtonGroup(self)
         self.theme_group.setExclusive(True)
         for index, theme_id in enumerate(theme_store.theme_ids()):
-            palette = theme_store.get_theme(theme_id)
-            tile = ThemeTile(
-                accent=palette["accent"],
-                background=palette["bg"],
-                text_dark=palette["bg"],
-                name=theme_store.theme_label(theme_id),
-                parent=self,
-            )
+            tile = ThemeTile(theme_id, parent=self)
             self.theme_group.addButton(tile, index)
             self.theme_tiles.append(tile)
         appearance_layout.addLayout(theme_grid)
-        self._layout_theme_grid(2)
+        self._layout_theme_grid(3)
         try:
             saved = theme_store.theme_ids().index(self.settings.theme)
         except ValueError:

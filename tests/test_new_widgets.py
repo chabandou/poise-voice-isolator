@@ -216,3 +216,39 @@ def test_install_button_falls_back_to_website_without_a_bundled_setup(
                         lambda: opened.append(True))
     dlg._on_install_vb_cable(None, object())
     assert opened == [True]
+
+
+def test_toggle_is_a_rounded_square_outline_with_an_accent_knob(app):
+    """Off: quiet outline + muted knob on the left. On: accent outline,
+    faint accent wash and an accent knob on the right."""
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.switch import ToggleSwitch
+    themes.set_current("abyss")
+    accent = QColor(themes.current()["accent"])
+    off = ToggleSwitch(checked=False)
+    on = ToggleSwitch(checked=True)
+    for sw in (off, on):
+        sw.show()
+    _pump(app)
+    assert (on.width(), on.height()) == (off.width(), off.height())
+    w, h = off.width(), off.height()
+    left, right = h // 2, w - h // 2
+    img_off, img_on = off.grab().toImage(), on.grab().toImage()
+
+    def near(c, ref, tol=6):
+        return (abs(c.red() - ref.red()) <= tol
+                and abs(c.green() - ref.green()) <= tol
+                and abs(c.blue() - ref.blue()) <= tol)
+
+    # On: knob right, filled with the accent; left side is only wash.
+    assert near(img_on.pixelColor(right, h // 2), accent)
+    assert not near(img_on.pixelColor(left, h // 2), accent)
+    # Off: knob left and NOT accent coloured.
+    assert not near(img_off.pixelColor(left, h // 2), accent)
+    assert not near(img_off.pixelColor(right, h // 2), accent)
+    # Square-ish track: the outer corner pixel is not painted.
+    assert img_on.pixelColor(0, 0).alpha() == 0 or \
+        img_on.pixelColor(0, 0) != img_on.pixelColor(w // 2, h // 2)
+    off.close()
+    on.close()

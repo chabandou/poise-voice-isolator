@@ -1,23 +1,60 @@
 """
 Poise Voice Isolator - Theme Tile Widget
 
-Swatch-style theme picker tile: a rounded square filled with the theme's
-main accent color with the theme name inside. The checked tile gets a
-thick outline and a bold name.
+Theme picker tile: a miniature of the theme itself. The tile is filled with
+the theme's background, carries the Poise wave in the theme's accent and
+the theme name in its text colour. The selected tile gets an outline in
+the *current* theme's secondary colour, set off from the tile by a small
+gap.
 """
 from PyQt6.QtWidgets import QAbstractButton, QSizePolicy
-from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt6.QtGui import QPainter, QColor, QFont, QPen
+from PyQt6.QtCore import (
+    QByteArray, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt,
+    pyqtProperty,
+)
+from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
+from PyQt6.QtSvg import QSvgRenderer
 
+from ..fonts import heading_family
 from ..scaling import sp
+from .. import themes as theme_store
+
+WAVE_PATH = ("M3 12C3.00015 8.14286 4.28571 3 6.85714 3C10.7143 2.9999 "
+             "13.2857 21 17.1429 21C19.7143 21 21 15.8571 21 12 "
+             "M3 12H5 M19 12H21 M15.5 12H16.5 M7.5 12H8.5")
+
+RING_WIDTH = 2    # selection outline (design px)
+RING_GAP = 3      # gap between outline and tile
+TILE_RADIUS = 12
+
+
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    t = max(0.0, min(1.0, t))
+    return QColor(
+        int(a.red() + (b.red() - a.red()) * t),
+        int(a.green() + (b.green() - a.green()) * t),
+        int(a.blue() + (b.blue() - a.blue()) * t),
+    )
 
 
 class ThemeTile(QAbstractButton):
-    """Checkable accent swatch with the theme name."""
+    """Checkable miniature of a theme (background, wave, name)."""
 
-    def __init__(self, accent: str, background: str, text_dark: str,
-                 name: str, parent=None):
+    def __init__(self, theme_id: str, parent=None):
         super().__init__(parent)
+        palette = theme_store.get_theme(theme_id)
+        self.theme_id = theme_id
+        self._bg = QColor(palette["bg"])
+        self._edge = QColor(palette["groove"])
+        self._accent = QColor(palette["accent"])
+        self._text = QColor(palette["text"])
+        self._name = palette["label"]
+        self._logo = QSvgRenderer(QByteArray((
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            f'fill="none" stroke="{palette["accent"]}" stroke-width="1.9" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            f'<path d="{WAVE_PATH}"/></svg>').encode()))
+
         self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         try:
@@ -25,19 +62,16 @@ class ThemeTile(QAbstractButton):
             apply_link_cursor(self)
         except Exception:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Fixed)
+        self.setMinimumSize(self.minimumSizeHint())
+        self.setFixedHeight(self.sizeHint().height())
 
-        self._accent = QColor(accent)
-        self._background = QColor(background)
-        self._text_dark = QColor(text_dark)
-        self._name = name
-        self.setMinimumSize(self.sizeHint())
-
-        # Apple-style tactile state (paint-time only, layout-safe).
+        # Tactile state (paint-time only, layout-safe).
         self._press = 0.0   # 1 while held -> squash to ~0.97
-        self._hover = 0.0   # 1 on hover -> brighten (no scaling)
+        self._hover = 0.0   # 1 on hover -> edge picks up the accent
         self._select = 1.0  # 0 -> 1 spring pop on selection
-        self._selT = 0.0    # 0 <-> 1 eased selection blend (ring + fill)
+        self._selT = 0.0    # 0 <-> 1 eased selection blend (outline)
         self._press_anim = None
         self._hover_anim = None
         self._select_anim = None
@@ -45,7 +79,10 @@ class ThemeTile(QAbstractButton):
         self.toggled.connect(self._on_toggled)
 
     def sizeHint(self):  # noqa: N802 (Qt override)
-        return QSize(sp(120), sp(88))
+        return QSize(sp(104), sp(84))
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt override)
+        return QSize(sp(84), sp(84))
 
     # -- animated properties ------------------------------------------------
     def _get_press(self) -> float:
@@ -120,7 +157,7 @@ class ThemeTile(QAbstractButton):
             pass
 
     def _on_toggled(self, checked: bool) -> None:
-        # Selection blend (ring fade + fill crossfade, both directions).
+        # Outline blend (fade in/out in both directions).
         self._tween(b"selT", 1.0 if checked else 0.0, 200)
         if not checked:
             return
@@ -166,60 +203,69 @@ class ThemeTile(QAbstractButton):
         super().leaveEvent(event)
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
-        side_w, side_h = self.width(), self.height()
-        radius = sp(18)
+        w, h = self.width(), self.height()
+        inset = float(sp(RING_WIDTH + RING_GAP))
+        radius = float(sp(TILE_RADIUS))
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Combined tactile scale around the center (paint-time only).
-        # Strictly capped at full size: the swatch is full-bleed, so any
-        # growth would push the corners outside the widget bounds and
-        # visibly flatten the rounding. Hover feedback comes from the
-        # brightening below, not from scaling.
+        # Tactile scale around the centre (paint-time only). Capped at
+        # full size so the outline, which sits on the widget edge, can
+        # never be pushed past the bounds and clipped flat.
         press = max(0.0, min(1.0, self._press))
         hover = max(0.0, min(1.0, self._hover))
         select = max(0.0, min(1.0, self._select))
         sel = max(0.0, min(1.0, self._selT))
-        scale = (1.0 - 0.03 * press) * (0.94 + 0.06 * select)
-        scale = min(scale, 1.0)
-        cx, cy = side_w / 2.0, side_h / 2.0
+        scale = min((1.0 - 0.03 * press) * (0.94 + 0.06 * select), 1.0)
+        cx, cy = w / 2.0, h / 2.0
         p.translate(cx, cy)
         p.scale(scale, scale)
         p.translate(-cx, -cy)
 
-        # Swatch fill: dimmed when unselected, full when selected, with
-        # the selection blend animated and hover adding up to +50.
-        fill = QColor(self._accent)
-        fill.setAlpha(min(255, int(110 + 145 * sel + 50 * hover * (1 - sel))))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(fill)
-        p.drawRoundedRect(0, 0, side_w, side_h, radius, radius)
+        # Tile body: the theme's own background with a hairline edge that
+        # warms toward the theme accent on hover.
+        edge = _mix(self._edge, self._accent, 0.6 * hover)
+        body = QRectF(inset, inset, w - 2 * inset, h - 2 * inset)
+        p.setPen(QPen(edge, max(1.0, float(sp(1)))))
+        p.setBrush(self._bg)
+        p.drawRoundedRect(body, radius, radius)
 
-        # Thick outline for the selected tile (softened ring on the
-        # swatch), set in as an inner frame: press/pop scaling never
-        # exceeds full size, so it can't clip. Fades with the blend.
+        # Wave mark (top-left) in the theme accent.
+        pad = float(sp(9))
+        mark = float(sp(26))
+        self._logo.render(p, QRectF(body.left() + pad, body.top() + pad,
+                                    mark, mark))
+
+        # Name (bottom-left) in the theme's text colour.
+        font = QFont(heading_family())
+        font.setWeight(QFont.Weight.Bold)
+        # Longest names ("Ultraviolet") must fit narrow tiles: step the
+        # size down until the label fits the text box.
+        avail = body.width() - 2 * pad
+        size = sp(15)
+        font.setPixelSize(size)
+        while size > sp(10) and QFontMetricsF(font).horizontalAdvance(
+                self._name) > avail:
+            size -= 1
+            font.setPixelSize(size)
+        p.setFont(font)
+        p.setPen(self._text)
+        p.drawText(QRectF(body.left() + pad, body.top(),
+                          body.width() - 2 * pad, body.height() - pad * 0.7),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                   self._name)
+
+        # Selection outline in the current theme's secondary colour.
         if sel > 0.01:
-            ring = QColor(self._background.lighter(150))
+            ring = QColor(theme_store.current()["secondary"])
             ring.setAlphaF(sel)
-            pen = QPen(ring, sp(4))
+            ring_w = float(sp(RING_WIDTH))
+            pen = QPen(ring, ring_w)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            inset = sp(5)
-            ring_radius = max(sp(4), radius - inset)
-            p.drawRoundedRect(inset, inset, side_w - inset * 2,
-                              side_h - inset * 2,
-                              ring_radius, ring_radius)
-
-        # Name, bottom-left corner.
-        font = QFont("Segoe UI", sp(14))
-        font.setWeight(QFont.Weight.Bold if self.isChecked()
-                       else QFont.Weight.DemiBold)
-        p.setFont(font)
-        p.setPen(self._text_dark)
-        pad_left, pad_bottom = sp(12), sp(10)
-        p.drawText(pad_left, 0, side_w - pad_left, side_h - pad_bottom,
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-                   self._name)
+            half = ring_w / 2.0
+            p.drawRoundedRect(QRectF(half, half, w - ring_w, h - ring_w),
+                              radius + sp(RING_GAP), radius + sp(RING_GAP))
         p.end()

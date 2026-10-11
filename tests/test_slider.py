@@ -1,8 +1,9 @@
 """Slider handle guards (needs Qt; skipped without it).
 
-The AAD/attenuation handle must be a true circle that never changes
-geometry on hover: growing it clipped it against the widget height and
-the wrong border-radius made it a rounded square. Regression test.
+The handle is a rounded square in the theme's secondary colour that must
+never change geometry on hover (growing it clipped against the widget
+height), and its radius must stay within half the box at every UI scale
+or Qt drops it and paints a hard square.
 """
 import os
 
@@ -63,13 +64,13 @@ def _scaled(rect, dpr):
                  round(rect.width() * dpr), round(rect.height() * dpr))
 
 
-def _is_circle(slider, img, rect):
-    """Handle box is square with hollow corners and a filled center."""
+def _is_rounded_square(slider, img, rect):
+    """Handle box is square with rounded (hollow) corners, filled centre."""
     if rect.width() != rect.height() or rect.width() <= 0:
         return False
     corner = img.pixelColor(rect.x() + 1, rect.y() + 1)
     center = img.pixelColor(rect.center().x(), rect.center().y())
-    # Corner must not be handle fill (rounded, not square)...
+    # Corner must not be handle fill (rounded, not a hard square)...
     if corner == center:
         return False
     # ...and the center must be opaque fill (not background showing).
@@ -87,12 +88,12 @@ def test_handle_hover_changes_no_geometry(app):
     for prop in ("width", "height", "margin", "min-", "max-", "padding",
                  "border-width", "top", "left"):
         assert prop not in hover.group(1), prop
-    # ...and the resting handle renders as a true circle.
+    # ...and the resting handle renders as a rounded square.
     slider = _make_slider()
     assert slider.minimumHeight() == 30
     rest = _handle_rect(slider)
     img, dpr = _grab(slider)
-    assert _is_circle(slider, img, _scaled(rest, dpr))
+    assert _is_rounded_square(slider, img, _scaled(rest, dpr))
     slider.close()
 
 
@@ -101,15 +102,15 @@ def test_handle_hover_changes_no_geometry(app):
 def test_handle_radius_safe_at_all_scales(app, scale):
     """Rounding must never push border-radius past half the handle box.
 
-    Qt drops (not clamps) an overflowing radius and renders a square:
-    12px * 1.0417 rounded to 13 > 24/2 did exactly that on the live
-    machine. Radius 11 stays at or under half the box across the whole
-    supported range.
+    Qt drops (not clamps) an overflowing radius and renders a square: a
+    radius that rounds up past half the box did exactly that on a live
+    machine. Radius 4 on a 14px handle stays well under half across the
+    whole supported range.
 
     Pure arithmetic on the rendered stylesheet (no pixels involved):
-    Fusion allocates the handle box as content + 4px wide and
-    groove + 2*|margin| tall (observed on 6.8/6.11, anchored by the
-    render test above at scale 1.0).
+    Fusion allocates the handle box as content + 2*border wide and
+    groove + 2*|margin| tall (anchored by the render test above at
+    scale 1.0).
     """
     import re
     from stream_denoiser.gui.styles import get_stylesheet
@@ -129,7 +130,10 @@ def test_handle_radius_safe_at_all_scales(app, scale):
     margin = abs(num(handle.group(1), "margin"))
     radius = num(handle.group(1), "border-radius")
     groove_h = num(groove.group(1), "height")
-    box_w, box_h = content + 4.0, groove_h + 2.0 * margin
+    border = re.search(r"border:\s*(\d+(?:\.\d+)?)px\s+solid",
+                       handle.group(1))
+    border_w = float(border.group(1)) if border else 0.0
+    box_w, box_h = content + 2.0 * border_w, groove_h + 2.0 * margin
     assert 2.0 * radius <= min(box_w, box_h), \
         (scale, radius, box_w, box_h)
 
@@ -164,9 +168,11 @@ def test_hover_crossfade_midpoint_is_blended(app):
     slider._apply_hover()
     sheet = slider.styleSheet()
     assert sheet, "hover sheet must be installed mid-fade"
-    mid = _mix(QColor("#f8fafc"), QColor("#a5f3fc"), 0.5).name()
+    # Handle fill glides from the secondary colour toward the text colour
+    # (half way at full hover), so mid-fade is a quarter of the way.
+    mid = _mix(QColor("#E8C468"), QColor("#f8fafc"), 0.25).name()
     assert mid in sheet, (mid, sheet)
-    assert "#f8fafc" not in sheet and "#a5f3fc" not in sheet
+    assert "#e8c468" not in sheet.lower() and "#f8fafc" not in sheet.lower()
     slider.close()
 
 

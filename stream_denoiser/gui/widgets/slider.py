@@ -3,8 +3,8 @@ Poise Voice Isolator - Animated-hover Slider
 
 QSlider with a smoothly crossfading handle hover state. QSS has no
 transitions, so the instant :hover snap is replaced here by a 150ms
-crossfade between the very same theme colors (text/accent_light for the
-fill, accent/text for the ring).
+crossfade of the handle fill from the theme's secondary colour toward its
+text colour.
 
 Only colors are ever overridden, per frame, on a widget-local sheet
 that merges with the app stylesheet — metrics, groove, dragging, and
@@ -18,7 +18,6 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor
 
-from ..scaling import sp
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -97,11 +96,12 @@ class HoverSlider(QSlider):
             pass
 
     # -- crossfade ------------------------------------------------------------
+    HOVER_TOWARD_TEXT = 0.5  # fraction of the way to the text colour
+
     def _theme_pair(self):
         from ..themes import current as current_theme
         palette = current_theme()
-        return (QColor(palette["text"]), QColor(palette["accent_light"]),
-                QColor(palette["accent"]), QColor(palette["text"]))
+        return QColor(palette["secondary"]), QColor(palette["text"])
 
     def _target_hover(self, on: bool) -> None:
         self._hover_target = on
@@ -125,14 +125,11 @@ class HoverSlider(QSlider):
                 if self.styleSheet():
                     self.setStyleSheet("")
                 return
-            text, accent_light, accent, text_again = self._theme_pair()
-            bg = _mix(text, accent_light, self._hoverT)
-            ring = _mix(accent, text_again, self._hoverT)
-            bw = max(1, sp(2))
+            secondary, text = self._theme_pair()
+            fill = _mix(secondary, text, self._hoverT * self.HOVER_TOWARD_TEXT)
             self.setStyleSheet(
                 "QSlider::handle:horizontal{"
-                f"background:{bg.name()};"
-                f"border:{bw}px solid {ring.name()};"
+                f"background:{fill.name()};"
                 "}")
         except Exception:
             pass

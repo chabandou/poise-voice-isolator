@@ -10,6 +10,7 @@ from typing import Optional
 #: Mono) use the signature cyan icon; the light-gray gradient tip is
 #: identical in every variant.
 THEME_ICON_VARIANTS = {
+    "verdant": "icon-verdant.svg",
     "ultraviolet": "icon-ultraviolet.svg",
     "ember": "icon-ember.svg",
 }

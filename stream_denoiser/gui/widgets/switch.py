@@ -1,11 +1,15 @@
 """
 Poise Voice Isolator - Toggle Switch Widget
 
-iOS-style sliding toggle switch, painted manually for full control.
+Sliding toggle painted manually: a rounded-square outline track with a
+square-ish knob. Off it is a quiet muted outline; on, the outline and the
+knob take the accent with a faint accent fill behind.
 """
 from PyQt6.QtWidgets import QAbstractButton, QSizePolicy
-from PyQt6.QtCore import QSize, Qt, QPropertyAnimation, QEasingCurve, pyqtProperty
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtCore import (
+    QRectF, QSize, Qt, QPropertyAnimation, QEasingCurve, pyqtProperty,
+)
+from PyQt6.QtGui import QPainter, QColor, QPen
 
 from ..scaling import sp
 from ..themes import current as current_theme
@@ -39,7 +43,7 @@ class ToggleSwitch(QAbstractButton):
         self.toggled.connect(self._on_toggled)
 
     def sizeHint(self):  # noqa: N802 (Qt override)
-        return QSize(sp(52), sp(30))
+        return QSize(sp(50), sp(26))
 
     # -- animation property ------------------------------------------------
     def _get_knob(self) -> float:
@@ -75,34 +79,51 @@ class ToggleSwitch(QAbstractButton):
         self.update()
 
     # -- painting -----------------------------------------------------------
+    @staticmethod
+    def _mix(a: QColor, b: QColor, t: float) -> QColor:
+        t = max(0.0, min(1.0, t))
+        return QColor(
+            int(a.red() + (b.red() - a.red()) * t),
+            int(a.green() + (b.green() - a.green()) * t),
+            int(a.blue() + (b.blue() - a.blue()) * t),
+            int(a.alpha() + (b.alpha() - a.alpha()) * t),
+        )
+
     def paintEvent(self, event):  # noqa: N802 (Qt override)
         w, h = self.width(), self.height()
-        knob_d = h - 6
-        travel = w - 6 - knob_d
-        cx = 3 + travel * self._knob + knob_d / 2
+        border_w = max(1.0, float(sp(1)))
+        inset = h * 4.0 / 26.0          # knob margin (4px at 26px tall)
+        knob = h - 2.0 * inset
+        travel = w - 2.0 * inset - knob
+        x = inset + travel * max(0.0, min(1.0, self._knob))
+        # The knob rides an overshooting spring curve; positions may pass
+        # the ends but colours are blended with a clamped factor so they
+        # never extrapolate (that reads as a flash at the end of a slide).
+        t = max(0.0, min(1.0, self._knob))
+
+        palette = current_theme()
+        accent = QColor(palette["accent"])
+        muted = QColor(palette["muted"])
+        off_edge = QColor(muted)
+        off_edge.setAlpha(110)
+        off_knob = QColor(muted)
+        off_knob.setAlpha(150)
+        edge = self._mix(off_edge, accent, t)
+        knob_color = self._mix(off_knob, accent, t)
+        wash = QColor(accent)
+        wash.setAlphaF(0.14 * t)
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        half = border_w / 2.0
+        track = QRectF(half, half, w - border_w, h - border_w)
+        radius = h * 8.0 / 26.0
+        p.setPen(QPen(edge, border_w))
+        p.setBrush(wash)
+        p.drawRoundedRect(track, radius, radius)
+
         p.setPen(Qt.PenStyle.NoPen)
-
-        # Track: theme accent when on, groove tone when off. The blend
-        # factor is clamped: the knob rides an overshooting spring curve,
-        # but the color must never extrapolate past either endpoint
-        # (that reads as a flicker/flash at the end of the slide).
-        palette = current_theme()
-        on = QColor(palette["accent"])
-        off = QColor(palette["groove"])
-        t = max(0.0, min(1.0, self._knob))
-        track = QColor(
-            int(off.red() + (on.red() - off.red()) * t),
-            int(off.green() + (on.green() - off.green()) * t),
-            int(off.blue() + (on.blue() - off.blue()) * t),
-        )
-        p.setBrush(track)
-        p.drawRoundedRect(0, 0, w, h, h / 2, h / 2)
-
-        # Knob: dark on light accents (e.g. Mono silver), white otherwise.
-        knob = QColor(palette["bg"]) if on.lightnessF() > 0.7 else QColor("#f8fafc")
-        p.setBrush(knob)
-        p.drawEllipse(int(cx - knob_d / 2), 3, knob_d, knob_d)
+        p.setBrush(knob_color)
+        p.drawRoundedRect(QRectF(x, inset, knob, knob),
+                          knob * 5.0 / 18.0, knob * 5.0 / 18.0)
         p.end()
