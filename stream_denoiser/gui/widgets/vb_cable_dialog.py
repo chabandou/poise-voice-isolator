@@ -156,6 +156,12 @@ class VbCableDialog(QDialog):
         from ..animations import install_hover_fades
         install_hover_fades(self)
 
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        from ..themes import current
+        from ..titlebar import apply_titlebar
+        apply_titlebar(self, current())
+
 
 def show_vb_cable_error(parent, error_message: str) -> None:
     """Show a blocking modal with manual routing steps.

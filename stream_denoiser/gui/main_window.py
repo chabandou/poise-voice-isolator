@@ -23,6 +23,7 @@ from .styles import get_stylesheet
 from .scaling import init_scaling, sp
 from .fonts import load_fonts
 from .animations import install_hover_fades
+from .titlebar import apply_titlebar
 from . import themes as theme_store
 from .settings import get_settings
 from .. import __version__
@@ -702,6 +703,9 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):  # noqa: N802 (Qt override)
         super().showEvent(event)
+        # Native title bar follows the theme (Windows only; re-applied on
+        # every show since hiding to the tray can recreate the frame).
+        apply_titlebar(self, theme_store.current())
         if self._shown_once:
             return
         self._shown_once = True
@@ -792,6 +796,7 @@ class MainWindow(QMainWindow):
         for chip in self.findChildren(IconChip):
             chip.refresh_theme()
         self.output_selector.refresh_theme()
+        apply_titlebar(self, theme_store.current())
         self._refresh_credits()
         self._tint_icon_buttons()
         self.power_btn.update()
