@@ -72,3 +72,114 @@ def test_title_appears_once_and_sits_left(app):
     finally:
         scaling.init_scaling()
     selector.close()
+
+
+# -- device list: no "Default" entry, VB-Cable left out ---------------------------
+class _FakeSD:
+    """Stand-in for sounddevice: index 0 = MME, 1 = WASAPI."""
+
+    APIS = [{"name": "MME", "default_output_device": 2},
+            {"name": "Windows WASAPI", "default_output_device": 5}]
+
+    def __init__(self, devices, wasapi_default=5):
+        self.devices = devices
+        self.APIS = [dict(api) for api in self.APIS]
+        self.APIS[1]["default_output_device"] = wasapi_default
+
+    def query_devices(self):
+        return self.devices
+
+    def query_hostapis(self, index=None):
+        return self.APIS if index is None else self.APIS[index]
+
+
+def _dev(name, api=1, outs=2, ins=0):
+    return {"name": name, "hostapi": api,
+            "max_output_channels": outs, "max_input_channels": ins}
+
+
+DEVICES = [
+    _dev("Speakers (Realtek)", api=0),                     # 0: MME, skipped
+    _dev("CABLE Output (VB-Audio Virtual Cable)", outs=0, ins=2),  # 1: input
+    _dev("Speakers (Realtek)", api=0),                     # 2: MME default
+    _dev("CABLE Input (VB-Audio Virtual Cable)"),          # 3: VB-Cable out
+    _dev("Headphones (USB Audio)"),                        # 4
+    _dev("Speakers (Realtek(R) Audio)"),                   # 5: WASAPI default
+]
+
+
+@pytest.fixture()
+def fake_sd(monkeypatch):
+    from stream_denoiser.gui.widgets import device_selector
+    fake = _FakeSD(list(DEVICES))
+    monkeypatch.setattr(device_selector, "sd", fake, raising=False)
+    monkeypatch.setattr(device_selector, "USE_SOUNDDEVICE", True)
+    return fake
+
+
+def _items(selector):
+    combo = selector._combo
+    return [(combo.itemText(i), combo.itemData(i)) for i in range(combo.count())]
+
+
+def test_output_list_has_no_default_and_no_vb_cable(app, fake_sd):
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    selector = DeviceSelector("Output device", "output")
+    assert _items(selector) == [("Headphones (USB Audio)", 4),
+                                ("Speakers (Realtek(R) Audio)", 5)]
+    selector.close()
+
+
+def test_output_preselects_the_wasapi_default_not_the_mme_one(app, fake_sd):
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    selector = DeviceSelector("Output device", "output")
+    assert selector.selected_device_id == 5
+    selector.selected_device_id = None            # nothing saved yet
+    assert selector.selected_device_id == 5
+    selector.selected_device_id = 4               # saved choice wins
+    assert selector.selected_device_id == 4
+    selector.selected_device_id = 99              # saved device vanished
+    assert selector.selected_device_id == 5
+    selector.close()
+
+
+def test_default_on_vb_cable_falls_back_to_the_first_device(app, monkeypatch):
+    from stream_denoiser.gui.widgets import device_selector
+    monkeypatch.setattr(device_selector, "sd",
+                        _FakeSD(list(DEVICES), wasapi_default=3), raising=False)
+    monkeypatch.setattr(device_selector, "USE_SOUNDDEVICE", True)
+    selector = device_selector.DeviceSelector("Output device", "output")
+    assert selector.selected_device_id == 4
+    selector.close()
+
+
+def test_rescan_announces_a_fallback_when_the_choice_disappears(app, fake_sd):
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    selector = DeviceSelector("Output device", "output")
+    selector.selected_device_id = 4
+    seen = []
+    selector.device_changed.connect(seen.append)
+    selector.refresh_devices()                    # unchanged: stays quiet
+    assert seen == [] and selector.selected_device_id == 4
+    fake_sd.devices[4] = _dev("Headphones (USB Audio)", outs=0)  # unplugged
+    selector.refresh_devices()
+    assert selector.selected_device_id == 5
+    assert seen == [5]
+    selector.close()
+
+
+def test_empty_output_list_says_so(app, fake_sd):
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    fake_sd.devices = [DEVICES[0], DEVICES[3]]    # MME + VB-Cable only
+    selector = DeviceSelector("Output device", "output")
+    assert _items(selector) == [("No output devices found", None)]
+    selector.close()
+
+
+def test_is_vb_cable_names():
+    from stream_denoiser.gui.widgets.device_selector import is_vb_cable
+    assert is_vb_cable("CABLE Input (VB-Audio Virtual Cable)")
+    assert is_vb_cable("CABLE In 16ch (VB-Audio Virtual Cable)")
+    assert is_vb_cable("CABLE Input (VB-Audio Virtual C")   # truncated
+    assert not is_vb_cable("Speakers (Realtek(R) Audio)")
+    assert not is_vb_cable("Cable Modem Speakers")

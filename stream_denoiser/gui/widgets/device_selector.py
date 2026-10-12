@@ -21,6 +21,13 @@ except ImportError:
     USE_SOUNDDEVICE = False
 
 
+def is_vb_cable(name: str) -> bool:
+    """True for VB-Audio's virtual cable endpoints (e.g. "CABLE Input (VB-Audio
+    Virtual Cable)"), even when WASAPI truncates the name. VB-Audio always
+    capitalises CABLE, which keeps e.g. "Cable Modem Speakers" out."""
+    return "vb-audio" in name.lower() or name.startswith("CABLE ")
+
+
 class DeviceSelector(QWidget):
     """
     Dropdown widget for selecting audio devices.
@@ -102,7 +109,14 @@ class DeviceSelector(QWidget):
         layout.addStretch(1)
     
     def refresh_devices(self):
-        """Refresh the list of available devices."""
+        """Refresh the list of available devices.
+
+        There is no "Default" entry: Poise switches the system default
+        playback to VB-Cable while running, so the list only names real
+        devices (VB-Cable itself is left out of the outputs). The previous
+        choice is kept when it still exists, otherwise the system default
+        device is selected (and announced via device_changed).
+        """
         if not USE_SOUNDDEVICE:
             self._combo.clear()
             self._combo.addItem("sounddevice not available", None)
@@ -114,46 +128,57 @@ class DeviceSelector(QWidget):
         self._combo.blockSignals(True)
         self._combo.clear()
         
-        # Add default option
-        self._combo.addItem("Default", None)
-        
-        # Get devices
         try:
-            devices = sd.query_devices()
-            self._devices = list(devices)
-            
+            self._devices = list(sd.query_devices())
             for i, device in enumerate(self._devices):
-                # Filter by device type
-                if self._device_type == "input":
-                    if device['max_input_channels'] <= 0:
-                        continue
-                    # Prefer WASAPI devices
-                    host_api = sd.query_hostapis(device['hostapi'])['name']
-                    if 'wasapi' not in host_api.lower():
-                        continue
-                elif self._device_type == "output":
-                    if device['max_output_channels'] <= 0:
-                        continue
-                    # Prefer WASAPI devices
-                    host_api = sd.query_hostapis(device['hostapi'])['name']
-                    if 'wasapi' not in host_api.lower():
-                        continue
-                
-                # Add to dropdown
-                display_name = f"{device['name']}"
-                self._combo.addItem(display_name, i)
-            
+                if self._accepts(device):
+                    self._combo.addItem(f"{device['name']}", i)
         except Exception as e:
             self._combo.addItem(f"Error: {str(e)}", None)
+        if self._combo.count() == 0:
+            self._combo.addItem(f"No {self._device_type} devices found", None)
         
-        # Restore selection if possible
-        if current_id is not None:
-            for i in range(self._combo.count()):
-                if self._combo.itemData(i) == current_id:
-                    self._combo.setCurrentIndex(i)
-                    break
-        
+        self._select(current_id)
         self._combo.blockSignals(False)
+        if self.selected_device_id != current_id:
+            self.device_changed.emit(self.selected_device_id)
+
+    def _accepts(self, device) -> bool:
+        """WASAPI devices of the right direction (outputs: not VB-Cable)."""
+        key = ('max_input_channels' if self._device_type == "input"
+               else 'max_output_channels')
+        if device[key] <= 0:
+            return False
+        host_api = sd.query_hostapis(device['hostapi'])['name']
+        if 'wasapi' not in host_api.lower():
+            return False
+        if self._device_type == "output" and is_vb_cable(device['name']):
+            return False
+        return True
+
+    def _system_default_id(self) -> Optional[int]:
+        """The WASAPI default device (PortAudio's own default is MME)."""
+        key = ('default_input_device' if self._device_type == "input"
+               else 'default_output_device')
+        try:
+            for api in sd.query_hostapis():
+                if 'wasapi' in api['name'].lower():
+                    index = api.get(key, -1)
+                    return index if index is not None and index >= 0 else None
+        except Exception:
+            pass
+        return None
+
+    def _select(self, device_id: Optional[int]) -> None:
+        """Select device_id, else the system default, else the first item."""
+        for wanted in (device_id, self._system_default_id()):
+            if wanted is None:
+                continue
+            index = self._combo.findData(wanted)
+            if index >= 0:
+                self._combo.setCurrentIndex(index)
+                return
+        self._combo.setCurrentIndex(0)
     
     def _on_selection_changed(self, index: int):
         """Handle selection change."""
@@ -167,14 +192,8 @@ class DeviceSelector(QWidget):
     
     @selected_device_id.setter
     def selected_device_id(self, device_id: Optional[int]):
-        """Set the selected device by ID."""
-        for i in range(self._combo.count()):
-            if self._combo.itemData(i) == device_id:
-                self._combo.setCurrentIndex(i)
-                return
-        
-        # If not found, select default
-        self._combo.setCurrentIndex(0)
+        """Set the selected device by ID (falls back like refresh_devices)."""
+        self._select(device_id)
     
     def set_subtitle(self, text: str) -> None:
         """Change the caption (e.g. the lock note while running)."""
