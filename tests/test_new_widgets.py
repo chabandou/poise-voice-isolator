@@ -256,6 +256,30 @@ def test_toggle_is_a_rounded_square_outline_with_an_accent_knob(app):
     on.close()
 
 
+def test_disabled_toggle_greys_out_and_drops_the_hand_cursor(app):
+    """Locked while running: an 'on' switch must not keep its accent knob."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.switch import ToggleSwitch
+    themes.set_current("abyss")
+    accent = QColor(themes.current()["accent"])
+    sw = ToggleSwitch(checked=True)
+    sw.show()
+    _pump(app)
+    h, right = sw.height(), sw.width() - sw.height() // 2
+    assert sw.grab().toImage().pixelColor(right, h // 2) == accent
+    sw.setEnabled(False)
+    _pump(app)
+    knob = sw.grab().toImage().pixelColor(right, h // 2)
+    assert abs(knob.blue() - accent.blue()) > 30 or \
+        abs(knob.green() - accent.green()) > 30, knob.name()
+    assert sw.cursor().shape() == Qt.CursorShape.ArrowCursor
+    sw.setEnabled(True)
+    assert sw.cursor().shape() != Qt.CursorShape.ArrowCursor
+    sw.close()
+
+
 def test_toggle_knob_springs_past_the_end_and_settles(app):
     """The slide's bounce: position is unclamped (overshoots), but the
     colour blend stays clamped so it never flashes."""

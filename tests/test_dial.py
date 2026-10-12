@@ -172,3 +172,29 @@ def test_dial_size_follows_responsive_requests(app):
     btn.set_dial_size(240)
     assert btn.width() == btn.height() == 240
     btn.close()
+
+
+def test_transition_does_not_hand_focus_to_the_next_widget(app):
+    """Disabling the focused dial on Start/Stop made Qt focus the next
+    widget, and the page's scroll area jumped to it."""
+    from PyQt6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
+    from stream_denoiser.gui.widgets.dial import DialButton
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    btn = DialButton()
+    after = QPushButton("next in the tab chain")
+    layout.addWidget(btn)
+    layout.addWidget(after)
+    host.show()
+    host.activateWindow()
+    _pump(app)
+    btn.setFocus()
+    _pump(app)
+    assert btn.hasFocus()
+    btn.set_transitioning(True)
+    _pump(app)
+    assert QApplication.focusWidget() is not after
+    btn.set_transitioning(False)
+    _pump(app)
+    assert btn.hasFocus()                 # keyboard users keep their place
+    host.close()

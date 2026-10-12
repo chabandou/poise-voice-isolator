@@ -41,6 +41,7 @@ class PowerButton(QAbstractButton):
 
         self._is_active = False
         self._is_transitioning = False
+        self._refocus = False   # had focus when a transition disabled it
         self._has_error = False
 
         # Animation state (paint-time only — never touches layout).
@@ -111,7 +112,17 @@ class PowerButton(QAbstractButton):
 
     def set_transitioning(self, transitioning: bool):
         self._is_transitioning = transitioning
+        if transitioning and self.hasFocus():
+            # Disabling a focused widget makes Qt hand focus to the next
+            # one in the tab chain, and the page's QScrollArea scrolls it
+            # into view (the page jumped on Start/Stop). Drop focus
+            # ourselves first, and take it back once the transition ends.
+            self._refocus = True
+            self.clearFocus()
         self.setEnabled(not transitioning)
+        if not transitioning and self._refocus:
+            self._refocus = False
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
         if transitioning:
             self._start_spin()
         else:

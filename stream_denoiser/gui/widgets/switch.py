@@ -7,7 +7,7 @@ knob take the accent with a faint accent fill behind.
 """
 from PyQt6.QtWidgets import QAbstractButton, QSizePolicy
 from PyQt6.QtCore import (
-    QRectF, QSize, Qt, QPropertyAnimation, QEasingCurve, pyqtProperty,
+    QEvent, QRectF, QSize, Qt, QPropertyAnimation, QEasingCurve, pyqtProperty,
 )
 from PyQt6.QtGui import QPainter, QColor, QPen
 
@@ -44,6 +44,20 @@ class ToggleSwitch(QAbstractButton):
 
     def sizeHint(self):  # noqa: N802 (Qt override)
         return QSize(sp(50), sp(26))
+
+    def changeEvent(self, event):  # noqa: N802 (Qt override)
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            # No hand cursor over a locked switch.
+            if self.isEnabled():
+                try:
+                    from ..cursors import apply_link_cursor
+                    apply_link_cursor(self)
+                except Exception:
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
 
     # -- animation property ------------------------------------------------
     def _get_knob(self) -> float:
@@ -112,6 +126,9 @@ class ToggleSwitch(QAbstractButton):
         palette = current_theme()
         accent = QColor(palette["accent"])
         muted = QColor(palette["muted"])
+        enabled = self.isEnabled()
+        if not enabled:
+            accent = QColor(muted)   # locked: grey, whichever way it is set
         off_edge = QColor(muted)
         off_edge.setAlpha(110)
         off_knob = QColor(muted)
@@ -123,6 +140,8 @@ class ToggleSwitch(QAbstractButton):
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not enabled:
+            p.setOpacity(0.45)
         half = border_w / 2.0
         track = QRectF(half, half, w - border_w, h - border_w)
         radius = h * 8.0 / 26.0
