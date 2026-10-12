@@ -25,6 +25,12 @@ class DenoiseEngine(ABC):
     #: Frame size (in samples) the engine requires, or None if it is flexible
     required_frame_size: Optional[int] = None
 
+    #: Input-to-output delay of the model itself (samples): output sample n
+    #: corresponds to input sample n - latency_samples. The dry mix, the
+    #: processor's AAD bypass and the PipeWire node's unprocessed fallback
+    #: are all delayed by this much to stay aligned with processed audio.
+    latency_samples: int = 0
+
     #: Latest speech probability in [0, 1] if the model provides one, else None
     speech_prob: Optional[float] = None
 
@@ -56,6 +62,42 @@ class DenoiseEngine(ABC):
 
     def close(self) -> None:
         """Release any native resources. Safe to call more than once."""
+
+
+class DelayLine:
+    """
+    Fixed whole-sample delay for a stream of frames (any frame length).
+
+    process() returns its input `delay` samples late, starting with
+    silence. The line also remembers `history` samples beyond the delay,
+    so recent() can return up to `delay + history` samples of past input.
+    """
+
+    def __init__(self, delay: int, history: int = 0):
+        if delay < 0 or history < 0:
+            raise ValueError("delay and history must be >= 0")
+        self.delay = int(delay)
+        self._buf = np.zeros(self.delay + int(history), dtype=np.float32)
+
+    def process(self, frame: np.ndarray) -> np.ndarray:
+        """Push `frame`; return the same number of samples, delayed."""
+        n = frame.shape[0]
+        size = self._buf.shape[0]
+        joined = np.concatenate(
+            (self._buf, np.asarray(frame, dtype=np.float32)))
+        start = size - self.delay
+        out = joined[start:start + n].copy()
+        self._buf = joined[n:]
+        return out
+
+    def recent(self, n: int) -> np.ndarray:
+        """The last `n` samples pushed (zeros before the first push)."""
+        if not 0 <= n <= self._buf.shape[0]:
+            raise ValueError(f"only {self._buf.shape[0]} samples are kept")
+        return self._buf[self._buf.shape[0] - n:].copy()
+
+    def reset(self) -> None:
+        self._buf = np.zeros_like(self._buf)
 
 
 def mix_dry(wet: np.ndarray, dry: np.ndarray,

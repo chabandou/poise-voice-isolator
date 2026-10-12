@@ -16,7 +16,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from .base import DenoiseEngine, mix_dry
+from .base import DelayLine, DenoiseEngine, mix_dry
 from ..constants import (
     MODEL_DEEPFILTERNET3,
     ONNX_INTRA_OP_THREADS,
@@ -131,6 +131,8 @@ class DeepFilterNet3Engine(DenoiseEngine):
         self.atten_lim_db = atten_lim_db
 
         self.required_frame_size = int(onnx_session.get_inputs()[0].shape[0])
+        # Measured on speech by cross-correlation: 1536 samples at 512.
+        self.latency_samples = 3 * self.required_frame_size
 
         self._init_states = {
             k: np.ascontiguousarray(v, dtype=np.float32)
@@ -139,10 +141,12 @@ class DeepFilterNet3Engine(DenoiseEngine):
         self._states = {k: v.copy() for k, v in self._init_states.items()}
 
         # Applied mix and the one set_atten_lim_db() asks for; the next
-        # frame ramps from the first to the second. The dry buffer is kept
-        # even with no dry mix so turning it on later stays aligned.
+        # frame ramps from the first to the second. The dry signal is
+        # delayed to line up with the model output (else the mix combs),
+        # and kept even with no dry mix so turning it on later stays
+        # aligned.
         self._dry_lin = self._dry_lin_target = _dry_lin_for(atten_lim_db)
-        self._dry_buf = np.zeros(self.required_frame_size, dtype=np.float32)
+        self._dry_delay = DelayLine(self.latency_samples)
 
     @classmethod
     def from_path(cls, onnx_path: str = DEFAULT_DF3_ONNX,
@@ -175,9 +179,7 @@ class DeepFilterNet3Engine(DenoiseEngine):
             in_name = out_name[4:] if out_name.startswith('new_') else out_name
             self._states[in_name] = val
 
-        # One-frame-delayed dry mix (matches the reference DF3 streamer).
-        dry = self._dry_buf
-        self._dry_buf = np.array(frame, dtype=np.float32)
+        dry = self._dry_delay.process(frame)
         start, end = self._dry_lin, self._dry_lin_target
         if start > 0.0 or end > 0.0:
             enhanced = mix_dry(enhanced, dry, start, end)
@@ -190,7 +192,7 @@ class DeepFilterNet3Engine(DenoiseEngine):
 
     def reset(self) -> None:
         self._states = {k: v.copy() for k, v in self._init_states.items()}
-        self._dry_buf = np.zeros(self.required_frame_size, dtype=np.float32)
+        self._dry_delay.reset()
 
 
 def _load_df3_session(model_path: str):

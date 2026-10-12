@@ -20,6 +20,7 @@ from .constants import (
     OUTPUT_GAIN_DB,
 )
 from .engines import DenoiseEngine
+from .engines.base import DelayLine, mix_dry
 from .aad import AudioActivityDetector
 from .resampler import StreamingResampler
 from .logging_config import get_logger
@@ -107,7 +108,22 @@ class DenoiserAudioProcessor:
             sample_rate=target_sr,
             frame_size=frame_size
         ) if enable_aad else None
-        
+
+        # AAD bypass. Bypassed frames skip the engine but must come out as
+        # late as processed ones (engine.latency_samples), or every
+        # bypass<->active switch jumps the audio by that delay. The line
+        # sees every frame and keeps enough input to re-prime the engine
+        # (its lookahead + one frame of analysis overlap) on resume.
+        latency = int(engine.latency_samples or 0)
+        self._prime_frames = (-(-latency // frame_size) + 1) if latency else 0
+        self._bypass_delay = DelayLine(
+            latency, history=self._prime_frames * frame_size - latency
+        ) if enable_aad else None
+        # Frames the engine skipped since it last ran (re-fed on resume)
+        self._skipped_frames = 0
+        # Previous output frame came from the engine (fade out on bypass)
+        self._last_wet = False
+
         # Statistics
         self.frame_count = 0
         self.total_processing_time = 0.0
@@ -314,31 +330,64 @@ class DenoiserAudioProcessor:
         
         # Ensure correct size
         audio_chunk = self._normalize_frame_size(audio_chunk)
-        
-        # AAD check - bypass processing if silence detected
-        if self.aad and not self.aad.is_audio(audio_chunk):
-            # Bypassed frames get the same makeup gain + limiter chain as
-            # processed frames so loudness stays consistent and the boosted
-            # signal still can't clip. Still runs through the output
-            # resampler so bypassed frames keep the same length/timing as
-            # processed frames.
-            return self._resample_output(self._postprocess_audio(audio_chunk))
-        
-        # Run the denoising engine
+
+        if self.aad is None:
+            audio_output = self._process_engine(audio_chunk)
+        else:
+            audio_output = self._process_with_aad(audio_chunk)
+
+        # Post-processing: makeup gain + limiter (bypassed frames too, so
+        # loudness stays consistent and the boosted signal can't clip),
+        # then output resampling (same length/timing for every frame).
+        return self._resample_output(self._postprocess_audio(audio_output))
+
+    def _process_engine(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """Run the engine on one frame, with stats and shape checks."""
         enhanced_audio_frame, processing_time = self._run_engine(audio_chunk)
-        
-        # Statistics
         self.frame_count += 1
         self.total_processing_time += processing_time
-        
-        # Normalize output shape
-        audio_output = self._normalize_output_shape(enhanced_audio_frame, audio_chunk)
-        
-        # Post-processing: normalize and clip
-        audio_output = self._postprocess_audio(audio_output)
-        
-        # Output resampling
-        return self._resample_output(audio_output)
+        return self._normalize_output_shape(enhanced_audio_frame, audio_chunk)
+
+    def _process_with_aad(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """
+        One frame with AAD: the engine runs on activity, silence bypasses
+        it through a delay line matching the engine's own latency.
+
+        Each switch crossfades over one frame (both sides are aligned, so
+        the fade is click-free). The first bypassed frame still runs the
+        engine to fade out of; resuming re-primes the engine with the
+        input it skipped, so its lookahead holds the right audio instead
+        of whatever preceded the bypass.
+        """
+        active = self.aad.is_audio(audio_chunk)
+        if active and self._skipped_frames:
+            self._prime_engine()
+        dry = self._bypass_delay.process(audio_chunk)
+
+        if active:
+            wet = self._process_engine(audio_chunk)
+            out = wet if self._last_wet else mix_dry(wet, dry, 1.0, 0.0)
+            self._last_wet = True
+        elif self._last_wet:
+            out = mix_dry(self._process_engine(audio_chunk), dry, 0.0, 1.0)
+            self._last_wet = False
+        else:
+            out = dry
+            self._skipped_frames += 1
+        return out
+
+    def _prime_engine(self) -> None:
+        """
+        Feed the engine the input it skipped (outputs discarded): all of
+        it after a short bypass, so its input stays contiguous, else the
+        last _prime_frames frames.
+        """
+        n = self.frame_size
+        frames = min(self._skipped_frames, self._prime_frames)
+        recent = self._bypass_delay.recent(frames * n)
+        for i in range(frames):
+            self._process_engine(recent[i * n:(i + 1) * n])
+        self._skipped_frames = 0
 
     def _resample_output(self, audio: np.ndarray) -> Optional[np.ndarray]:
         """Resample engine-rate audio to the output device rate, if needed."""
@@ -452,6 +501,10 @@ class DenoiserAudioProcessor:
             self.output_resampler.reset()
         if self.aad:
             self.aad.reset()
+        if self._bypass_delay is not None:
+            self._bypass_delay.reset()
+        self._skipped_frames = 0
+        self._last_wet = False
         self.frame_count = 0
         self.total_processing_time = 0.0
         self._input_block_err = 0.0

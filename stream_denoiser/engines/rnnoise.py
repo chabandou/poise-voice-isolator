@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .base import DenoiseEngine, mix_dry
+from .base import DelayLine, DenoiseEngine, mix_dry
 from ..constants import (
     MODEL_RNNOISE,
     RNNOISE_SCALE,
@@ -127,10 +127,14 @@ class RNNoiseEngine(DenoiseEngine):
         """
         self._lib = _load_library()
         self.required_frame_size = int(self._lib.rnnoise_get_frame_size())
+        # Measured on speech by cross-correlation: 960 samples at 480.
+        self.latency_samples = 2 * self.required_frame_size
         self.atten_lim_db = atten_lim_db
         # Applied mix and the one set_atten_lim_db() asks for; the next
-        # frame ramps from the first to the second.
+        # frame ramps from the first to the second. The dry signal is
+        # delayed to line up with the model output (else the mix combs).
         self._dry_mix = self._dry_mix_target = _dry_mix_for(atten_lim_db)
+        self._dry_delay = DelayLine(self.latency_samples)
         self.speech_prob = 0.0
 
         n = self.required_frame_size
@@ -174,9 +178,10 @@ class RNNoiseEngine(DenoiseEngine):
         )
         wet = self._out / RNNOISE_SCALE
 
+        dry = self._dry_delay.process(frame)
         start, end = self._dry_mix, self._dry_mix_target
         if start > 0.0 or end > 0.0:
-            wet = mix_dry(wet, frame, start, end)
+            wet = mix_dry(wet, dry, start, end)
         self._dry_mix = end
         return wet.astype(np.float32, copy=False)
 
@@ -187,6 +192,7 @@ class RNNoiseEngine(DenoiseEngine):
     def reset(self) -> None:
         self._destroy_state()
         self._create_state()
+        self._dry_delay.reset()
         self.speech_prob = 0.0
 
     def close(self) -> None:
