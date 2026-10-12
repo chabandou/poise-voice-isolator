@@ -14,9 +14,13 @@ import numpy as np
 from ..constants import PULSE_TARGET_SR, STATS_PRINT_INTERVAL_SEC
 from ..device_utils import print_stats, print_final_stats
 from ..logging_config import get_logger, get_log_file_path
-from .pulse_simple import PulseCapture, PulsePlayback
+from ..sync import SYNC_BLOCKED_READ_FRACTION, CaptureBacklogGuard
+from .pulse_simple import NODE_GROUP, PulseCapture, PulsePlayback
 
 _logger = get_logger(__name__)
+
+# Cadence of the "sync:" file-log line (capture backlog diagnostics).
+SYNC_LOG_INTERVAL_SEC = 30.0
 
 # should_stop may be a threading.Event, a zero-arg callable, or None (run
 # until KeyboardInterrupt).
@@ -78,13 +82,34 @@ def run_pulse_loop(processor,
         server_name, server_version, get_log_file_path(),
     )
 
+    # Loop stalls leave their length behind as capture backlog for good;
+    # the guard discards it (see sync.py). Clock drift is prevented by the
+    # PipeWire node group the streams join (see pulse_simple.NODE_GROUP).
+    block_ms = block_size * 1000.0 / PULSE_TARGET_SR
+    guard = CaptureBacklogGuard(block_ms)
+    # A read that waits this long found the capture buffer empty.
+    blocked_read_sec = block_ms / 1000.0 * SYNC_BLOCKED_READ_FRACTION
+
     empty_reads = 0
     start_time = time.time()
     last_stats = start_time
+    last_sync_log = start_time
     with PulseCapture(source, block_size) as cap, \
             PulsePlayback(sink, block_size) as play:
+        _run_logger.info("sync: node.group=%s", NODE_GROUP)
         while not _should_stop(should_stop):
+            t_read = time.monotonic()
             chunk, _overflowed = cap.read()
+            t_done = time.monotonic()
+            drop = guard.observe(cap.latency_ms(),
+                                 (t_done - t_read) >= blocked_read_sec, t_done)
+            if drop:
+                # Already buffered, so these reads return immediately.
+                for _ in range(drop):
+                    cap.read()
+                _run_logger.info(
+                    "sync: dropped %d blocks (%.0f ms) of capture backlog "
+                    "(floor=%.1fms)", drop, drop * block_ms, guard.floor_ms)
             if chunk is None or len(chunk) == 0:
                 empty_reads += 1
                 continue
@@ -101,11 +126,20 @@ def run_pulse_loop(processor,
                 except Exception:
                     pass
                 last_stats = now
+            if now - last_sync_log >= SYNC_LOG_INTERVAL_SEC:
+                _run_logger.info(
+                    "sync: excess=%.1fms floor=%.1fms dropped=%.0fms "
+                    "capture_latency=%.1fms play_latency=%.1fms",
+                    guard.excess_ms, guard.floor_ms or 0.0, guard.dropped_ms,
+                    cap.latency_ms(), play.latency_ms())
+                last_sync_log = now
     elapsed = time.time() - start_time
     final = processor.get_stats()
     _run_logger.info(
-        "run stop: frames=%s empty_reads=%s elapsed=%.1fs",
+        "run stop: frames=%s empty_reads=%s elapsed=%.1fs "
+        "sync_drops=%s sync_dropped=%.0fms",
         final.get("frame_count"), empty_reads, elapsed,
+        guard.drop_events, guard.dropped_ms,
     )
     return final, empty_reads
 
