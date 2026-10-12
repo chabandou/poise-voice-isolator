@@ -415,6 +415,7 @@ class MainWindow(QMainWindow):
             "Skip silence",
             "Audio Activity detection. Saves CPU while nothing plays.",
             self.aad_switch)
+        self._aad_row = aad_row
 
         thresh_box = QWidget()
         thresh_layout = QHBoxLayout(thresh_box)
@@ -1016,6 +1017,9 @@ class MainWindow(QMainWindow):
         self.output_selector.set_subtitle(
             "Where the clean audio plays")
         self.model_cards.setEnabled(enabled)
+        # Turning silence skipping on/off would rebuild the detector inside
+        # the running processor; the threshold itself stays live.
+        self._aad_row.set_locked(not enabled)
 
     def _on_worker_started(self):
         """Called when worker successfully starts."""
@@ -1065,12 +1069,12 @@ class MainWindow(QMainWindow):
         _logger.info(MSG_PROCESSING_STOPPED)
 
     def _on_threshold_changed(self, value):
-        """Handle AAD threshold slider change."""
+        """Persist the AAD threshold and apply it to a running worker."""
         self.thresh_val_label.setText(f"{value} dB")
-        if not self.worker.is_running:
-            self.settings.aad_threshold = float(value)
+        self.settings.aad_threshold = float(value)
+        if self.worker is not None:
+            self.worker.set_aad_threshold(float(value))
         self._refresh_summary()
-        # TODO: Support live updates to worker
 
     def _on_aad_toggled(self, checked):
         """Handle AAD switch toggle."""

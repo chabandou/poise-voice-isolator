@@ -393,6 +393,17 @@ class AudioWorker(QThread):
         if engine is not None:
             engine.set_atten_lim_db(atten_lim_db)
 
+    def set_aad_threshold(self, threshold_db: float) -> None:
+        """Change the silence-skipping threshold; applies live while processing.
+
+        Before the processor exists, the stored value is what it is built
+        with. A run started with silence skipping off has no detector.
+        """
+        self.aad_threshold = threshold_db
+        processor = self._processor
+        if processor is not None and processor.aad is not None:
+            processor.aad.set_threshold(threshold_db)
+
     def stop(self) -> None:
         """Stop processing gracefully."""
         self._running = False

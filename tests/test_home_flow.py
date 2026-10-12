@@ -66,6 +66,55 @@ def test_dial_changes_reach_a_running_engine(window):
     assert window.worker.atten_lim_db == -17.0
 
 
+def test_threshold_changes_reach_a_running_detector(window):
+    seen = []
+
+    class Detector:
+        def set_threshold(self, db):
+            seen.append(db)
+
+    class Processor:
+        aad = Detector()
+
+    window.aad_switch.setChecked(True)
+    window.worker._processor = Processor()
+    try:
+        window.thresh_slider.setValue(-52)
+    finally:
+        window.worker._processor = None
+    assert seen == [-52.0]
+    assert window.worker.aad_threshold == -52.0
+    assert float(window.settings.aad_threshold) == -52.0
+
+
+def test_threshold_without_a_detector_is_only_stored(window):
+    class Processor:
+        aad = None                     # run started with skipping off
+
+    window.worker._processor = Processor()
+    try:
+        window.worker.set_aad_threshold(-45.0)
+    finally:
+        window.worker._processor = None
+    assert window.worker.aad_threshold == -45.0
+
+
+def test_skip_silence_switch_locks_while_running(window, monkeypatch):
+    monkeypatch.setattr(window, "tray", None)
+    switch_done = window.settings.device_switch_done
+    try:
+        window.aad_switch.setChecked(True)
+        window._on_worker_started()
+        assert not window.aad_switch.isEnabled()
+        assert window._aad_row._sub.text() == "Locked while running"
+        assert window.thresh_slider.isEnabled()   # threshold stays live
+        window._on_worker_stopped()
+        assert window.aad_switch.isEnabled()
+        assert window._aad_row._sub.text().startswith("Audio Activity")
+    finally:
+        window.settings.device_switch_done = switch_done
+
+
 def test_summary_follows_settings_changes(window):
     window.aad_switch.setChecked(False)
     assert window.setup_summary._aad_value.text() == "Off"
