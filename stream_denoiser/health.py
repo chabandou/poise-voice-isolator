@@ -23,14 +23,15 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from .constants import PW_NODE_NAME
 from .logging_config import get_logger
 
 _logger = get_logger(__name__)
 
 SKIP_HEALTH_ENV = "POISE_SKIP_HEALTH"
 
-# Sink names we manage (current + legacy, pre-rename leftovers)
-OWN_SINK_NAMES = ("Poise_Capture", "Denoiser_Capture")
+# Sink names we manage (PipeWire node, null sink, pre-rename leftovers)
+OWN_SINK_NAMES = (PW_NODE_NAME, "Poise_Capture", "Denoiser_Capture")
 
 
 @dataclass
@@ -260,6 +261,21 @@ def check_pulse_backend() -> CheckResult:
     return CheckResult(name="pulse-simple", ok=True, detail=detail)
 
 
+def check_pipewire_node() -> CheckResult:
+    """Report whether the PipeWire node backend can run (never fails:
+    without it Poise uses pulse-simple)."""
+    try:
+        from .backends.pipewire_backend import pipewire_node_status
+        ok, detail = pipewire_node_status()
+    except Exception as e:
+        ok, detail = False, str(e)
+    if ok:
+        return CheckResult(name="pipewire-node", ok=True,
+                           detail=f"in-graph node available ({detail})")
+    return CheckResult(name="pipewire-node", ok=True,
+                       detail=f"not used, falling back to pulse-simple: {detail}")
+
+
 # ---------------------------------------------------------------------------
 # Issue 3: Stuck on our null sink after a crash
 # ---------------------------------------------------------------------------
@@ -363,7 +379,8 @@ def reset_audio() -> Tuple[bool, str]:
 
 def run_doctor() -> Tuple[bool, List[CheckResult]]:
     """Run all startup checks. Returns (all_ok, results)."""
-    results = [check_execstack(), check_pulse_backend()]
+    results = [check_execstack(), check_pulse_backend(),
+               check_pipewire_node()]
     return all(r.ok for r in results), results
 
 

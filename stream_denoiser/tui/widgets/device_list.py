@@ -56,8 +56,9 @@ class DeviceList(Static):
             self.devices = []
             return
         try:
+            from ...constants import PW_NODE_NAME
             sinks = [s for s in list_pulseaudio_sinks()
-                     if s.name != "Poise_Capture"]
+                     if s.name not in ("Poise_Capture", PW_NODE_NAME)]
             # Exclude other null/virtual sinks from the picker.
             sinks = [s for s in sinks if "null" not in s.name.lower()]
             self.devices = []

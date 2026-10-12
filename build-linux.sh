@@ -3,7 +3,8 @@
 # Poise Voice Isolator - Linux Build Script (Nuitka)
 #
 # Builds an optimized single-file executable.
-# Requires: Python 3.13, gcc, conda/mamba
+# Requires: Python 3.13, gcc, conda/mamba, libpipewire-0.3 headers
+#           (optional: the PipeWire node backend)
 #
 
 set -e
@@ -100,6 +101,23 @@ print('DIRTY' if (flags is not None and flags[1] and flags[2]) else 'CLEAN')
 fi
 echo
 
+# PipeWire node (libpoise_pw.so): Poise as a sink inside the PipeWire graph
+# with a fixed delay. Built against the system libpipewire headers (not the
+# conda env's); without them the binary still works on pulse-simple.
+PW_NODE_ARGS=()
+SYS_PKG_CONFIG=$(PATH=/usr/bin:/bin command -v pkg-config || true)
+if [ -n "$SYS_PKG_CONFIG" ] && "$SYS_PKG_CONFIG" --exists libpipewire-0.3; then
+    echo "Building PipeWire node (libpoise_pw.so)..."
+    make -C native/poise_pw clean
+    make -C native/poise_pw PKG_CONFIG="$SYS_PKG_CONFIG" CC="${SYS_CC:-/usr/bin/cc}"
+    PW_NODE_ARGS=(--include-data-files=stream_denoiser/native/libpoise_pw.so=stream_denoiser/native/libpoise_pw.so)
+    echo "✓ PipeWire node built"
+else
+    echo "⚠ libpipewire-0.3 headers not found - building without the PipeWire node"
+    echo "  (Arch: sudo pacman -S pipewire; Debian/Ubuntu: sudo apt install libpipewire-0.3-dev)"
+fi
+echo
+
 # Clean previous build
 rm -rf dist/__main__.* dist/poise
 
@@ -120,6 +138,7 @@ python -m nuitka \
     --include-data-files=denoiser_model_df3.onnx=denoiser_model_df3.onnx \
     --include-data-files=denoiser_model_df3_states.npz=denoiser_model_df3_states.npz \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
+    "${PW_NODE_ARGS[@]}" \
     --output-filename=poise \
     --output-dir=dist \
     poise_tui.py

@@ -7,6 +7,23 @@ Central location for all configuration constants used across the package.
 # Audio processing constants
 DEFAULT_SAMPLE_RATE = 48000
 PULSE_TARGET_SR = 48000  # Linux pulse-simple path is fixed 48 kHz float32
+
+# Linux PipeWire node (backends/pipewire_backend.py): Poise as a virtual
+# sink inside the PipeWire graph, with a fixed delay to the sound card.
+PW_NODE_NAME = "Poise_Isolator"
+PW_NODE_DESCRIPTION = "Poise Voice Isolator"
+# Largest graph cycle (samples at 48 kHz) the delay is sized for; asked of
+# PipeWire as node.latency, so the cycle stays at or below it.
+PW_QUANTUM = 512
+# Time the inference thread gets per frame beyond the cycle itself
+# (samples, 1024 = 21 ms); a frame later than this plays unprocessed.
+# Override with POISE_PW_MARGIN_MS.
+PW_MARGIN_SAMPLES = 1024
+# Crossfade between processed and unprocessed audio (samples).
+PW_FADE_SAMPLES = 64
+# Linux backend: "auto" (PipeWire node when available, else pulse-simple),
+# "pipewire" or "pulse". Override with POISE_BACKEND or --backend.
+LINUX_BACKENDS = ("auto", "pipewire", "pulse")
 DEFAULT_FRAME_SIZE = 480
 FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 

@@ -141,3 +141,18 @@ def test_apply_fix_when_patchelf_missing(monkeypatch, tmp_path):
     ok, message = health.apply_execstack_fix()
     assert ok is False
     assert "patchelf" in message
+
+
+def test_check_pipewire_node_never_fails_doctor(monkeypatch):
+    """The node is optional: unavailable means the pulse-simple fallback,
+    so the check reports it without failing --doctor."""
+    from stream_denoiser.backends import pipewire_backend
+    monkeypatch.setattr(pipewire_backend, "pipewire_node_status",
+                        lambda: (True, "PipeWire 1.6.8"))
+    r = health.check_pipewire_node()
+    assert r.ok and "available" in r.detail
+    monkeypatch.setattr(pipewire_backend, "pipewire_node_status",
+                        lambda: (False, "native node unavailable: not built"))
+    r = health.check_pipewire_node()
+    assert r.ok and "pulse-simple" in r.detail and "not built" in r.detail
+    assert any(c.name == "pipewire-node" for c in health.run_doctor()[1])

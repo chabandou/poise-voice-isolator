@@ -12,7 +12,8 @@ def main(argv=None):
     """Entry point for the 'poise' command."""
     import argparse
     import sys
-    from ..constants import ALL_MODELS, DEFAULT_MODEL
+    import os
+    from ..constants import ALL_MODELS, DEFAULT_MODEL, LINUX_BACKENDS
     from ..logging_config import (
         add_log_args,
         announce_log_path,
@@ -24,6 +25,11 @@ def main(argv=None):
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
                         choices=list(ALL_MODELS),
                         help=f'Denoising engine to use (default: {DEFAULT_MODEL})')
+    parser.add_argument('--backend', type=str, default=None,
+                        choices=list(LINUX_BACKENDS),
+                        help='Audio backend: auto (default) runs Poise as a '
+                             'PipeWire node when available, else pulse-simple; '
+                             'also POISE_BACKEND')
     parser.add_argument('--doctor', action='store_true',
                         help='Run startup health checks (Linux issues) and exit')
     parser.add_argument('--fix-execstack', action='store_true',
@@ -56,5 +62,7 @@ def main(argv=None):
         ok, message = reset_audio()
         print(message)
         sys.exit(0 if ok else 1)
+    if args.backend:
+        os.environ["POISE_BACKEND"] = args.backend
     app = PoiseApp(model=args.model)
     app.run()

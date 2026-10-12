@@ -47,6 +47,7 @@ class PoiseApp(App):
         self.engine = None
         self.onnx_session = None  # Backward-compat alias (unused for rnnoise)
         self.linux_router = None
+        self.backend: Optional[str] = None  # "pipewire" or "pulse", per run
         self.processing_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
         self.start_time = 0.0
@@ -361,16 +362,38 @@ class PoiseApp(App):
         # Update widgets running state
         self.query_one("#stats-panel", StatsPanel).set_running(True)
         
-        # Set up Linux audio routing
+        # Backend: the PipeWire node when available (fixed delay; it routes
+        # itself from the processing thread), else pulse-simple through
+        # the null sink set up here.
         try:
-            from ..backends.platform.linux import LinuxAudioRouter
-            self.linux_router = LinuxAudioRouter(auto_switch=True)
-            if self.linux_router.get_monitor_source_name():
-                status_line.notify("Null sink routing enabled.", "success")
-            else:
-                status_line.notify("Using default audio capture.", "warning")
-        except ImportError:
-            status_line.notify("Linux router not available.", "warning")
+            from ..backends.pipewire_backend import (
+                linux_backend_preference, select_linux_backend)
+            self.backend, reason = select_linux_backend(
+                linux_backend_preference())
+        except Exception as e:
+            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
+            logging.getLogger("stream_denoiser").error(
+                "Cannot start: %s", e)
+            status_line.notify(f"Cannot start: {first_line}", "error")
+            self.screen.remove_class("-running")
+            stats_panel.set_running(False)
+            return
+        logging.getLogger("stream_denoiser").info(
+            "backend: %s (%s)", self.backend, reason)
+
+        if self.backend == "pipewire":
+            self.linux_router = None
+            status_line.notify("Routing through the Poise sink.", "success")
+        else:
+            try:
+                from ..backends.platform.linux import LinuxAudioRouter
+                self.linux_router = LinuxAudioRouter(auto_switch=True)
+                if self.linux_router.get_monitor_source_name():
+                    status_line.notify("Null sink routing enabled.", "success")
+                else:
+                    status_line.notify("Using default audio capture.", "warning")
+            except ImportError:
+                status_line.notify("Linux router not available.", "warning")
         
         # Start processing in background thread
         self.stop_event.clear()
@@ -487,6 +510,10 @@ class PoiseApp(App):
                 aad_threshold_db=-40.0
             )
 
+            if self.backend == "pipewire":
+                self._run_pipewire(output_device)
+                return
+
             # Resolve the capture source by name. Fail fast when the
             # monitor is not visible at the Pulse level: opening the
             # default input instead would capture silence while the
@@ -599,6 +626,25 @@ class PoiseApp(App):
                 "Audio error. See log for details.", "error"
             )
     
+    def _run_pipewire(self, output_device: Optional[str]) -> None:
+        """PipeWire node run (processing thread). The node makes the Poise
+        sink the default and restores the old one when it stops."""
+        from ..backends.pipewire_backend import run_pipewire_loop
+        try:
+            run_pipewire_loop(self.processor, output_device or None,
+                              should_stop=self.stop_event)
+        except Exception as e:
+            import traceback
+            _log = logging.getLogger('stream_denoiser')
+            _log.error(f"Processing error: {e}")
+            _log.debug(traceback.format_exc())
+            self._notify_status_from_thread(
+                "Audio error. See log for details.", "error")
+            try:
+                self.call_from_thread(self._abort_startup)
+            except Exception:
+                pass
+
     def _update_stats(self) -> None:
         """Update stats display (called periodically)."""
         if not self.is_processing or self.processor is None:
