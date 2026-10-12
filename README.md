@@ -125,10 +125,10 @@ sudo mv poise /usr/local/bin/
 poise
 ```
 
-Or on **Arch Linux**:
+Or on **Arch Linux**, from the [AUR](https://aur.archlinux.org/packages/poise-bin) (with an AUR helper such as `yay` or `paru`):
 
 ```bash
-sudo pacman -S poise-bin
+yay -S poise-bin
 
 # Run the TUI
 poise
