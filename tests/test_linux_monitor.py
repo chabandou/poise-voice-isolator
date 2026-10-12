@@ -158,7 +158,8 @@ def test_cli_fails_fast_when_monitor_missing(monkeypatch):
         required_frame_size = 480
 
     with pytest.raises(RuntimeError, match="not visible at the"):
-        cli_mod.process_system_audio_realtime(_Engine(), input_device=None)
+        cli_mod.process_system_audio_realtime(_Engine(), input_device=None,
+                                              backend="pulse")
     assert made.get("restored") is True
 
 
@@ -218,7 +219,8 @@ def test_cli_uses_source_and_sink_names(monkeypatch):
     import stream_denoiser.backends.pulse_backend as pulse_backend
     monkeypatch.setattr(pulse_backend, "process_with_pulse", _fake_backend)
 
-    cli_mod.process_system_audio_realtime(_fake_rnnoise_engine())
+    cli_mod.process_system_audio_realtime(_fake_rnnoise_engine(),
+                                          backend="pulse")
     assert seen["source"] == "Poise_Capture.monitor"
     assert seen["sink"] == "alsa_output.pci.hw"
 

@@ -7,6 +7,7 @@ Supports both Windows (VB Cable) and Linux (PulseAudio via pulse-simple).
 import os
 import sys
 import time
+import signal
 import argparse
 import traceback
 from typing import Optional
@@ -24,6 +25,7 @@ from .constants import (
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
     PULSE_TARGET_SR,
+    LINUX_BACKENDS,
 )
 from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
@@ -37,6 +39,31 @@ from .logging_config import get_logger
 _logger = get_logger(__name__)
 
 
+def _interrupt_on_termination_signals() -> None:
+    """Treat SIGTERM/SIGHUP like Ctrl+C so audio routing gets restored.
+
+    Python's default for these signals kills the process on the spot and
+    no ``finally`` runs: on Linux the Poise_Capture null sink stays loaded
+    and stays the default sink (system audio goes silent). Raised as
+    KeyboardInterrupt they take the Ctrl+C path instead: the audio loop
+    stops and ``process_system_audio_realtime`` restores the routing.
+    Repeats are ignored so a second signal can't cut that cleanup short.
+    """
+    sigs = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP")
+            if hasattr(signal, n)]
+
+    def _handler(signum, frame):
+        for sig in sigs:
+            signal.signal(sig, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for sig in sigs:
+        try:
+            signal.signal(sig, _handler)
+        except (OSError, ValueError):
+            pass
+
+
 def process_system_audio_realtime(engine: DenoiseEngine,
                                  input_device: Optional[int] = None,
                                  output_device: Optional[int] = None,
@@ -46,7 +73,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                                  use_vb_cable: bool = True,
                                  vb_cable_name: Optional[str] = None,
                                  source: Optional[str] = None,
-                                 sink: Optional[str] = None) -> None:
+                                 sink: Optional[str] = None,
+                                 backend: Optional[str] = None) -> None:
     """
     Main entry point for real-time audio processing.
     Selects appropriate backend and uses unified DenoiserAudioProcessor.
@@ -63,6 +91,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
         vb_cable_name: Custom name for VB Cable device (auto-detected if None)
         source: Pulse source name for capture (Linux only)
         sink: Pulse sink name for playback (Linux only)
+        backend: Linux backend: "auto" (default; PipeWire node when
+            available), "pipewire" or "pulse". None reads POISE_BACKEND.
     """
     # Platform-specific audio routing
     vb_cable_switcher = None
@@ -80,6 +110,28 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                 f"Numeric --output-device {output_device} is not supported "
                 "on Linux (pulse-simple uses names). Use --sink <name> "
                 "instead (see --list-devices).")
+
+        # PipeWire node: Poise becomes a sink inside the PipeWire graph
+        # with a fixed delay to the output, and routes itself.
+        from .backends.pipewire_backend import (
+            linux_backend_preference, select_linux_backend)
+        chosen, reason = select_linux_backend(
+            linux_backend_preference(backend), source=source)
+        _logger.info("Linux backend: %s (%s)", chosen, reason)
+        if chosen == "pipewire":
+            processor = DenoiserAudioProcessor(
+                engine,
+                target_sr=PULSE_TARGET_SR,
+                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
+                enable_aad=enable_aad,
+                aad_threshold_db=aad_threshold_db,
+                atten_lim_db=atten_lim_db
+            )
+            from .backends.pipewire_backend import process_with_pipewire
+            process_with_pipewire(processor, sink=sink,
+                                  route_default=use_vb_cable)
+            return
+
         if use_vb_cable:
             # Linux: Use null sink routing
             try:
@@ -253,6 +305,11 @@ Examples:
     parser.add_argument('--sink', type=str, default=None,
                         help='Pulse sink name for playback (Linux only, '
                              'default: original hardware sink)')
+    parser.add_argument('--backend', type=str, default=None,
+                        choices=list(LINUX_BACKENDS),
+                        help='Linux audio backend: auto (default) runs Poise '
+                             'as a PipeWire node when available, else '
+                             'pulse-simple; also POISE_BACKEND')
     parser.add_argument('--no-aad', action='store_true',
                         help='Disable Audio Activity detection')
     parser.add_argument('--aad-threshold', type=float, default=DEFAULT_AAD_THRESHOLD_DB,
@@ -415,6 +472,8 @@ Examples:
 
         sys.exit(0)
 
+    _interrupt_on_termination_signals()
+
     try:
         # Create denoising engine
         try:
@@ -437,7 +496,8 @@ Examples:
             use_vb_cable=not args.no_vb_cable,
             vb_cable_name=args.vb_cable_name,
             source=args.source,
-            sink=args.sink
+            sink=args.sink,
+            backend=args.backend,
         )
 
     except KeyboardInterrupt:

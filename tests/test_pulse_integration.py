@@ -155,45 +155,130 @@ def test_playback_stays_on_named_sink_after_default_flip():
         if len(sinks) < 1:
             pytest.skip("need at least one non-null sink")
         target = sinks[0]
-        with PulsePlayback(target, 480) as play:
-            # Flip the default (to itself or another sink); the stream's
-            # sink name must not change.
-            assert play.sink == target
-            others = [s for s in pulse.sink_list() if s.name != target]
-            if others:
-                pulse.sink_default_set(others[0])
-                time.sleep(0.2)
-            assert play.sink == target
-            if others:
-                pulse.sink_default_set(
-                    next(s for s in pulse.sink_list() if s.name == target))
+        original_default = pulse.server_info().default_sink_name
+        try:
+            with PulsePlayback(target, 480) as play:
+                # Flip the default (to itself or another sink); the
+                # stream's sink name must not change.
+                assert play.sink == target
+                others = [s for s in pulse.sink_list() if s.name != target]
+                if others:
+                    pulse.sink_default_set(others[0])
+                    time.sleep(0.2)
+                assert play.sink == target
+        finally:
+            # Put back the user's default, which need not be `target`.
+            for s in pulse.sink_list():
+                if s.name == original_default:
+                    pulse.sink_default_set(s)
+
+
+SIGTERM_SINK = "poise-test-sigterm"
+SIGTERM_OUT_SINK = "poise-test-sigterm-out"
+
+# Runs the real CLI audio path with a passthrough engine (no model to
+# load), routed through its own null sink so it can't collide with a
+# running Poise or a leftover Poise_Capture, and playing into a null sink
+# instead of the speakers.
+_SIGTERM_HELPER = f"""
+from stream_denoiser import cli
+from stream_denoiser.backends.platform.linux import LinuxAudioRouter
+from stream_denoiser.engines.base import DenoiseEngine
+
+class Passthrough(DenoiseEngine):
+    name = "passthrough"
+    def process_frame(self, frame):
+        return frame
+    def reset(self):
+        pass
+
+LinuxAudioRouter.SINK_NAME = {SIGTERM_SINK!r}
+cli._interrupt_on_termination_signals()
+cli.process_system_audio_realtime(Passthrough(), enable_aad=False,
+                                  sink={SIGTERM_OUT_SINK!r}, backend="pulse")
+"""
+
+
+def _sinks():
+    """{name: index} of every sink."""
+    out = _pactl("list", "sinks", "short").stdout
+    return {f[1]: f[0] for f in (l.split("\t") for l in out.splitlines())
+            if len(f) > 1}
+
+
+def _null_sink_modules(sink_name):
+    """Ids of the module-null-sink modules backing ``sink_name``."""
+    out = _pactl("list", "modules", "short").stdout
+    return [f[0] for f in (l.split("\t") for l in out.splitlines())
+            if len(f) > 2 and f[1] == "module-null-sink"
+            and f"sink_name={sink_name}" in f[2].split()]
+
+
+def _sink_has_stream(sink_name):
+    index = _sinks().get(sink_name)
+    out = _pactl("list", "sink-inputs", "short").stdout
+    return index is not None and any(
+        l.split("\t")[1:2] == [index] for l in out.splitlines())
+
+
+def _wait_until(cond, timeout):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
 
 
 @needs_server
-def test_sinks_restored_after_sigterm():
-    """Routing cleanup restores sinks after SIGTERM (router-level)."""
-    from stream_denoiser.backends.platform.linux import (
-        LinuxAudioRouter, get_default_sink_name,
-    )
+def test_sinks_restored_after_sigterm(tmp_path):
+    """SIGTERM mid-run unloads the null sink and restores the default."""
+    from stream_denoiser.backends.platform.linux import get_default_sink_name
+    for module_id in _null_sink_modules(SIGTERM_SINK):  # earlier crash
+        _pactl("unload-module", module_id)
+    proc = _pactl("load-module", "module-null-sink",
+                  f"sink_name={SIGTERM_OUT_SINK}")
+    if proc.returncode != 0:
+        pytest.skip(f"could not create null sink: {proc.stderr}")
+    out_module = proc.stdout.strip()
     before = get_default_sink_name()
-    code = (
-        "import time;"
-        "from stream_denoiser.backends.platform.linux import LinuxAudioRouter;"
-        "r=LinuxAudioRouter(auto_switch=True);"
-        "time.sleep(30)"
-    )
-    proc = subprocess.Popen([sys.executable, "-c", code])
-    time.sleep(2)
-    assert proc.poll() is None, "helper exited early (no server?)"
-    proc.send_signal(signal.SIGTERM)
+    log_path = tmp_path / "helper.log"
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    helper = None
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        pytest.fail("helper did not exit on SIGTERM")
-    # Best effort: default should be back where it was (or at least not
-    # stuck if there was no null sink before).
-    time.sleep(1)
-    after = get_default_sink_name()
-    if before and "null" not in before.lower():
-        assert after == before or after is not None
+        with open(log_path, "w") as log:
+            helper = subprocess.Popen(
+                [sys.executable, "-c", _SIGTERM_HELPER], cwd=repo_root,
+                stdout=log, stderr=subprocess.STDOUT)
+
+        def log_tail():
+            return log_path.read_text()[-2000:]
+
+        # SIGTERM only once audio is flowing, like a real stop.
+        running = _wait_until(
+            lambda: helper.poll() is not None
+            or _sink_has_stream(SIGTERM_OUT_SINK), timeout=20)
+        assert helper.poll() is None, f"helper exited early:\n{log_tail()}"
+        assert running, f"audio loop never started:\n{log_tail()}"
+        assert get_default_sink_name() == SIGTERM_SINK
+
+        helper.send_signal(signal.SIGTERM)
+        try:
+            helper.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"helper did not exit on SIGTERM:\n{log_tail()}")
+
+        assert _wait_until(lambda: SIGTERM_SINK not in _sinks(), 3), (
+            f"null sink left loaded after SIGTERM:\n{log_tail()}")
+        assert _wait_until(lambda: get_default_sink_name() == before, 3), (
+            f"default sink is {get_default_sink_name()!r}, "
+            f"expected {before!r}")
+    finally:
+        if helper is not None and helper.poll() is None:
+            helper.kill()
+            helper.wait()
+        for module_id in _null_sink_modules(SIGTERM_SINK):
+            _pactl("unload-module", module_id)
+        if before and get_default_sink_name() != before:
+            _pactl("set-default-sink", before)
+        _pactl("unload-module", out_module)

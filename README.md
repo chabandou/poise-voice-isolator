@@ -195,7 +195,8 @@ Clear the executable stack flag on the ONNX Runtime library using `execstack` or
 
 ##### No audio output or echo/duplicate audio
 
-The denoiser automatically creates a null sink to capture system audio without echo. If audio isn't working:
+The denoiser automatically routes system audio through its own sink
+(**Poise Voice Isolator** with PipeWire, `Poise_Capture` otherwise). If audio isn't working:
 
 1. **Reset routing in one command:**
 
@@ -252,6 +253,14 @@ pip install onnxruntime numpy sounddevice scipy PyQt6
 pip install samplerate
 ```
 
+3. Linux: build the PipeWire node (needs a C compiler and the PipeWire
+   headers: `pipewire` on Arch, `libpipewire-0.3-dev` on Debian/Ubuntu).
+   Without it Poise falls back to the pulse-simple backend.
+
+```bash
+make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
+```
+
 #### Usage
 
 ##### CLI Mode
@@ -276,8 +285,10 @@ python -m stream_denoiser.cli
 - `--aad-threshold`: AAD threshold in dB (default: -40.0, lower = more sensitive)
 - `--atten-lim-db`: Attenuation limit in dB (default: -60.0)
 - `--list-devices`: List all available audio devices and exit
-- `--no-vb-cable`: Disable automatic VB Cable switching (use current default device)
+- `--no-vb-cable`: Disable automatic VB Cable switching (use current default device). On Linux, keeps the default sink as it is; route apps to the Poise sink yourself
 - `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
+- `--backend`: Linux only: `auto` (default; the PipeWire node when available), `pipewire`, or `pulse`. Also `POISE_BACKEND`
+- `POISE_PW_MARGIN_MS` (environment): extra time each frame gets on the PipeWire node before it plays unprocessed (default 21 ms; adds to the fixed delay)
 
 ### Models
 
@@ -335,6 +346,9 @@ stream_denoiser/
 │   ├── system_tray.py
 │   └── worker.py            # Audio processing thread
 ├── backends/                # Audio interface backends
+│   ├── pipewire_backend.py  # Linux: Poise as a PipeWire node (default)
+│   ├── pipewire_node.py     # ctypes binding for libpoise_pw.so (native/poise_pw)
+│   ├── pulse_backend.py     # Linux fallback: pulse-simple loop
 │   ├── sounddevice_backend.py # Cross-platform support (VB Cable on Windows)
 │   └── platform/            # Platform-specific code
 │       ├── linux.py         # PulseAudio integration
@@ -435,15 +449,22 @@ During processing, the script/GUI displays real-time statistics:
 
 ##### Audio routing (how it works)
 
-On Linux, the denoiser:
+On Linux with PipeWire (the default on current distributions), Poise runs
+inside PipeWire's processing graph, the way EasyEffects and PipeWire's own
+filter-chain do:
 
-1. Creates a null sink (`Poise_Capture`)
-2. Sets it as the default (apps send audio there)
-3. Captures from the null sink's monitor
-4. Outputs processed audio to your real speakers
-5. Restores original routing on exit
+1. Adds a virtual sink, **Poise Voice Isolator** (`Poise_Isolator`), and makes it the default (apps send audio there)
+2. Processes each graph cycle's input and hands the output to your real speakers in the same cycle
+3. Keeps the delay between the two fixed (about 76 ms with DeepFilterNet3) and reports it to PipeWire, so video players can hold the picture back to match
+4. Restores the original default on exit; if Poise is killed, the sink disappears with it
 
-This eliminates echo because original audio goes to a silent null sink.
+If a frame isn't processed in time, that moment plays unprocessed (and the
+log counts it as `dry`) instead of the audio falling behind the video.
+
+Without PipeWire (or with `--backend pulse` / `POISE_BACKEND=pulse`), Poise
+uses the pulse-simple path instead: it creates a null sink
+(`Poise_Capture`), makes it the default, captures from its monitor, and
+plays the processed audio to your speakers.
 
 ## Special Thanks
 
