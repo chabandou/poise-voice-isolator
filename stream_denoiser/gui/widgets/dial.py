@@ -26,9 +26,13 @@ from ..fonts import heading_family
 from ..scaling import sp
 from ..themes import current as current_theme
 
-# dB limits of the reduction ring (matches the old Max-attenuation slider).
-ATTEN_STRONG = -80   # most reduction  -> ring full
-ATTEN_GENTLE = -20   # least reduction -> ring empty
+# dB limits of the reduction ring. The engines mix f = 10**(dB/20) of the
+# original signal back in, so past about -50 dB the leftover noise is
+# below the model's own residual and further steps are inaudible; -10 dB
+# keeps roughly a third of the original. The whole sweep is audible.
+ATTEN_STRONG = -50   # most reduction  -> ring full
+ATTEN_GENTLE = -10   # least reduction -> ring empty
+ATTEN_DEFAULT = -40
 
 REF = 300.0          # design square
 TICKS = 55           # ticks on the arc
@@ -97,7 +101,7 @@ class DialButton(PowerButton):
         self.setMouseTracking(True)
         self._dial_px = sp(int(REF))
         self.setFixedSize(self._dial_px, self._dial_px)
-        self._strength_db = -60
+        self._strength_db = ATTEN_DEFAULT
         self._dragging = False
         self._drag_frac = 0.0
         self._key_focus = False
@@ -107,7 +111,7 @@ class DialButton(PowerButton):
         self.setAccessibleName("Start isolating")
         self.setToolTip(
             "Press to start or stop. Drag the ring to set the reduction "
-            "strength (applies the next time you start).")
+            "strength; it applies right away.")
 
     # -- sizing ---------------------------------------------------------------
     def sizeHint(self):  # noqa: N802 (Qt override)

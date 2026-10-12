@@ -44,5 +44,29 @@ class DenoiseEngine(ABC):
     def reset(self) -> None:
         """Reset all streaming state (call between unrelated audio streams)."""
 
+    def set_atten_lim_db(self, atten_lim_db: Optional[float]) -> None:
+        """
+        Change the attenuation limit while streaming.
+
+        Safe to call from another thread: engines read the new value once
+        at the start of the next frame and ramp to it across that frame.
+        The default only records the value (for engines without a limit).
+        """
+        self.atten_lim_db = atten_lim_db
+
     def close(self) -> None:
         """Release any native resources. Safe to call more than once."""
+
+
+def mix_dry(wet: np.ndarray, dry: np.ndarray,
+            start: float, end: float) -> np.ndarray:
+    """
+    Blend dry input back into the enhanced frame: y = f*dry + (1-f)*wet.
+
+    f ramps linearly from `start` to `end` across the frame, so a changed
+    attenuation limit fades in instead of stepping (no click).
+    """
+    if start == end:
+        return end * dry + (1.0 - end) * wet
+    f = np.linspace(start, end, wet.shape[0] + 1, dtype=np.float32)[1:]
+    return f * dry + (1.0 - f) * wet

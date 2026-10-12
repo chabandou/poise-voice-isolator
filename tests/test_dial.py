@@ -27,7 +27,7 @@ def test_strength_mapping_endpoints_and_roundtrip(app):
     from stream_denoiser.gui.widgets import dial
     assert dial.strength_fraction(dial.ATTEN_GENTLE) == 0.0
     assert dial.strength_fraction(dial.ATTEN_STRONG) == 1.0
-    assert dial.strength_fraction(-60) == pytest.approx(2 / 3)
+    assert dial.strength_fraction(-40) == pytest.approx(3 / 4)
     assert dial.strength_fraction(-5) == 0.0      # clamped
     assert dial.strength_fraction(-200) == 1.0    # clamped
     for db in range(dial.ATTEN_STRONG, dial.ATTEN_GENTLE + 1):
@@ -78,14 +78,14 @@ def test_set_strength_is_silent_and_user_changes_emit(app):
     btn = _make(app)
     seen = []
     btn.strength_changed.connect(seen.append)
-    btn.set_strength_db(-70)
-    assert btn.strength_db() == -70 and seen == []
+    btn.set_strength_db(-45)
+    assert btn.strength_db() == -45 and seen == []
     btn.set_strength_db(-500)                    # clamps
-    assert btn.strength_db() == -80
-    btn._user_set_strength(-50)
-    assert seen == [-50]
-    btn._user_set_strength(-50)                  # no change, no emit
-    assert seen == [-50]
+    assert btn.strength_db() == -50
+    btn._user_set_strength(-30)
+    assert seen == [-30]
+    btn._user_set_strength(-30)                  # no change, no emit
+    assert seen == [-30]
     btn.close()
 
 
@@ -97,11 +97,11 @@ def test_dragging_the_ring_sets_strength(app):
     btn.strength_changed.connect(seen.append)
     top = _ring_pos(btn, 270)                    # 12 o'clock -> halfway
     QTest.mousePress(btn, Qt.MouseButton.LeftButton, pos=top)
-    assert seen and seen[-1] == -50
+    assert seen and seen[-1] == -30
     right = _ring_pos(btn, 360)                  # 3 o'clock
     QTest.mouseMove(btn, right)
     QTest.mouseRelease(btn, Qt.MouseButton.LeftButton, pos=right)
-    assert btn.strength_db() == -70              # 3 o clock: 225/270 of the arc
+    assert btn.strength_db() == -43              # 3 o clock: 225/270 of the arc
     btn.close()
 
 
@@ -124,18 +124,18 @@ def test_keys_adjust_strength(app):
     from PyQt6.QtCore import Qt
     from PyQt6.QtTest import QTest
     btn = _make(app)
-    btn.set_strength_db(-60)
+    btn.set_strength_db(-30)
     QTest.keyClick(btn, Qt.Key.Key_Right)
-    assert btn.strength_db() == -61
+    assert btn.strength_db() == -31
     QTest.keyClick(btn, Qt.Key.Key_Left)
     QTest.keyClick(btn, Qt.Key.Key_Left)
-    assert btn.strength_db() == -59
+    assert btn.strength_db() == -29
     QTest.keyClick(btn, Qt.Key.Key_PageUp)
-    assert btn.strength_db() == -64
+    assert btn.strength_db() == -34
     QTest.keyClick(btn, Qt.Key.Key_Home)
-    assert btn.strength_db() == -20
+    assert btn.strength_db() == -10
     QTest.keyClick(btn, Qt.Key.Key_End)
-    assert btn.strength_db() == -80
+    assert btn.strength_db() == -50
     btn.close()
 
 
@@ -144,13 +144,13 @@ def test_wheel_up_is_stronger(app):
     from PyQt6.QtGui import QWheelEvent
     from PyQt6.QtWidgets import QApplication
     btn = _make(app)
-    btn.set_strength_db(-60)
+    btn.set_strength_db(-30)
     centre = QPointF(btn.width() / 2, btn.height() / 2)
     ev = QWheelEvent(centre, centre, QPoint(0, 0), QPoint(0, 120),
                      Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
                      Qt.ScrollPhase.NoScrollPhase, False)
     QApplication.sendEvent(btn, ev)
-    assert btn.strength_db() == -61
+    assert btn.strength_db() == -31
     btn.close()
 
 

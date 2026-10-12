@@ -37,7 +37,7 @@ from .widgets.phosphor import (
     clear_cache as clear_icon_cache, icon as phosphor_icon,
 )
 from .widgets.theme_tile import ThemeTile
-from .widgets.dial import DialButton
+from .widgets.dial import ATTEN_DEFAULT, DialButton, clamp_db
 from .widgets.donate_button import DonateButton
 from .widgets.switch import ToggleSwitch
 from .widgets.slider import HoverSlider
@@ -288,10 +288,11 @@ class MainWindow(QMainWindow):
 
     # -- Home page ----------------------------------------------------------
     def _saved_atten_db(self) -> int:
+        """Saved strength, clamped to the dial (older builds allowed -80..-20)."""
         try:
-            return int(self.settings.atten_lim_db)
+            return clamp_db(self.settings.atten_lim_db)
         except Exception:
-            return -60
+            return ATTEN_DEFAULT
 
     def _divider(self) -> QFrame:
         line = QFrame()
@@ -338,7 +339,7 @@ class MainWindow(QMainWindow):
         stage_layout.addStretch(1)
 
         hint = QLabel("Drag the ring to set the reduction strength. "
-                      "It applies the next time you start.")
+                      "Changes apply right away.")
         hint.setObjectName("row-sub")
         hint.setAlignment(center)
         hint.setWordWrap(True)
@@ -838,11 +839,13 @@ class MainWindow(QMainWindow):
             float(self.thresh_slider.value()))
 
     def _on_atten_changed(self, value: int):
-        """Persist attenuation limit (applies on next start)."""
+        """Persist the attenuation limit and apply it to a running worker."""
         try:
             self.settings.atten_lim_db = float(value)
         except Exception:
             pass
+        if self.worker is not None:
+            self.worker.set_atten_lim_db(float(value))
 
     def _on_tray_toggled(self, checked: bool):
         self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
@@ -893,7 +896,7 @@ class MainWindow(QMainWindow):
             output_device=self.output_selector.selected_device_id,
             aad_enabled=self.aad_switch.isChecked(),
             aad_threshold=self.thresh_slider.value(),
-            atten_lim_db=self.settings.atten_lim_db,
+            atten_lim_db=float(self._saved_atten_db()),
             vb_cable_enabled=True
         )
 

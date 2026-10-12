@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .base import DenoiseEngine
+from .base import DenoiseEngine, mix_dry
 from ..constants import (
     MODEL_RNNOISE,
     RNNOISE_SCALE,
@@ -104,6 +104,13 @@ def _load_library() -> ctypes.CDLL:
     return _lib
 
 
+def _dry_mix_for(atten_lim_db: Optional[float]) -> float:
+    """Dry-mix fraction for an attenuation limit (None = no dry mix)."""
+    if atten_lim_db is None:
+        return 0.0
+    return float(10.0 ** (-abs(atten_lim_db) / 20.0))
+
+
 class RNNoiseEngine(DenoiseEngine):
     """RNNoise denoiser (built-in model) via librnnoise."""
 
@@ -121,7 +128,9 @@ class RNNoiseEngine(DenoiseEngine):
         self._lib = _load_library()
         self.required_frame_size = int(self._lib.rnnoise_get_frame_size())
         self.atten_lim_db = atten_lim_db
-        self._dry_mix = float(10.0 ** (atten_lim_db / 20.0))
+        # Applied mix and the one set_atten_lim_db() asks for; the next
+        # frame ramps from the first to the second.
+        self._dry_mix = self._dry_mix_target = _dry_mix_for(atten_lim_db)
         self.speech_prob = 0.0
 
         n = self.required_frame_size
@@ -165,9 +174,15 @@ class RNNoiseEngine(DenoiseEngine):
         )
         wet = self._out / RNNOISE_SCALE
 
-        if self._dry_mix > 0.0:
-            wet = (1.0 - self._dry_mix) * wet + self._dry_mix * frame
+        start, end = self._dry_mix, self._dry_mix_target
+        if start > 0.0 or end > 0.0:
+            wet = mix_dry(wet, frame, start, end)
+        self._dry_mix = end
         return wet.astype(np.float32, copy=False)
+
+    def set_atten_lim_db(self, atten_lim_db: Optional[float]) -> None:
+        self.atten_lim_db = atten_lim_db
+        self._dry_mix_target = _dry_mix_for(atten_lim_db)
 
     def reset(self) -> None:
         self._destroy_state()

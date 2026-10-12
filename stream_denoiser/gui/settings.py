@@ -85,7 +85,7 @@ class Settings:
         KEY_OUTPUT_DEVICE: None,
         KEY_AAD_ENABLED: True,
         KEY_AAD_THRESHOLD: -40.0,
-        KEY_ATTEN_LIM_DB: -60.0,
+        KEY_ATTEN_LIM_DB: -40.0,
         KEY_VB_CABLE_ENABLED: True,
         KEY_VB_CABLE_NAME: None,
         KEY_DEVICE_SWITCH_DONE: False,
@@ -217,7 +217,7 @@ class Settings:
     @property
     def atten_lim_db(self) -> float:
         """Get attenuation limit in dB."""
-        return float(self.get(self.KEY_ATTEN_LIM_DB, -60.0))
+        return float(self.get(self.KEY_ATTEN_LIM_DB, -40.0))
     
     @atten_lim_db.setter
     def atten_lim_db(self, value: float) -> None:

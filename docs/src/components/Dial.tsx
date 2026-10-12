@@ -5,8 +5,8 @@ import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 // the arrow keys) to set the reduction strength. Idle the lit ticks use the
 // secondary colour, while isolating they switch to the accent.
 
-const ATTEN_STRONG = -80;
-const ATTEN_GENTLE = -20;
+const ATTEN_STRONG = -50;
+const ATTEN_GENTLE = -10;
 
 const REF = 300;
 const TICKS = 55;

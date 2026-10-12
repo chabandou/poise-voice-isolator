@@ -59,6 +59,7 @@ class AudioWorker(QThread):
         # State
         self._running = False
         self._processor: Optional[DenoiserAudioProcessor] = None
+        self._engine = None   # set as soon as it is built, for live changes
         self._vb_cable_switcher: Optional[VB_CableSwitcher] = None
     
     def configure(self, 
@@ -106,6 +107,9 @@ class AudioWorker(QThread):
             try:
                 engine = create_engine(self.model, onnx_path=self.onnx_path,
                                        atten_lim_db=self.atten_lim_db)
+                self._engine = engine
+                # The dial may have moved while the model loaded.
+                engine.set_atten_lim_db(self.atten_lim_db)
             except FileNotFoundError as e:
                 self.error_occurred.emit(f"Model file not found: {e}")
                 self.stopped_processing.emit()
@@ -378,6 +382,17 @@ class AudioWorker(QThread):
             except Exception:
                 pass
     
+    def set_atten_lim_db(self, atten_lim_db: float) -> None:
+        """Change the reduction strength; applies live while processing.
+
+        Called from the GUI thread. The engine picks the value up on its
+        next frame (a single attribute write, so no lock is needed).
+        """
+        self.atten_lim_db = atten_lim_db
+        engine = self._engine
+        if engine is not None:
+            engine.set_atten_lim_db(atten_lim_db)
+
     def stop(self) -> None:
         """Stop processing gracefully."""
         self._running = False
@@ -398,6 +413,7 @@ class AudioWorker(QThread):
             except Exception:
                 pass
         self._processor = None
+        self._engine = None
         self.status_changed.emit("Stopped")
     
     @property

@@ -16,7 +16,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-from .base import DenoiseEngine
+from .base import DenoiseEngine, mix_dry
 from ..constants import (
     MODEL_DEEPFILTERNET3,
     ONNX_INTRA_OP_THREADS,
@@ -104,6 +104,12 @@ def _to_df3_atten_lim_db(atten_lim_db: Optional[float]) -> Optional[float]:
     return atten_lim_db
 
 
+def _dry_lin_for(atten_lim_db: Optional[float]) -> float:
+    """Linear dry-mix fraction for an attenuation limit (0.0 = no dry mix)."""
+    dry_db = _to_df3_atten_lim_db(atten_lim_db)
+    return 0.0 if dry_db is None else float(10.0 ** (-dry_db / 20.0))
+
+
 class DeepFilterNet3Engine(DenoiseEngine):
     """DeepFilterNet3 ONNX model with streaming state."""
 
@@ -132,15 +138,11 @@ class DeepFilterNet3Engine(DenoiseEngine):
         }
         self._states = {k: v.copy() for k, v in self._init_states.items()}
 
-        self._dry_db = _to_df3_atten_lim_db(atten_lim_db)
-        self._dry_lin = (
-            float(10.0 ** (-self._dry_db / 20.0))
-            if self._dry_db is not None else None
-        )
-        self._dry_buf = (
-            np.zeros(self.required_frame_size, dtype=np.float32)
-            if self._dry_lin is not None else None
-        )
+        # Applied mix and the one set_atten_lim_db() asks for; the next
+        # frame ramps from the first to the second. The dry buffer is kept
+        # even with no dry mix so turning it on later stays aligned.
+        self._dry_lin = self._dry_lin_target = _dry_lin_for(atten_lim_db)
+        self._dry_buf = np.zeros(self.required_frame_size, dtype=np.float32)
 
     @classmethod
     def from_path(cls, onnx_path: str = DEFAULT_DF3_ONNX,
@@ -173,18 +175,22 @@ class DeepFilterNet3Engine(DenoiseEngine):
             in_name = out_name[4:] if out_name.startswith('new_') else out_name
             self._states[in_name] = val
 
-        if self._dry_lin is not None and self._dry_lin > 0.0:
-            # One-frame-delayed dry mix (matches the reference DF3 streamer).
-            dry = self._dry_buf
-            self._dry_buf = np.ascontiguousarray(frame, dtype=np.float32).copy()
-            lin = self._dry_lin
-            enhanced = lin * dry + (1.0 - lin) * enhanced
+        # One-frame-delayed dry mix (matches the reference DF3 streamer).
+        dry = self._dry_buf
+        self._dry_buf = np.array(frame, dtype=np.float32)
+        start, end = self._dry_lin, self._dry_lin_target
+        if start > 0.0 or end > 0.0:
+            enhanced = mix_dry(enhanced, dry, start, end)
+        self._dry_lin = end
         return enhanced.astype(np.float32, copy=False)
+
+    def set_atten_lim_db(self, atten_lim_db: Optional[float]) -> None:
+        self.atten_lim_db = atten_lim_db
+        self._dry_lin_target = _dry_lin_for(atten_lim_db)
 
     def reset(self) -> None:
         self._states = {k: v.copy() for k, v in self._init_states.items()}
-        if self._dry_lin is not None:
-            self._dry_buf = np.zeros(self.required_frame_size, dtype=np.float32)
+        self._dry_buf = np.zeros(self.required_frame_size, dtype=np.float32)
 
 
 def _load_df3_session(model_path: str):

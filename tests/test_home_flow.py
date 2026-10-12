@@ -37,12 +37,33 @@ def window(app):
 
 
 def test_dial_ring_persists_attenuation(window):
-    window.power_btn._user_set_strength(-72)
-    assert float(window.settings.atten_lim_db) == -72.0
+    window.power_btn._user_set_strength(-42)
+    assert float(window.settings.atten_lim_db) == -42.0
 
 
 def test_dial_starts_at_the_saved_attenuation(window):
     assert window.power_btn.strength_db() == int(window.settings.atten_lim_db)
+
+
+def test_legacy_attenuation_is_clamped_to_the_dial(window):
+    window.settings.atten_lim_db = -72.0        # saved by an older build
+    assert window._saved_atten_db() == -50
+
+
+def test_dial_changes_reach_a_running_engine(window):
+    seen = []
+
+    class Engine:
+        def set_atten_lim_db(self, db):
+            seen.append(db)
+
+    window.worker._engine = Engine()
+    try:
+        window.power_btn._user_set_strength(-17)
+    finally:
+        window.worker._engine = None
+    assert seen == [-17.0]
+    assert window.worker.atten_lim_db == -17.0
 
 
 def test_summary_follows_settings_changes(window):

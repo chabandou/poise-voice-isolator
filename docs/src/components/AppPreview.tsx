@@ -18,7 +18,7 @@ const navIcons = [
 
 const AppWindow = () => {
 	const [live, setLive] = useState(false);
-	const [strengthDb, setStrengthDb] = useState(-50);
+	const [strengthDb, setStrengthDb] = useState(-30);
 	const [stats, setStats] = useState<Stats>(idleStats);
 
 	useEffect(() => {

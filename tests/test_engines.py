@@ -223,3 +223,58 @@ def test_processor_works_with_stub_engine_without_onnx():
     assert stats["frame_count"] == 1
     assert stats["model"] == "stub"
     proc.close()
+
+
+# -- live attenuation changes ----------------------------------------------------
+def test_mix_dry_ramps_to_the_new_mix():
+    from stream_denoiser.engines.base import mix_dry
+
+    wet = np.zeros(8, dtype=np.float32)
+    dry = np.ones(8, dtype=np.float32)
+    np.testing.assert_allclose(mix_dry(wet, dry, 0.25, 0.25), 0.25)
+    ramp = mix_dry(wet, dry, 0.0, 0.8)
+    assert np.all(np.diff(ramp) > 0)            # fades, no step
+    assert ramp[0] == pytest.approx(0.1)        # first sample moves off start
+    assert ramp[-1] == pytest.approx(0.8)       # last sample reaches end
+
+
+@pytest.mark.parametrize("make", [
+    lambda db: _make_rnnoise_engine_at(db),
+    lambda db: _make_df3_engine_at(db),
+], ids=["rnnoise", "deepfilternet3"])
+def test_set_atten_lim_db_applies_live(make):
+    """Changing the limit mid-stream ramps over one frame, then matches an
+    engine built with that limit (model state ignores the dry mix)."""
+    live, fresh = make(-50.0), make(-10.0)
+    try:
+        n = live.required_frame_size
+        rng = np.random.default_rng(7)
+        frames = [(rng.standard_normal(n) * 0.2).astype(np.float32)
+                  for _ in range(3)]
+        live.process_frame(frames[0].copy())
+        fresh.process_frame(frames[0].copy())
+        live.set_atten_lim_db(-10.0)
+        assert live.atten_lim_db == -10.0
+        ramped = live.process_frame(frames[1].copy()).copy()
+        target = fresh.process_frame(frames[1].copy()).copy()
+        assert not np.allclose(ramped, target, atol=1e-6)   # still ramping...
+        assert ramped[-1] == pytest.approx(target[-1], abs=1e-5)  # ...lands
+        np.testing.assert_allclose(live.process_frame(frames[2].copy()),
+                                   fresh.process_frame(frames[2].copy()),
+                                   rtol=1e-5, atol=1e-6)
+    finally:
+        live.close()
+        fresh.close()
+
+
+def _make_rnnoise_engine_at(db):
+    if not RNNoiseEngine.is_available():
+        pytest.skip("librnnoise not available")
+    return RNNoiseEngine(atten_lim_db=db)
+
+
+def _make_df3_engine_at(db):
+    try:
+        return create_engine(MODEL_DEEPFILTERNET3, atten_lim_db=db)
+    except FileNotFoundError as e:
+        pytest.skip(f"deepfilternet3 model files not found: {e}")
