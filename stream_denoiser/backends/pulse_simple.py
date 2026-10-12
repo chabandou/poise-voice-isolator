@@ -12,6 +12,9 @@ sink name.
 """
 import ctypes
 import ctypes.util
+import os
+import threading
+from contextlib import contextmanager
 from typing import Optional
 
 import numpy as np
@@ -19,6 +22,32 @@ import numpy as np
 from ..logging_config import get_logger
 
 _logger = get_logger(__name__)
+
+# PipeWire node group shared by this process's capture and playback
+# streams. Nodes in one group are scheduled by the same driver, so the
+# Poise_Capture null sink follows the sound card's clock instead of its
+# own timer and capture/playback cannot drift apart (otherwise measured
+# at 500 ppm: ~0.1 s of A/V lag every 3.5 min). libpulse copies PULSE_PROP
+# into the client proplist and pipewire-pulse copies client props into
+# each stream. A real PulseAudio server ignores the key.
+NODE_GROUP = f"poise-{os.getpid()}"
+_env_lock = threading.Lock()
+
+
+@contextmanager
+def _node_group_env():
+    """Add node.group to PULSE_PROP while a stream is created."""
+    with _env_lock:
+        old = os.environ.get("PULSE_PROP")
+        prop = f"node.group={NODE_GROUP}"
+        os.environ["PULSE_PROP"] = f"{old} {prop}" if old else prop
+        try:
+            yield
+        finally:
+            if old is None:
+                os.environ.pop("PULSE_PROP", None)
+            else:
+                os.environ["PULSE_PROP"] = old
 
 # Fixed Linux sample rate (server converts as needed).
 PULSE_SAMPLE_RATE = 48000
@@ -221,12 +250,13 @@ class PulseCapture(_PulseStreamBase):
             PA_ATTR_UNSET, block_bytes,
         )
         err = ctypes.c_int(0)
-        handle = lib.pa_simple_new(
-            None, app_name.encode("utf-8"), PA_STREAM_RECORD,
-            source.encode("utf-8"), stream_name.encode("utf-8"),
-            ctypes.byref(ss), None, ctypes.byref(attr),
-            ctypes.byref(err),
-        )
+        with _node_group_env():
+            handle = lib.pa_simple_new(
+                None, app_name.encode("utf-8"), PA_STREAM_RECORD,
+                source.encode("utf-8"), stream_name.encode("utf-8"),
+                ctypes.byref(ss), None, ctypes.byref(attr),
+                ctypes.byref(err),
+            )
         if not handle:
             self._raise(err.value, f"pa_simple_new(record {source!r})")
         self._handle = handle
@@ -294,12 +324,13 @@ class PulsePlayback(_PulseStreamBase):
             PA_ATTR_UNSET, PA_ATTR_UNSET,
         )
         err = ctypes.c_int(0)
-        handle = lib.pa_simple_new(
-            None, app_name.encode("utf-8"), PA_STREAM_PLAYBACK,
-            sink.encode("utf-8"), stream_name.encode("utf-8"),
-            ctypes.byref(ss), None, ctypes.byref(attr),
-            ctypes.byref(err),
-        )
+        with _node_group_env():
+            handle = lib.pa_simple_new(
+                None, app_name.encode("utf-8"), PA_STREAM_PLAYBACK,
+                sink.encode("utf-8"), stream_name.encode("utf-8"),
+                ctypes.byref(ss), None, ctypes.byref(attr),
+                ctypes.byref(err),
+            )
         if not handle:
             self._raise(err.value, f"pa_simple_new(playback {sink!r})")
         self._handle = handle
