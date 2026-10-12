@@ -7,6 +7,7 @@ Supports both Windows (VB Cable) and Linux (PulseAudio via pulse-simple).
 import os
 import sys
 import time
+import signal
 import argparse
 import traceback
 from typing import Optional
@@ -36,6 +37,31 @@ from .backend_detection import (
 from .logging_config import get_logger
 
 _logger = get_logger(__name__)
+
+
+def _interrupt_on_termination_signals() -> None:
+    """Treat SIGTERM/SIGHUP like Ctrl+C so audio routing gets restored.
+
+    Python's default for these signals kills the process on the spot and
+    no ``finally`` runs: on Linux the Poise_Capture null sink stays loaded
+    and stays the default sink (system audio goes silent). Raised as
+    KeyboardInterrupt they take the Ctrl+C path instead: the audio loop
+    stops and ``process_system_audio_realtime`` restores the routing.
+    Repeats are ignored so a second signal can't cut that cleanup short.
+    """
+    sigs = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP")
+            if hasattr(signal, n)]
+
+    def _handler(signum, frame):
+        for sig in sigs:
+            signal.signal(sig, signal.SIG_IGN)
+        raise KeyboardInterrupt
+
+    for sig in sigs:
+        try:
+            signal.signal(sig, _handler)
+        except (OSError, ValueError):
+            pass
 
 
 def process_system_audio_realtime(engine: DenoiseEngine,
@@ -445,6 +471,8 @@ Examples:
             print(f"Could not auto-detect loopback device: {e}")
 
         sys.exit(0)
+
+    _interrupt_on_termination_signals()
 
     try:
         # Create denoising engine
