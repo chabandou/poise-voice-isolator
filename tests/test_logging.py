@@ -392,3 +392,21 @@ def test_memory_log_detaches_on_reset():
     logging_config._reset_memory_log_for_tests()
     assert handler not in logger.handlers
     assert logging_config.get_memory_handler() is None
+
+
+def test_qt_messages_reach_the_session_log_without_font_noise():
+    """Qt's own warnings used to bypass the log (stderr only); the benign
+    QFont::setPointSize(-1) one is dropped."""
+    pytest.importorskip("PyQt6.QtCore")
+    from PyQt6.QtCore import qInstallMessageHandler, qWarning
+    from stream_denoiser.gui import install_qt_message_handler
+    memory = logging_config.enable_memory_log()
+    install_qt_message_handler()
+    try:
+        qWarning("poise-qt-warning-probe")
+        qWarning("QFont::setPointSize: Point size <= 0 (-1), must be greater than 0")
+    finally:
+        qInstallMessageHandler(None)
+    text = memory.text()
+    assert "[WARNING] qt: poise-qt-warning-probe" in text
+    assert "setPointSize" not in text

@@ -82,6 +82,40 @@ def _handle_client_message(socket: QLocalSocket, window: MainWindow):
         window.bring_to_front()
     socket.disconnectFromServer()
 
+# Harmless Qt noise dropped from the log. setPointSize(-1): Qt style code
+# copies the point size of a font that our stylesheet sizes in px (which
+# is -1 by definition) and Qt rejects the value, leaving the font as is.
+_QT_NOISE = ("QFont::setPointSize: Point size <= 0",)
+_qt_handler = None  # keep the installed callable alive
+
+
+def install_qt_message_handler():
+    """Route Qt's own messages into the app log (Logs page, log file).
+
+    Qt otherwise writes straight to stderr, which bypasses the log and
+    is invisible in the windowed Windows build.
+    """
+    global _qt_handler
+    import logging
+    from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
+
+    qt_logger = get_logger("qt")
+    levels = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def handler(mode, context, message):
+        if message.startswith(_QT_NOISE):
+            return
+        qt_logger.log(levels.get(mode, logging.WARNING), message)
+
+    _qt_handler = handler
+    qInstallMessageHandler(handler)
+
 def _start_logging():
     """Feed the Logs page: this session in memory (every platform) plus the
     usual file log (Linux default; --log-file / POISE_LOG_FILE anywhere)."""
@@ -94,6 +128,7 @@ def _start_logging():
             ensure_from_log_args,
         )
         enable_memory_log()
+        install_qt_message_handler()
         parser = add_log_args(argparse.ArgumentParser(add_help=False))
         args, _ = parser.parse_known_args(sys.argv[1:])
         path = ensure_from_log_args(args)
