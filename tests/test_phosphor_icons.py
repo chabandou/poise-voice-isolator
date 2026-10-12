@@ -31,6 +31,7 @@ EXPECTED = {
     "heart": "heart",
     "copy": "copy",
     "save": "floppy-disk",
+    "reset": "arrow-counter-clockwise",
 }
 
 

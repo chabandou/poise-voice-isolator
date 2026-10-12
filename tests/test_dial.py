@@ -105,6 +105,21 @@ def test_dragging_the_ring_sets_strength(app):
     btn.close()
 
 
+def test_press_lands_anywhere_from_a_full_ring(app):
+    """Full ring (the default): pressing the ring's first half must set
+    the value, not be mistaken for a drag across the bottom gap."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from stream_denoiser.gui.widgets import dial
+    btn = _make(app)
+    btn.set_strength_db(dial.ATTEN_STRONG)
+    pos = _ring_pos(btn, 180)                    # 9 o'clock: 45/270 of the arc
+    QTest.mousePress(btn, Qt.MouseButton.LeftButton, pos=pos)
+    QTest.mouseRelease(btn, Qt.MouseButton.LeftButton, pos=pos)
+    assert btn.strength_db() == dial.db_from_fraction(45 / 270)
+    btn.close()
+
+
 def test_ring_press_does_not_toggle_but_disc_click_does(app):
     from PyQt6.QtCore import QPoint, Qt
     from PyQt6.QtTest import QTest

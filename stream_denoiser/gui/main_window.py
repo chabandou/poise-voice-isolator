@@ -460,7 +460,16 @@ class MainWindow(QMainWindow):
             "Keep running in the tray when closed",
             "Closing the window does not stop Poise.", self.min_tray_switch)
 
-        rows = [aad_row, thresh_row, tray_row, min_tray_row]
+        self.reset_btn = self._icon_button("Reset", "reset")
+        self.reset_btn.clicked.connect(self._confirm_reset_defaults)
+        reset_row = SettingsRow(
+            "Reset to defaults",
+            "Restore every setting and the reduction strength. "
+            "Output device and theme stay.",
+            self.reset_btn)
+        self._reset_row = reset_row
+
+        rows = [aad_row, thresh_row, tray_row, min_tray_row, reset_row]
         for i, row in enumerate(rows):
             row.set_position(i == 0, i == len(rows) - 1)
             list_layout.addWidget(row)
@@ -967,6 +976,36 @@ class MainWindow(QMainWindow):
         if self.worker is not None:
             self.worker.set_atten_lim_db(float(value))
 
+    def _confirm_reset_defaults(self) -> None:
+        reply = QMessageBox.question(
+            self, "Reset to defaults",
+            "Reset reduction strength, silence skipping, tray behavior "
+            "and model to their defaults?\n\n"
+            "Your output device and theme stay as they are.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.reset_to_defaults()
+
+    def reset_to_defaults(self) -> None:
+        """Restore the user-facing settings to Settings.DEFAULTS.
+
+        Goes through the controls, so each value is saved and applied as
+        if changed by hand. Output device, theme, window geometry and
+        first-run state are left alone.
+        """
+        s = self.settings
+        defaults = s.DEFAULTS
+        self.aad_switch.setChecked(bool(defaults[s.KEY_AAD_ENABLED]))
+        self.thresh_slider.setValue(int(defaults[s.KEY_AAD_THRESHOLD]))
+        self.tray_switch.setChecked(bool(defaults[s.KEY_SHOW_TRAY_ICON]))
+        self.min_tray_switch.setChecked(bool(defaults[s.KEY_MINIMIZE_TO_TRAY]))
+        self.model_cards.setCurrentText(defaults[s.KEY_MODEL])
+        strength = clamp_db(defaults[s.KEY_ATTEN_LIM_DB])
+        self.power_btn.set_strength_db(strength)
+        self._on_atten_changed(strength)
+        _logger.info("Settings reset to defaults")
+
     def _on_tray_toggled(self, checked: bool):
         self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
         if checked:
@@ -1028,6 +1067,7 @@ class MainWindow(QMainWindow):
         # Turning silence skipping on/off would rebuild the detector inside
         # the running processor; the threshold itself stays live.
         self._aad_row.set_locked(not enabled)
+        self._reset_row.set_locked(not enabled)   # it resets those too
 
     def _on_worker_started(self):
         """Called when worker successfully starts."""

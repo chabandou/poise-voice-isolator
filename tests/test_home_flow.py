@@ -306,3 +306,71 @@ def test_logs_folder_button_only_with_a_log_file(window, tmp_path):
         assert window.log_path_label.text() == str(tmp_path / "poise.log")
     finally:
         logging_config._reset_file_logging_for_tests()
+
+
+# -- Reset to defaults ----------------------------------------------------------------
+def _move_everything_off_default(window):
+    from stream_denoiser.gui import themes
+    window.aad_switch.setChecked(False)
+    window.thresh_slider.setValue(-63)
+    window.min_tray_switch.setChecked(False)
+    window.power_btn._user_set_strength(-18)
+    other = next(i for i, t in enumerate(themes.theme_ids()) if t != "abyss")
+    window.theme_group.button(other).setChecked(True)
+    window._on_theme_changed(other)
+    window.settings.output_device = 7
+    return themes.theme_ids()[other]
+
+
+def test_reset_restores_defaults_but_keeps_device_and_theme(window,
+                                                           monkeypatch):
+    from stream_denoiser.gui import themes
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    s = window.settings
+    picked = _move_everything_off_default(window)
+    try:
+        window.reset_to_defaults()
+        assert window.aad_switch.isChecked() and s.aad_enabled is True
+        assert window.thresh_slider.value() == -40 and s.aad_threshold == -40.0
+        assert window.thresh_slider.isEnabled()
+        assert window.min_tray_switch.isChecked() and s.minimize_to_tray
+        # Default strength is the dial's strongest (ring full).
+        assert window.power_btn.strength_db() == -50 and s.atten_lim_db == -50.0
+        assert s.theme == picked and themes.current_id() == picked
+        assert s.output_device == 7                 # hardware choice stays
+    finally:
+        s.output_device = None
+        abyss = themes.theme_ids().index("abyss")
+        window.theme_group.button(abyss).setChecked(True)
+        window._on_theme_changed(abyss)
+
+
+def test_fresh_install_starts_at_full_strength(window):
+    from stream_denoiser.gui.widgets import dial
+    s = window.settings
+    s.remove(s.KEY_ATTEN_LIM_DB)
+    assert s.atten_lim_db == float(dial.ATTEN_STRONG)
+    assert window._saved_atten_db() == dial.ATTEN_STRONG
+    assert dial.DialButton().strength_db() == dial.ATTEN_STRONG
+
+
+def test_reset_asks_first(window, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    window.thresh_slider.setValue(-63)
+    answer = QMessageBox.StandardButton.No
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: answer)
+    window.reset_btn.click()
+    assert window.thresh_slider.value() == -63      # declined: untouched
+    answer = QMessageBox.StandardButton.Yes
+    window.reset_btn.click()
+    assert window.thresh_slider.value() == -40
+
+
+def test_reset_is_locked_while_running(window, monkeypatch):
+    monkeypatch.setattr(window, "tray", None)
+    window._on_worker_started()
+    assert not window.reset_btn.isEnabled()
+    assert window._reset_row._sub.text() == "Locked while running"
+    window._on_worker_stopped()
+    assert window.reset_btn.isEnabled()

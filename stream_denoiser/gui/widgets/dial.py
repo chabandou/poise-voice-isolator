@@ -32,7 +32,7 @@ from ..themes import current as current_theme
 # keeps roughly a third of the original. The whole sweep is audible.
 ATTEN_STRONG = -50   # most reduction  -> ring full
 ATTEN_GENTLE = -10   # least reduction -> ring empty
-ATTEN_DEFAULT = -40
+ATTEN_DEFAULT = ATTEN_STRONG   # out of the box: full reduction
 WHEEL_STEP = 2          # dB per wheel notch
 WHEEL_STEP_COARSE = 10  # with Ctrl held
 
@@ -191,7 +191,7 @@ class DialButton(PowerButton):
     def _drag_to(self, pos) -> None:
         dx, dy = self._ref_point(pos)
         angle = math.degrees(math.atan2(dy, dx))
-        frac = angle_to_fraction(angle, self._drag_frac)
+        frac = angle_to_fraction(angle, self._drag_frac)  # None: no pinning
         self._drag_frac = frac
         self._user_set_strength(db_from_fraction(frac))
 
@@ -214,7 +214,10 @@ class DialButton(PowerButton):
                 and self._zone(event.position()) == "ring"):
             self._dragging = True
             self._sync_hot()
-            self._drag_frac = strength_fraction(self._strength_db)
+            # No gap-pinning on the press itself: it lands wherever it is
+            # clicked (from a full ring, a click on the first half used to
+            # read as a jump across the bottom gap and be ignored).
+            self._drag_frac = None
             self._drag_to(event.position())
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
