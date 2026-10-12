@@ -1,5 +1,7 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
+import { DownloadSimple, List, X } from '@phosphor-icons/react';
 import CtaButton from './CtaButton';
+import { PoiseMark } from './Brand';
 
 type NavLink = {
   label: string;
@@ -9,7 +11,9 @@ type NavLink = {
 
 const navLinks: NavLink[] = [
   { label: 'Home', href: '#home', sectionIds: ['home'] },
-  { label: 'Features', href: '#how-it-works', sectionIds: ['how-it-works', 'features'] },
+  { label: 'How it works', href: '#how-it-works', sectionIds: ['how-it-works'] },
+  { label: 'The app', href: '#app', sectionIds: ['app'] },
+  { label: 'Features', href: '#features', sectionIds: ['features'] },
   { label: 'Download', href: '#downloads', sectionIds: ['downloads'] },
 ];
 
@@ -17,7 +21,12 @@ const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeSection, setActiveSection] = useState('home');
 
-  const scrollToSection = (href: string) => {
+  // While a nav click is scrolling the page, the highlight stays on the
+  // clicked link instead of flickering through every section on the way.
+  const scrollLockRef = useRef<string | null>(null);
+  const scrollFrameRef = useRef(0);
+
+  const scrollToSection = (href: string, sectionId?: string) => {
     const targetId = href.startsWith('#') ? href.slice(1) : href;
     const target = document.getElementById(targetId);
 
@@ -25,13 +34,19 @@ const Navbar = () => {
       return;
     }
 
-    const targetTop = Math.max(0, target.getBoundingClientRect().top + window.scrollY - 120);
+    window.cancelAnimationFrame(scrollFrameRef.current);
+    const targetTop = targetId === 'home'
+      ? 0
+      : Math.max(0, target.getBoundingClientRect().top + window.scrollY - 120);
 
+    // 'instant' bypasses the stylesheet's scroll-behavior: smooth, which
+    // would otherwise turn every animation step into its own smooth scroll.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      window.scrollTo(0, targetTop);
+      window.scrollTo({ top: targetTop, behavior: 'instant' });
       return;
     }
 
+    scrollLockRef.current = sectionId ?? targetId;
     const startTop = window.scrollY;
     const distance = targetTop - startTop;
     const duration = 950;
@@ -47,14 +62,16 @@ const Navbar = () => {
       const progress = Math.min(elapsed / duration, 1);
       const easedProgress = easeInOutCubic(progress);
 
-      window.scrollTo(0, startTop + distance * easedProgress);
+      window.scrollTo({ top: startTop + distance * easedProgress, behavior: 'instant' });
 
       if (progress < 1) {
-        window.requestAnimationFrame(step);
+        scrollFrameRef.current = window.requestAnimationFrame(step);
+      } else {
+        scrollLockRef.current = null;
       }
     };
 
-    window.requestAnimationFrame(step);
+    scrollFrameRef.current = window.requestAnimationFrame(step);
   };
 
   const handleNavClick = (event: MouseEvent<HTMLAnchorElement>, href: string, sectionId?: string) => {
@@ -68,7 +85,7 @@ const Navbar = () => {
       setActiveSection(sectionId);
     }
 
-    scrollToSection(href);
+    scrollToSection(href, sectionId);
   };
 
   useEffect(() => {
@@ -78,10 +95,13 @@ const Navbar = () => {
       .filter((section): section is HTMLElement => section !== null);
 
     const updateActiveSection = () => {
-      if (sections.length === 0) {
+      if (sections.length === 0 || scrollLockRef.current) {
         return;
       }
 
+      // The last section can be too short to ever reach the marker, so
+      // the bottom of the page always selects it.
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4;
       const scrollMarker = window.scrollY + window.innerHeight * 0.35;
       let currentSection = sections[0].id;
 
@@ -91,43 +111,109 @@ const Navbar = () => {
         }
       }
 
-      setActiveSection(currentSection);
+      setActiveSection(atBottom ? sections[sections.length - 1].id : currentSection);
+    };
+
+    // A wheel/touch/key scroll by the user cancels a nav-click animation.
+    const cancelNavScroll = () => {
+      if (scrollLockRef.current) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollLockRef.current = null;
+        updateActiveSection();
+      }
     };
 
     updateActiveSection();
     window.addEventListener('scroll', updateActiveSection, { passive: true });
     window.addEventListener('resize', updateActiveSection);
+    window.addEventListener('wheel', cancelNavScroll, { passive: true });
+    window.addEventListener('touchstart', cancelNavScroll, { passive: true });
+    window.addEventListener('keydown', cancelNavScroll);
 
     return () => {
+      window.cancelAnimationFrame(scrollFrameRef.current);
       window.removeEventListener('scroll', updateActiveSection);
       window.removeEventListener('resize', updateActiveSection);
+      window.removeEventListener('wheel', cancelNavScroll);
+      window.removeEventListener('touchstart', cancelNavScroll);
+      window.removeEventListener('keydown', cancelNavScroll);
     };
   }, []);
 
-  const getLinkClasses = (isActive: boolean) =>
-    `relative inline-block transition-[color,opacity,transform] duration-300 after:absolute after:-bottom-1 after:left-0 after:h-px after:w-full after:bg-primary-fixed/50 after:transition-opacity after:duration-300 ${
-      isActive
-        ? '-translate-y-0.5 text-white opacity-100 after:opacity-100'
-        : 'translate-y-0 text-on-surface-variant opacity-70 after:opacity-0 hover:-translate-y-0.5 hover:text-white hover:opacity-100'
+  // Desktop: one highlight (washing down from the top edge) slides between
+  // links. The stacked mobile menu washes from the left like the app's
+  // sidebar and swaps in place.
+  const linkBarRef = useRef<HTMLDivElement>(null);
+  const indicatorRef = useRef<HTMLSpanElement>(null);
+  const linkRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
+  const activeSectionRef = useRef(activeSection);
+
+  // Moves the highlight straight in the DOM (no re-render). With
+  // data-instant set the move jumps; without it the CSS transition slides.
+  const placeIndicator = useCallback((sectionId: string, instant: boolean) => {
+    const indicator = indicatorRef.current;
+    const active = navLinks.find((link) => link.sectionIds?.includes(sectionId));
+    const element = active ? linkRefs.current[active.label] : null;
+    if (!indicator || !element || element.offsetWidth === 0) {
+      return;
+    }
+    const firstPlacement = indicator.style.opacity !== '1';
+    indicator.toggleAttribute('data-instant', instant || firstPlacement);
+    indicator.style.width = `${element.offsetWidth}px`;
+    indicator.style.height = `${element.offsetHeight}px`;
+    indicator.style.transform = `translate(${element.offsetLeft}px, ${element.offsetTop}px)`;
+    indicator.style.opacity = '1';
+  }, []);
+
+  useLayoutEffect(() => {
+    activeSectionRef.current = activeSection;
+    placeIndicator(activeSection, false);
+  }, [activeSection, placeIndicator]);
+
+  // Layout changes (fonts loading, resizing, the bar appearing at lg) snap
+  // the highlight to the active link without animating.
+  useEffect(() => {
+    const bar = linkBarRef.current;
+    if (!bar) {
+      return;
+    }
+    const observer = new ResizeObserver(() => placeIndicator(activeSectionRef.current, true));
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [placeIndicator]);
+
+  const getLinkClasses = (isActive: boolean, wash = '') =>
+    `rounded-[10px] px-3.5 py-2 transition-colors duration-300 ${
+      isActive ? `${wash} text-ink` : 'text-muted hover:text-ink'
     }`;
 
   return (
-    <header className="fixed top-0 z-50 w-full bg-background/45 backdrop-blur-2xl glassmorphism-edge">
-      <nav className="mx-auto flex w-full max-w-360 items-center justify-between px-6 py-5 md:px-12 md:py-8">
-        <div className='flex gap-2 items-center justify-center'>
-          <div>
-            <img src={`${import.meta.env.BASE_URL}icon.png`} className='h-8 w-8 object-contain' alt="Poise logo" />
-          </div>
-          <div className="font-headline text-[1.55rem] font-semibold tracking-[-0.06em] text-white">
-            Poise
-          </div>
-        </div>
+    <header className="header-enter fixed top-0 z-50 w-full border-b border-white/6 bg-bg/75 backdrop-blur-2xl">
+      <nav className="mx-auto flex w-full max-w-360 items-center justify-between px-6 py-4 md:px-12 md:py-5">
+        <a
+          className="flex items-center gap-2.5"
+          href="#home"
+          onClick={(event) => handleNavClick(event, '#home', 'home')}
+        >
+          <PoiseMark className="h-9 w-9" />
+          <span className="font-heading text-[1.7rem] font-bold leading-none text-ink">Poise</span>
+        </a>
 
-        <div className="hidden items-center gap-12 font-headline text-[0.95rem] font-medium tracking-[-0.03em] md:flex">
+        <div ref={linkBarRef} className="relative hidden items-center gap-1 whitespace-nowrap text-[0.92rem] font-medium lg:flex">
+          <span
+            ref={indicatorRef}
+            aria-hidden="true"
+            className="nav-indicator nav-wash-top pointer-events-none absolute left-0 top-0 rounded-[10px]"
+            style={{ opacity: 0 }}
+          />
           {navLinks.map((link) => (
             <a
               key={link.label}
-              className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
+              ref={(element) => {
+                linkRefs.current[link.label] = element;
+              }}
+              aria-current={link.sectionIds?.includes(activeSection) ? 'true' : undefined}
+              className={`relative ${getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}`}
               href={link.href}
               onClick={(event) => handleNavClick(event, link.href, link.sectionIds?.[0])}
             >
@@ -136,13 +222,14 @@ const Navbar = () => {
           ))}
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden lg:block">
           <CtaButton
-            className="navbar-cta px-8 py-3 text-[0.96rem] font-semibold"
+            className="px-5 py-2.5 text-[0.9rem]"
             href="#downloads"
-            icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
+            icon={<DownloadSimple size={18} weight="bold" />}
+            onClick={(event) => handleNavClick(event, '#downloads', 'downloads')}
           >
-            Download Now
+            Download
           </CtaButton>
         </div>
 
@@ -150,24 +237,24 @@ const Navbar = () => {
           aria-controls="mobile-nav"
           aria-expanded={isOpen}
           aria-label="Toggle navigation"
-          className="rounded-full bg-surface-container-highest/20 p-2 text-white transition-all hover:bg-surface-container-highest/40 md:hidden"
+          className="btn btn-ghost h-10 w-10 p-0 lg:hidden"
           onClick={() => setIsOpen((prev) => !prev)}
           type="button"
         >
-          <span className="material-symbols-outlined text-[22px]">{isOpen ? 'close' : 'menu'}</span>
+          {isOpen ? <X size={20} /> : <List size={20} />}
         </button>
       </nav>
 
       {isOpen && (
         <div
-          className="mx-6 mb-4 rounded-2xl border border-white/5 bg-background/80 p-5 backdrop-blur-2xl md:hidden"
+          className="card mx-6 mb-4 p-4 md:mx-12 lg:hidden"
           id="mobile-nav"
         >
-          <div className="flex flex-col gap-4 font-headline text-[1rem] tracking-[-0.03em]">
+          <div className="flex flex-col gap-1 text-[1rem] font-medium">
             {navLinks.map((link) => (
               <a
                 key={link.label}
-                className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false)}
+                className={getLinkClasses(link.sectionIds?.includes(activeSection) ?? false, 'nav-wash')}
                 href={link.href}
                 onClick={(event) => {
                   handleNavClick(event, link.href, link.sectionIds?.[0]);
@@ -178,11 +265,15 @@ const Navbar = () => {
               </a>
             ))}
             <CtaButton
-              className="navbar-cta mt-2 px-8 py-3 text-[0.96rem] font-semibold"
+              className="mt-3 px-5 py-3 text-[0.95rem]"
               href="#downloads"
-              icon={<span className="material-symbols-outlined text-[1.25em] leading-none">download</span>}
+              icon={<DownloadSimple size={18} weight="bold" />}
+              onClick={(event) => {
+                handleNavClick(event, '#downloads', 'downloads');
+                setIsOpen(false);
+              }}
             >
-              Download Now
+              Download
             </CtaButton>
           </div>
         </div>

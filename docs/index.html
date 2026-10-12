@@ -1,21 +1,45 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="abyss">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Poise | Pure clarity from chaos</title>
+    <meta
+      name="description"
+      content="Poise is a free, open-source voice isolator that removes music and noise from all system audio in real time. Runs 100% on-device on Windows and Linux."
+    />
+    <meta name="theme-color" content="#0a111e" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Poise | Pure clarity from chaos" />
+    <meta
+      property="og:description"
+      content="Remove music and noise from everything you hear, in real time. Free, open source, and 100% on-device."
+    />
+    <meta property="og:image" content="https://chabandou.github.io/poise-voice-isolator/banner.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Entrance animations may hide content until it scrolls into view;
+      // only opt in when JS runs, so the prerendered page stays readable
+      // without it (see src/reveal.ts).
+      document.documentElement.classList.add('js');
+      // Apply the saved colour theme before first paint (see src/themes.ts).
+      try {
+        var saved = localStorage.getItem('poise-theme');
+        if (/^(abyss|verdant|mono|ultraviolet|ember|orchid)$/.test(saved)) {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (e) {}
+    </script>
     <style>
-      html,
-      body,
-      #root {
-        min-height: 100%;
-        background-color: #0a0a0a;
+      /* Zero specificity so the themed index.css background always wins. */
+      :where(html, body) {
+        background-color: #0a111e;
       }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><!--ssr-outlet--></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

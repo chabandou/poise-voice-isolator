@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AndroidLogo, ArrowRight, ArrowUpRight, LinuxLogo, WindowsLogo, X, type Icon } from '@phosphor-icons/react';
+import { RELEASE, RELEASES_URL, REPO_URL } from '../release';
+import { reveal } from '../reveal';
 
 type InstallGuide = {
 	name: string;
-	url: string;
-	icon: string;
+	Icon: Icon;
 	disclaimer?: string;
 	label: string;
 	intro: string;
-	note?: string;
+	note?: ReactNode;
 	steps?: string[];
 	commandGroups?: Array<{
 		label: string;
@@ -16,82 +18,91 @@ type InstallGuide = {
 	links: Array<{
 		label: string;
 		url: string;
+		primary?: boolean;
 	}>;
 };
 
-const downloadOptions: InstallGuide[] = [
+const buildGuides = (windowsUrl: string): InstallGuide[] => [
 	{
 		name: "Windows",
-		url: "https://github.com/chabandou/poise-voice-isolator/tree/master?tab=readme-ov-file#windows",
-		icon: "desktop_windows",
-		label: "Desktop Installer",
-		intro: "Install the native Windows build, then complete the loopback setup so Poise can capture system audio correctly.",
-		note: "Important: install VB Cable first for loopback audio capture on Windows.",
+		Icon: WindowsLogo,
+		label: "desktop app",
+		intro: "The native Windows app: one dial to start and stop, live stats, and six colour themes.",
 		steps: [
-			"Download and install VB Cable.",
-			"Download the Poise installer: Poise_Setup.exe.",
-			"Run the installer and follow the on-screen instructions.",
-			"Launch Poise Voice Isolator from your Desktop or Start Menu.",
+			"Download Poise_Setup.exe and run it.",
+			"The installer sets up VB-Cable, the virtual audio cable Poise listens to, if it is missing. Restart if Windows asks.",
+			"Launch Poise Voice Isolator from the Start menu and press the dial.",
 		],
+		note: (
+			<>
+				If Poise reports that VB-Cable is missing, its error dialog offers a one-click install, or you can get it from{" "}
+				<a className="text-accent underline-offset-4 hover:underline" href="https://vb-audio.com/Cable/" rel="noopener noreferrer" target="_blank">
+					vb-audio.com
+				</a>
+				. VB-CABLE is donationware by VB-Audio Software.
+			</>
+		),
 		links: [
-			{ label: "Download Poise_Setup.exe", url: "https://github.com/chabandou/poise-voice-isolator/releases/latest/download/Poise_Setup.exe" },
-			{ label: "Install VB Cable", url: "https://vb-audio.com/Cable/index.htm" },
+			{ label: "Download Poise_Setup.exe", url: windowsUrl, primary: true },
+			{ label: "All releases", url: RELEASES_URL },
 		],
 	},
 	{
 		name: "Linux",
-		url: "https://github.com/chabandou/poise-voice-isolator/tree/master?tab=readme-ov-file#linux-binary",
-		icon: "terminal",
-		label: "Prebuilt TUI Binary",
-		intro: "Run the prebuilt Linux binary directly, or install the Arch package if that matches your setup.",
+		Icon: LinuxLogo,
+		label: "terminal app",
+		intro: "A prebuilt terminal UI. Poise routes audio through a PulseAudio/PipeWire null sink and restores your setup on exit.",
 		commandGroups: [
 			{
-				label: "Direct Binary",
+				label: "Prebuilt binary",
 				code: `# Download the latest release
-curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/latest/download/poise
+curl -L -o poise ${RELEASES_URL}/latest/download/poise
 
 # Make it executable
 chmod +x poise
 
-# Move to your PATH (optional)
+# Move it to your PATH (optional)
 sudo mv poise /usr/local/bin/
 
 # Run the TUI
 poise`,
 			},
 			{
-				label: "Arch Linux",
-				code: `sudo pacman -S poise-bin
+				label: "Arch Linux (AUR)",
+				code: `yay -S poise-bin
 
 # Run the TUI
 poise`,
 			},
 		],
+		note: "Using the RNNoise model? Install your distro's rnnoise package too (rnnoise on Arch, librnnoise0 on Debian/Ubuntu).",
 		links: [
-			{ label: "Open Linux Instructions", url: "https://github.com/chabandou/poise-voice-isolator/tree/master?tab=readme-ov-file#linux-binary" },
+			{ label: "Linux instructions", url: `${REPO_URL}#linux-binary`, primary: true },
+			{ label: "Troubleshooting", url: `${REPO_URL}#linux-troubleshooting` },
 		],
 	},
 	{
 		name: "Android",
-		url: "https://github.com/chabandou/poise-android#installation",
-		icon: "phone_android",
-		disclaimer: "SAMSUNG Only",
-		label: "Companion App",
-		intro: "Android support in this repo is listed as Samsung-only. The actual install flow lives in the dedicated Android project.",
+		Icon: AndroidLogo,
+		disclaimer: "Samsung only",
+		label: "companion app",
+		intro: "Android support is Samsung-only for now. The install flow lives in the dedicated Android project.",
 		steps: [
 			"Open the Poise Android installation guide.",
 			"Follow the Samsung-specific install steps there.",
-			"Return to Poise desktop if you want the same local-first workflow across devices.",
 		],
 		links: [
-			{ label: "Open Android Installation", url: "https://github.com/chabandou/poise-android#installation" },
-			{ label: "View Android Releases", url: "https://github.com/chabandou/poise-android/releases" },
+			{ label: "Android installation", url: "https://github.com/chabandou/poise-android#installation", primary: true },
+			{ label: "Android releases", url: "https://github.com/chabandou/poise-android/releases" },
 		],
 	},
 ];
 
 const FinalCTA = () => {
-	const [activeGuide, setActiveGuide] = useState<InstallGuide | null>(null);
+	const { version, windowsUrl } = RELEASE;
+	const downloadOptions = buildGuides(windowsUrl);
+	const [activeName, setActiveName] = useState<string | null>(null);
+	const activeGuide = downloadOptions.find((option) => option.name === activeName) ?? null;
 	const [isClosing, setIsClosing] = useState(false);
 	const closeTimeoutRef = useRef<number | null>(null);
 
@@ -102,7 +113,7 @@ const FinalCTA = () => {
 		}
 
 		setIsClosing(false);
-		setActiveGuide(guide);
+		setActiveName(guide.name);
 	};
 
 	const closeGuide = () => {
@@ -112,14 +123,14 @@ const FinalCTA = () => {
 
 		setIsClosing(true);
 		closeTimeoutRef.current = window.setTimeout(() => {
-			setActiveGuide(null);
+			setActiveName(null);
 			setIsClosing(false);
 			closeTimeoutRef.current = null;
 		}, 280);
 	};
 
 	useEffect(() => {
-		if (!activeGuide) {
+		if (!activeName) {
 			return;
 		}
 
@@ -138,7 +149,7 @@ const FinalCTA = () => {
 			document.body.style.overflow = previousOverflow;
 			window.removeEventListener('keydown', handleEscape);
 		};
-	}, [activeGuide]);
+	}, [activeName]);
 
 	useEffect(() => {
 		return () => {
@@ -150,117 +161,111 @@ const FinalCTA = () => {
 
 	return (
 		<>
-			<section className="px-6 pb-20 pt-0 mt-10 md:px-12 md:pb-28 md:pt-15 md:mt-5" id="downloads">
-				<div className="max-w-5xl mx-auto">
-				{/* Headline */}
+			<section className="px-6 pb-24 pt-8 md:px-12 md:pb-32" id="downloads">
+				<div className="mx-auto max-w-5xl">
 					<div className="mb-14 text-center md:mb-16">
-						<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-surface-container/80 px-4 py-2 font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
-							<span className="h-1.5 w-1.5 rounded-full bg-primary-fixed"></span>
-							Choose Your Build
+						<div className="kicker mb-5" {...reveal(0)}>
+							<span className="kicker__dot" />
+							{version ? <>latest <span className="text-secondary">{version}</span></> : 'choose your build'}
 						</div>
-						<h2 className="font-headline text-[3.2rem] font-semibold tracking-[-0.06em] text-white md:text-[4.25rem]">
+						<h2 className="font-heading text-[3.3rem] font-bold leading-none text-ink md:text-[4.4rem]" {...reveal(90)}>
 							Download Poise
 						</h2>
-						<p className="mx-auto mt-5 max-w-2xl font-body text-[1.04rem] leading-[1.65] text-on-surface-variant md:text-[1.16rem]">
-							Pick the version that fits your environment. Every build stays local-first and open-source.
+						<p className="mx-auto mt-5 max-w-2xl text-[1.05rem] leading-[1.65] text-muted md:text-[1.15rem]" {...reveal(180)}>
+							Pick the build for your system. Every version runs on-device and is open source.
 						</p>
 					</div>
 
-				{/* Download Grid */}
-					<div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:gap-8">
-						{downloadOptions.map((option) => (
+					<div className="grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-6">
+						{downloadOptions.map((option, index) => (
 							<button
 								key={option.name}
-								className="group relative flex flex-col items-center rounded-3xl bg-surface-container-low p-8 text-center transition-colors duration-300 hover:bg-surface-container-high"
+								{...reveal(index * 110)}
+								className="card group flex flex-col items-center p-8 text-center hover:border-secondary"
 								onClick={() => openGuide(option)}
 								type="button"
 							>
-								<span className="material-symbols-outlined mb-4 text-5xl text-primary-container transition-all group-hover:brightness-125">
-									{option.icon}
+								<span className="icon-chip mb-5 h-14 w-14 rounded-[14px]">
+									<option.Icon size={30} />
 								</span>
-								<h3 className="mb-2 font-headline text-[1.8rem] font-semibold tracking-[-0.045em] text-white">{option.name}</h3>
+								<h3 className="font-heading text-[2rem] font-bold leading-none text-ink">{option.name}</h3>
+								<p className="mt-2 font-mono text-[0.75rem] text-muted">{option.label}</p>
 								{option.disclaimer && (
-									<div className="mb-4 rounded-full border border-secondary-fixed-dim/40 bg-secondary-fixed-dim/20 px-3 py-1">
-										<span className="font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-secondary-fixed-dim">
-											{option.disclaimer}
-										</span>
-									</div>
+									<span className="mt-3 rounded-full border border-secondary/40 bg-secondary/12 px-3 py-0.5 font-mono text-[0.72rem] text-secondary">
+										{option.disclaimer}
+									</span>
 								)}
-								<p className="font-body text-[0.98rem] text-on-surface-variant">View Install Steps</p>
-								<div className="pointer-events-none absolute inset-0 rounded-3xl border border-primary-container/0 transition-all duration-300 group-hover:border-primary-container/40" />
+								<span className="mt-6 inline-flex items-center gap-1.5 text-[0.95rem] font-semibold text-accent">
+									Install steps
+									<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" size={16} weight="bold" />
+								</span>
 							</button>
 						))}
 					</div>
 
-				{/* Subtitle */}
-					<div className="text-center mt-12">
-						<p className="font-body text-[0.94rem] text-on-surface-variant">
-							All versions are open-source and available on GitHub
-						</p>
-					</div>
+					<p className="mt-12 text-center text-[0.94rem] text-muted" {...reveal(200, 'fade')}>
+						All versions are open source and available on{" "}
+						<a className="text-ink underline-offset-4 hover:text-accent hover:underline" href={RELEASES_URL} rel="noopener noreferrer" target="_blank">
+							GitHub
+						</a>
+						.
+					</p>
 				</div>
 			</section>
 
 			{activeGuide && (
 				<div
-					aria-modal="true"
 					aria-labelledby="install-guide-title"
-					className={`install-modal-backdrop fixed inset-0 z-[80] flex items-center justify-center bg-background/72 px-4 py-8 backdrop-blur-md ${isClosing ? "install-modal-backdrop--closing" : ""}`}
+					aria-modal="true"
+					className={`install-modal-backdrop fixed inset-0 z-[80] flex items-center justify-center bg-bg/75 px-4 py-8 backdrop-blur-md ${isClosing ? "install-modal-backdrop--closing" : ""}`}
 					onClick={closeGuide}
 					role="dialog"
 				>
 					<div
-						className={`install-modal-panel relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-white/8 bg-surface-container p-6 shadow-2xl md:p-8 ${isClosing ? "install-modal-panel--closing" : ""}`}
+						className={`install-modal-panel card relative max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl md:p-8 ${isClosing ? "install-modal-panel--closing" : ""}`}
 						onClick={(event) => event.stopPropagation()}
 					>
 						<button
 							aria-label="Close install instructions"
-							className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/8 bg-background/70 text-on-surface-variant transition-colors hover:border-primary-fixed/30 hover:text-white"
+							className="btn btn-ghost absolute right-4 top-4 h-10 w-10 p-0"
 							onClick={closeGuide}
 							type="button"
 						>
-							<span className="material-symbols-outlined text-[1.15rem]">close</span>
+							<X size={18} />
 						</button>
 
-						<div className="mb-8 pr-12">
-							<div className="mb-4 inline-flex items-center gap-3 rounded-full border border-white/8 bg-background/70 px-4 py-2 font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
-								<span className="material-symbols-outlined text-[1rem] text-primary-fixed">{activeGuide.icon}</span>
-								{activeGuide.label}
+						<div className="mb-7 flex items-start gap-4 pr-12">
+							<span className="icon-chip">
+								<activeGuide.Icon size={24} />
+							</span>
+							<div>
+								<h3 className="font-heading text-[2.4rem] font-bold leading-none text-ink md:text-[2.9rem]" id="install-guide-title">
+									{activeGuide.name}
+								</h3>
+								<p className="mt-1 font-mono text-[0.78rem] text-muted">{activeGuide.label}</p>
 							</div>
-							<h3 className="font-headline text-[2.75rem] font-semibold tracking-[-0.055em] text-white md:text-[3.8rem]" id="install-guide-title">{activeGuide.name} Install</h3>
-							<p className="mt-4 max-w-2xl font-body text-[1.03rem] leading-[1.68] text-on-surface-variant md:text-[1.14rem]">
-								{activeGuide.intro}
-							</p>
 						</div>
-
-						{activeGuide.note && (
-							<div className="mb-6 rounded-2xl border border-primary-fixed/20 bg-primary-fixed/8 p-4 font-body text-[0.98rem] leading-[1.65] text-on-surface">
-								{activeGuide.note}
-							</div>
-						)}
+						<p className="mb-7 max-w-2xl text-[1.02rem] leading-[1.68] text-muted">{activeGuide.intro}</p>
 
 						{activeGuide.steps && (
-							<div className="mb-8">
-								<h4 className="mb-4 font-label text-[0.73rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">Install Steps</h4>
-								<ol className="space-y-4">
-									{activeGuide.steps.map((step, index) => (
-										<li key={step} className="flex gap-4 rounded-2xl border border-white/6 bg-background/45 p-4">
-											<span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-fixed/12 text-sm font-semibold text-primary-fixed">
-												{index + 1}
-											</span>
-											<p className="pt-1 font-body text-[0.98rem] leading-[1.62] text-on-surface md:text-[1rem]">{step}</p>
-										</li>
-									))}
-								</ol>
-							</div>
+							<ol className="mb-7 space-y-3">
+								{activeGuide.steps.map((step, index) => (
+									<li key={step} className="flex gap-4 rounded-xl border border-white/6 bg-pill p-4">
+										<span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-secondary/55 font-heading text-[0.9rem] font-bold text-secondary">
+											{index + 1}
+										</span>
+										<p className="text-[0.98rem] leading-[1.6] text-ink">{step}</p>
+									</li>
+								))}
+							</ol>
 						)}
 
 						{activeGuide.commandGroups && (
-							<div className="mb-8 space-y-5">
+							<div className="mb-7 space-y-5">
 								{activeGuide.commandGroups.map((group) => (
 									<div key={group.label}>
-										<h4 className="mb-3 font-label text-[0.73rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">{group.label}</h4>
-										<pre className="overflow-x-auto rounded-2xl border border-white/6 bg-background/70 p-4 text-sm leading-relaxed text-on-surface">
+										<h4 className="mb-2.5 font-mono text-[0.78rem] text-muted">{group.label}</h4>
+										<pre className="overflow-x-auto rounded-lg border border-white/10 bg-pill px-4 py-3.5 font-mono text-[0.82rem] leading-relaxed text-ink">
 											<code>{group.code}</code>
 										</pre>
 									</div>
@@ -268,17 +273,23 @@ const FinalCTA = () => {
 							</div>
 						)}
 
-						<div className="flex flex-col gap-3 border-t border-white/6 pt-6 sm:flex-row sm:flex-wrap">
+						{activeGuide.note && (
+							<div className="mb-7 rounded-xl border border-secondary/25 bg-secondary/8 p-4 text-[0.95rem] leading-[1.65] text-ink/90">
+								{activeGuide.note}
+							</div>
+						)}
+
+						<div className="flex flex-col gap-3 border-t border-white/8 pt-6 sm:flex-row sm:flex-wrap">
 							{activeGuide.links.map((link) => (
 								<a
 									key={link.url}
-									className="inline-flex items-center justify-center gap-2 rounded-full border border-primary-fixed/18 bg-primary-fixed/10 px-5 py-3 text-sm font-medium text-primary-fixed transition-colors hover:bg-primary-fixed/16"
+									className={`btn ${link.primary ? "btn-primary" : "btn-ghost"} px-5 py-3 text-[0.92rem]`}
 									href={link.url}
 									rel="noopener noreferrer"
 									target="_blank"
 								>
 									{link.label}
-									<span className="material-symbols-outlined text-[1rem]">arrow_outward</span>
+									<ArrowUpRight size={16} weight="bold" />
 								</a>
 							))}
 						</div>

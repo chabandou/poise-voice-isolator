@@ -7,6 +7,19 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/deploy.yml'
+  # The site bakes in the latest release (version + Windows installer link)
+  # at build time, so rebuild whenever a release build finishes. A plain
+  # `release: published` trigger would never fire: those workflows publish
+  # with GITHUB_TOKEN, and GITHUB_TOKEN events don't start other workflows.
+  workflow_run:
+    workflows:
+      - Build Windows installer
+      - Build Linux binary
+    types:
+      - completed
+  # Safety net for releases or assets added by hand.
+  schedule:
+    - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -20,6 +33,8 @@ concurrency:
 
 jobs:
   deploy:
+    # After a release build, only deploy if that build succeeded.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -42,6 +57,9 @@ jobs:
 
       - name: Build project
         working-directory: ./docs
+        env:
+          # Authenticates the build-time release lookup (vite.config.ts).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run build
 
       - name: Setup Pages

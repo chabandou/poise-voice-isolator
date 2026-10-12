@@ -1,97 +1,67 @@
+import { CodeSimple, Cpu, WifiSlash } from '@phosphor-icons/react';
+import { Emblem, Lattice } from './Brand';
+import { RELEASE } from '../release';
+import { reveal } from '../reveal';
+
+const points = [
+	{
+		title: 'Local AI models',
+		Icon: Cpu,
+		body: 'DeepFilterNet3 and RNNoise run on your CPU. No cloud service and no GPU required.',
+	},
+	{
+		title: 'No internet required after install',
+		Icon: WifiSlash,
+		body: 'Works in airplane mode or on locked-down, offline machines.',
+	},
+	{
+		title: 'Open source, MIT licensed',
+		Icon: CodeSimple,
+		body: 'Audit the code, report issues, or build your own fork.',
+	},
+];
+
 const Transparency = () => {
+	const { version } = RELEASE;
+
 	return (
 		<section className="px-6 py-24 md:px-12 md:py-32">
-			<div className="mx-auto max-w-360 rounded-xl border border-white/5 bg-surface-container-high/40 p-8 backdrop-blur-xl md:p-20">
-				<div className="flex flex-col items-center justify-between gap-10 md:flex-row md:gap-12">
-					{/* Left Content */}
-					<div className="space-y-8 max-w-xl">
-						{/* Badge */}
-						<div className="inline-flex items-center gap-2 rounded-full border border-secondary-fixed-dim/20 bg-secondary-fixed-dim/10 px-4 py-1">
-							<span
-								className="material-symbols-outlined text-sm"
-								style={{ fontVariationSettings: "'FILL' 1" }}
-							>
-								verified_user
-							</span>
-							<span className="font-label text-[0.69rem] font-semibold uppercase tracking-[0.18em]">
-								Local AI Verified
-							</span>
+			<div className="card relative mx-auto max-w-6xl overflow-hidden p-8 md:p-16" {...reveal(0, 'scale')}>
+				<Lattice className="opacity-40" />
+				<div className="relative flex flex-col items-center justify-between gap-12 md:flex-row">
+					<div className="max-w-xl space-y-8">
+						<div className="kicker" {...reveal(150)}>
+							<span className="kicker__dot" />
+							on-device
 						</div>
 
-						{/* Title */}
-						<h2 className="font-headline text-[2.5rem] font-semibold tracking-[-0.05em] text-white md:text-[3.15rem]">
-							Technically Transparent.
+						<h2 className="font-heading text-[2.7rem] font-bold leading-none text-ink md:text-[3.4rem]" {...reveal(240)}>
+							Technically transparent.
 						</h2>
 
-						{/* Features List */}
 						<ul className="space-y-6">
-							{/* Item 1 */}
-							<li className="flex items-start gap-4">
-								<span className="material-symbols-outlined text-primary-fixed mt-1">
-									memory
-								</span>
-								<div>
-									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">Built with local AI models</p>
-									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
-										Optimized for CPU and GPU acceleration without cloud reliance.
-									</p>
-								</div>
-							</li>
-
-							{/* Item 2 */}
-							<li className="flex items-start gap-4">
-								<span className="material-symbols-outlined text-primary-fixed mt-1">
-									no_sim
-								</span>
-								<div>
-									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">No internet required after install</p>
-									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
-										Works perfectly in airplane mode or secure offline environments.
-									</p>
-								</div>
-							</li>
-
-							{/* Item 3 */}
-							<li className="flex items-start gap-4">
-								<span className="material-symbols-outlined text-primary-fixed mt-1">
-									code
-								</span>
-								<div>
-									<p className="font-body text-[1.08rem] font-medium tracking-[-0.015em] text-white">Open-source on GitHub</p>
-									<p className="font-body text-[0.98rem] leading-[1.65] text-on-surface-variant">
-										Audit the code, contribute to the engine, or build your own fork.
-									</p>
-								</div>
-							</li>
+							{points.map(({ title, Icon, body }, index) => (
+								<li key={title} className="flex items-start gap-4" {...reveal(340 + index * 110)}>
+									<span className="icon-chip h-10 w-10 rounded-[10px]">
+										<Icon size={20} />
+									</span>
+									<div>
+										<p className="text-[1.05rem] font-semibold text-ink">{title}</p>
+										<p className="text-[0.98rem] leading-[1.65] text-muted">{body}</p>
+									</div>
+								</li>
+							))}
 						</ul>
 					</div>
 
-					{/* Right Visual Card */}
-					<div className="relative w-full md:w-100 aspect-square flex items-center justify-center">
-						{/* Background Glow */}
-						<div className="absolute inset-0 bg-primary-fixed/5 rounded-full blur-[60px]"></div>
-
-						{/* Card */}
-						<div className="relative bg-surface-container-highest p-12 rounded-3xl border border-white/10 flex flex-col items-center gap-6 shadow-2xl">
-							{/* Shield Icon */}
-							<span
-								className="material-symbols-outlined text-primary-fixed"
-								style={{ fontVariationSettings: "'FILL' 1", fontSize: "120px", lineHeight: "120px" }}
-							>
-								shield
-							</span>
-
-							{/* Title */}
-							<span className="font-headline text-[1.75rem] font-semibold tracking-[-0.04em] text-white">
-								LOCAL AI
-							</span>
-
-							{/* Badge */}
-							<div className="flex items-center gap-2 font-label text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-on-surface-variant">
-								<span className="material-symbols-outlined text-sm">lock</span>
-								Encrypted &amp; Private
-							</div>
+					{/* The app's About page */}
+					<div className="flex w-full max-w-[22rem] flex-col items-center text-center">
+						<div className="aspect-square w-[78%]" {...reveal(300, 'spin')}>
+							<Emblem className="h-full w-full" />
 						</div>
+						<p className="mt-6 font-heading text-[1.9rem] font-bold leading-none text-ink">Poise Voice Isolator</p>
+						<p className="mt-3 h-5 font-mono text-[0.85rem] text-secondary">{version ?? ''}</p>
+						<p className="mt-2 text-[0.95rem] text-ink/90">Real-time voice isolation. Runs 100% on-device.</p>
 					</div>
 				</div>
 			</div>

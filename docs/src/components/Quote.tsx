@@ -1,12 +1,14 @@
+import { reveal } from '../reveal';
+
 const Quote = () => {
 	return (
-		<section className="bg-surface-container-lowest px-6 py-28 text-center md:py-40">
-			<div className="max-w-4xl mx-auto space-y-12">
-				<h2 className="font-headline text-[2.35rem] font-semibold leading-[1.04] tracking-[-0.05em] text-white md:text-[3.4rem]">
-					"Music is everywhere even when you don't choose it."
+		<section className="border-y border-white/6 bg-deep px-6 py-28 text-center md:py-36">
+			<div className="mx-auto max-w-4xl space-y-10">
+				<h2 className="font-heading text-[2.6rem] font-bold leading-[1.02] text-ink md:text-[3.8rem]" {...reveal(0)}>
+					“Music is everywhere, even when you don’t choose it.”
 				</h2>
-				<div className="w-24 h-px bg-primary-fixed/30 mx-auto"></div>
-				<p className="font-body text-[1.18rem] italic leading-relaxed text-on-surface-variant md:text-[1.35rem]">
+				<div className="mx-auto h-px w-24 bg-secondary/60" {...reveal(260, 'line')}></div>
+				<p className="text-[1.15rem] leading-relaxed text-muted md:text-[1.3rem]" {...reveal(400)}>
 					Take back control of your environment.
 				</p>
 			</div>

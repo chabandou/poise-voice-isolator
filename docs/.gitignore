@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# npm is the package manager (CI runs npm ci); keep one lockfile
+bun.lock
+bun.lockb

@@ -2,31 +2,26 @@ import type { AnchorHTMLAttributes, ReactNode } from 'react';
 
 type CtaButtonProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   children?: ReactNode;
-  icon: ReactNode;
-  variant?: 'primary' | 'secondary';
+  icon?: ReactNode;
+  variant?: 'primary' | 'ghost';
 };
 
+// Link styled like the app's QPushButton#primary / #ghost.
 const CtaButton = ({
   children,
   className = '',
   icon,
   variant = 'primary',
   ...props
-}: CtaButtonProps) => {
-  const variantClasses =
-    variant === 'secondary'
-      ? 'cta-button--secondary border border-white/10 bg-surface-container-highest/20 text-white'
-      : 'pulse-gradient text-on-primary-fixed';
-  const classes = `cta-button inline-flex items-center justify-center ${variantClasses} ${className}`.trim();
-
-  return (
-    <a className={classes} {...props}>
-      <span className="cta-button__label">{children}</span>
-      <span aria-hidden="true" className="cta-button__icon">
+}: CtaButtonProps) => (
+  <a className={`btn ${variant === 'ghost' ? 'btn-ghost' : 'btn-primary'} ${className}`.trim()} {...props}>
+    {icon && (
+      <span aria-hidden="true" className={`inline-flex ${variant === 'ghost' ? 'text-secondary' : ''}`}>
         {icon}
       </span>
-    </a>
-  );
-};
+    )}
+    {children}
+  </a>
+);
 
 export default CtaButton;
