@@ -362,8 +362,7 @@ class MainWindow(QMainWindow):
         output_layout.addWidget(self.output_selector)
         # Input is always VB-Cable: say so once, plainly.
         routing_note = QLabel(
-            "System audio is captured through VB-Cable (CABLE Output), "
-            "cleaned by Poise, then played here. If routing fails, Poise "
+            "Locked while running. If routing fails, Poise "
             "stops and shows manual steps.")
         routing_note.setObjectName("row-sub")
         routing_note.setWordWrap(True)
@@ -901,8 +900,7 @@ class MainWindow(QMainWindow):
     def _set_controls_enabled(self, enabled: bool):
         self.output_selector.setEnabled(enabled)
         self.output_selector.set_subtitle(
-            "Where the clean audio plays" if enabled
-            else "Locked while running")
+            "Where the clean audio plays")
         self.model_cards.setEnabled(enabled)
 
     def _on_worker_started(self):

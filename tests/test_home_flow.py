@@ -70,11 +70,13 @@ def test_controls_lock_while_running(window):
     window._set_controls_enabled(False)
     assert not window.output_selector.isEnabled()
     assert not window.model_cards.isEnabled()
-    assert window.output_selector._subtitle.text() == "Locked while running"
+    # The lock is explained once in the routing note, not the subtitle.
+    subtitle = "Where the clean audio plays"
+    assert window.output_selector._subtitle.text() == subtitle
     window._set_controls_enabled(True)
     assert window.output_selector.isEnabled()
     assert window.model_cards.isEnabled()
-    assert window.output_selector._subtitle.text() != "Locked while running"
+    assert window.output_selector._subtitle.text() == subtitle
 
 
 def test_status_messages_drive_headline_and_status_bar(window):

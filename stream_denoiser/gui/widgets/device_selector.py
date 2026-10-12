@@ -53,15 +53,15 @@ class DeviceSelector(QWidget):
         """Setup the widget UI (icon chip + title row, boxed combo)."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(sp(14))
 
         header = QHBoxLayout()
-        header.setSpacing(14)
+        header.setSpacing(sp(14))
         self._chip = IconChip(
             "monitor" if self._device_type == "input" else "speaker")
         header.addWidget(self._chip)
         titles = QVBoxLayout()
-        titles.setSpacing(2)
+        titles.setSpacing(sp(2))
         self._label = QLabel(label)
         self._label.setObjectName("device-title")
         self._label.setAlignment(

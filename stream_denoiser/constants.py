@@ -31,8 +31,7 @@ MODEL_INFO = {
     MODEL_RNNOISE: {
         "label": "RNNoise",
         "picker_blurb": "Worse isolation · lower CPU load",
-        "card_blurb": "Reduces steady noise like fans and hiss, but not "
-                      "music. Light CPU use.",
+        "card_blurb": "Light CPU use but lower quality isolation.",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
     },
 }
