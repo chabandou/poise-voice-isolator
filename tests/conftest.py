@@ -13,10 +13,18 @@ shared app on window close. The close path is pre-seeded to plain
 hide, so closes are side-effect free.
 
 Importing this module without PyQt6 installed is a no-op so the Qt-free
-tests keep running anywhere.
+tests keep running anywhere. Without PyQt6, a test module that cannot
+even be imported because PyQt6 is missing is reported as skipped rather
+than as a collection error (CI deliberately runs without Qt), so GUI
+tests need no per-file importorskip guard.
 """
+import importlib.util
 import os
 import tempfile
+
+import pytest
+
+_HAS_PYQT6 = importlib.util.find_spec("PyQt6") is not None
 
 _SESSION_APP = None
 
@@ -49,3 +57,16 @@ except Exception:
 def session_app():
     """The session QApplication, or None when Qt is unavailable."""
     return _SESSION_APP
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    """Skip, don't error, a test module whose only problem is no PyQt6."""
+    report = yield
+    if (not _HAS_PYQT6 and report.failed
+            and isinstance(collector, pytest.Module)
+            and "No module named 'PyQt6" in str(report.longrepr)):
+        report.outcome = "skipped"
+        report.longrepr = (str(collector.path), None,
+                           "Skipped: PyQt6 not installed")
+    return report
