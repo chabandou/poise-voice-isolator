@@ -6,6 +6,8 @@ pages. Home is the tick-ring dial (Start/Stop + reduction strength) next
 to the output device and a summary of the current setup; everything else
 lives in Settings. Live performance stats sit in the status bar.
 """
+import datetime
+import logging
 import os
 import sys
 from typing import Optional
@@ -14,10 +16,14 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel,
     QMessageBox, QApplication, QFrame, QStackedWidget,
-    QTextEdit, QPushButton, QButtonGroup, QScrollArea, QBoxLayout,
+    QPlainTextEdit, QPushButton, QButtonGroup, QScrollArea, QBoxLayout,
+    QFileDialog,
 )
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QIcon, QCloseEvent, QPixmap, QDesktopServices
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import (
+    QIcon, QCloseEvent, QPixmap, QDesktopServices, QColor, QFont,
+    QTextCharFormat, QTextCursor,
+)
 
 from .styles import get_stylesheet
 from .scaling import init_scaling, sp
@@ -50,7 +56,9 @@ from .widgets.setup_summary import SetupSummary
 from .widgets.stats_bar import StatsBar
 from .widgets.emblem import Emblem
 from .widgets.pattern_card import PatternCard
-from ..logging_config import get_logger, get_log_file_path
+from ..logging_config import (
+    get_logger, get_log_file_path, get_memory_handler,
+)
 from .utils import get_icon_path
 
 _logger = get_logger(__name__)
@@ -538,6 +546,9 @@ class MainWindow(QMainWindow):
         return head
 
     # -- Logs page ------------------------------------------------------------
+    LOG_POLL_MS = 500          # live refresh while the Logs page is open
+    LOG_MAX_BLOCKS = 5000      # view trims its oldest lines past this
+
     def _build_logs_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -548,50 +559,150 @@ class MainWindow(QMainWindow):
         title = QLabel("Logs")
         title.setObjectName("page-title")
         layout.addWidget(title)
+        subtitle = QLabel("What Poise is doing this session, updated live. "
+                          "Copy or save it when reporting a problem.")
+        subtitle.setObjectName("page-subtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
 
         bar = QHBoxLayout()
         bar.setSpacing(10)
         self.log_path_label = QLabel()
         self.log_path_label.setObjectName("log-path")
+        self.log_path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
         bar.addWidget(self.log_path_label, stretch=1)
 
-        refresh_btn = self._icon_button("Refresh", "refresh")
-        refresh_btn.clicked.connect(self._refresh_logs)
-        bar.addWidget(refresh_btn)
+        self.log_copy_btn = self._icon_button("Copy", "copy")
+        self.log_copy_btn.setToolTip("Copy this session's log")
+        self.log_copy_btn.clicked.connect(self._copy_logs)
+        bar.addWidget(self.log_copy_btn)
 
-        folder_btn = self._icon_button("Open Folder", "folder")
-        folder_btn.clicked.connect(self._open_log_folder)
-        bar.addWidget(folder_btn)
+        save_btn = self._icon_button("Save…", "save")
+        save_btn.setToolTip("Save this session's log to a file")
+        save_btn.clicked.connect(self._save_logs)
+        bar.addWidget(save_btn)
+
+        self.log_folder_btn = self._icon_button("Open Folder", "folder")
+        self.log_folder_btn.setToolTip(
+            "Open the folder with the log files of this and earlier sessions")
+        self.log_folder_btn.clicked.connect(self._open_log_folder)
+        bar.addWidget(self.log_folder_btn)
         layout.addLayout(bar)
 
-        self.log_view = QTextEdit()
+        self.log_view = QPlainTextEdit()
         self.log_view.setObjectName("logs")
         self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(self.LOG_MAX_BLOCKS)
+        self.log_view.setPlaceholderText("Nothing logged yet.")
+        mono = QFont()
+        mono.setFamilies(["JetBrains Mono", "Cascadia Mono", "Consolas",
+                          "DejaVu Sans Mono", "Liberation Mono"])
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setFixedPitch(True)
+        self.log_view.setFont(mono)
         layout.addWidget(self.log_view, stretch=1)
+
+        self._log_seq = 0
+        self._log_timer = QTimer(self)
+        self._log_timer.setInterval(self.LOG_POLL_MS)
+        self._log_timer.timeout.connect(self._poll_logs)
 
         self._refresh_logs()
         return page
 
+    def _show_logs_page(self, shown: bool) -> None:
+        """Follow the log live only while its page is open."""
+        if shown:
+            self._update_log_source()
+            self._poll_logs()
+            self._log_timer.start()
+        else:
+            self._log_timer.stop()
+
     def _refresh_logs(self):
-        """Load the tail of the current log file into the viewer."""
+        """Re-render the whole session log (first build, theme change)."""
+        self._update_log_source()
+        self.log_view.clear()
+        self._log_seq = 0
+        self._poll_logs()
+        bar = self.log_view.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _update_log_source(self) -> None:
         path = get_log_file_path()
-        if not path or not os.path.exists(path):
-            self.log_path_label.setText("No log file active this session.")
-            self.log_view.setPlainText(
-                "File logging is not enabled.\n"
-                "Start the app with --log-file <path> or POISE_LOG_FILE "
-                "to capture logs here.")
+        if path:
+            self.log_path_label.setText(path)
+            self.log_path_label.setToolTip(
+                "Log file for this and earlier sessions")
+        else:
+            self.log_path_label.setText("This session only, not saved to disk")
+            self.log_path_label.setToolTip("")
+        self.log_folder_btn.setVisible(bool(path))
+
+    def _poll_logs(self) -> None:
+        """Append records logged since the last poll, colouring problems."""
+        handler = get_memory_handler()
+        if handler is None:
+            self.log_view.setPlaceholderText(
+                "Session logging is off (the app was started without it).")
             return
-        self.log_path_label.setText(path)
+        seq, entries = handler.entries_since(self._log_seq)
+        self._log_seq = seq
+        if not entries:
+            return
+        bar = self.log_view.verticalScrollBar()
+        follow = bar.value() >= bar.maximum() - 4
+        palette = theme_store.current()
+        error_fmt, warn_fmt = QTextCharFormat(), QTextCharFormat()
+        error_fmt.setForeground(QColor(palette["error"]))
+        warn_fmt.setForeground(QColor(palette["warning"]))
+        plain = QTextCharFormat()
+
+        cursor = QTextCursor(self.log_view.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.beginEditBlock()
+        first = self.log_view.document().isEmpty()
+        for levelno, text in entries:
+            if levelno >= logging.ERROR:
+                fmt = error_fmt
+            elif levelno >= logging.WARNING:
+                fmt = warn_fmt
+            else:
+                fmt = plain
+            if not first:
+                cursor.insertBlock()
+            first = False
+            cursor.insertText(text, fmt)
+        cursor.endEditBlock()
+        if follow:
+            bar.setValue(bar.maximum())
+
+    def _session_log_text(self) -> str:
+        handler = get_memory_handler()
+        return handler.text() if handler else self.log_view.toPlainText()
+
+    def _copy_logs(self) -> None:
+        QApplication.clipboard().setText(self._session_log_text())
+        self.log_copy_btn.setText("Copied")
+        QTimer.singleShot(1500, lambda: self.log_copy_btn.setText("Copy"))
+
+    def _save_logs(self) -> None:
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        suggested = os.path.join(os.path.expanduser("~"),
+                                 f"poise-log-{stamp}.txt")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save log", suggested,
+            "Text files (*.txt *.log);;All files (*)")
+        if not path:
+            return
         try:
-            with open(path, "r", errors="replace") as f:
-                lines = f.readlines()
-            tail = lines[-400:]
-            self.log_view.setPlainText("".join(tail))
-            self.log_view.verticalScrollBar().setValue(
-                self.log_view.verticalScrollBar().maximum())
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._session_log_text() + "\n")
         except OSError as e:
-            self.log_view.setPlainText(f"Could not read log file: {e}")
+            QMessageBox.warning(self, "Save log", f"Could not save the log:\n{e}")
+            return
+        _logger.info(f"Session log saved to {path}")
 
     def _open_log_folder(self):
         path = get_log_file_path()
@@ -698,8 +809,7 @@ class MainWindow(QMainWindow):
             slide_stack(self.stack, index)
         except Exception:
             self.stack.setCurrentIndex(index)
-        if index == 2:  # Logs
-            self._refresh_logs()
+        self._show_logs_page(index == 2)  # Logs
 
     def showEvent(self, event):  # noqa: N802 (Qt override)
         super().showEvent(event)
@@ -799,6 +909,7 @@ class MainWindow(QMainWindow):
         apply_titlebar(self, theme_store.current())
         self._refresh_credits()
         self._tint_icon_buttons()
+        self._refresh_logs()   # re-colour warnings/errors for the new palette
         self.power_btn.update()
         self.stats_bar.update()
         self.update()

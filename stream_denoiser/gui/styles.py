@@ -554,12 +554,13 @@ QCheckBox::indicator:checked {
 /* =================================================================================
    LOG VIEWER
    ================================================================================= */
-QTextEdit#logs {
+QPlainTextEdit#logs {
     background-color: {sidebar};
     border: 1px solid rgba(148, 163, 184, 0.14);
     border-radius: 12px;
     color: {text};
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    /* Family is set in code (MainWindow._build_logs_page): QSS only tries
+       the first family, so an uninstalled one falls back to a sans font. */
     font-size: 12px;
     padding: 8px;
 }

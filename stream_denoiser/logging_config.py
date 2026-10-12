@@ -20,6 +20,7 @@ onefile binary and across Linux distros:
 ``ensure_file_logging()`` never raises: it walks the candidates in
 order and returns the first writable location, or ``None``.
 """
+import collections
 import logging
 import logging.handlers
 import os
@@ -40,6 +41,14 @@ _log_file_path: Optional[str] = None
 
 DEFAULT_MAX_BYTES = 1_000_000  # 1 MB
 DEFAULT_BACKUP_COUNT = 3
+
+# In-memory session log (the GUI Logs page). Works on every platform,
+# independent of file logging; attached to every logger like the file
+# handler once enable_memory_log() is called.
+MEMORY_LOG_MAX_LINES = 2000
+_memory_handler: Optional["MemoryLogHandler"] = None
+
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
 def _is_linux() -> bool:
@@ -183,10 +192,7 @@ def _try_attach_log_file(
             str(path), maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
         )
         handler.setLevel(_coerce_level(level))
-        formatter = logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        )
-        handler.setFormatter(formatter)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
 
         _file_handler = handler
         _log_file_path = str(path)
@@ -402,6 +408,74 @@ def enable_crash_traceback() -> Optional[str]:
         return None
 
 
+class MemoryLogHandler(logging.Handler):
+    """Keeps the most recent formatted records in memory.
+
+    Thread-safe: records arrive from the audio thread while the GUI reads.
+    Every record gets a sequence number so a viewer can fetch only what is
+    new since its last read (see entries_since()).
+    """
+
+    def __init__(self, capacity: int = MEMORY_LOG_MAX_LINES,
+                 level: Union[int, str] = logging.INFO):
+        super().__init__(_coerce_level(level))
+        self.setFormatter(logging.Formatter(LOG_FORMAT))
+        self._entries: collections.deque = collections.deque(maxlen=capacity)
+        self._seq = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Handler.handle() already holds self.lock around emit().
+        try:
+            text = self.format(record)
+        except Exception:
+            self.handleError(record)
+            return
+        self._seq += 1
+        self._entries.append((self._seq, record.levelno, text))
+
+    def entries_since(self, seq: int = 0) -> tuple[int, list[tuple[int, str]]]:
+        """(latest sequence number, [(levelno, text), ...] newer than seq)."""
+        with self.lock:
+            new = [(lvl, text) for s, lvl, text in self._entries if s > seq]
+            return self._seq, new
+
+    def text(self) -> str:
+        """The whole buffered session log as plain text."""
+        _, entries = self.entries_since(0)
+        return "\n".join(text for _, text in entries)
+
+
+def enable_memory_log(level: Union[int, str] = logging.INFO) -> MemoryLogHandler:
+    """Keep this session's log in memory (GUI Logs page). Idempotent."""
+    global _memory_handler
+    if _memory_handler is None:
+        _memory_handler = MemoryLogHandler(level=level)
+    for logger in _loggers.values():
+        _attach(logger, _memory_handler)
+    return _memory_handler
+
+
+def get_memory_handler() -> Optional[MemoryLogHandler]:
+    """The in-memory session log, if enable_memory_log() was called."""
+    return _memory_handler
+
+
+def _attach(logger: logging.Logger, handler: logging.Handler) -> None:
+    if handler not in logger.handlers:
+        logger.addHandler(handler)
+    if logger.level > handler.level:
+        logger.setLevel(handler.level)
+
+
+def _reset_memory_log_for_tests() -> None:
+    """Detach the in-memory handler (tests only)."""
+    global _memory_handler
+    if _memory_handler is not None:
+        for logger in _loggers.values():
+            logger.removeHandler(_memory_handler)
+    _memory_handler = None
+
+
 def _reset_file_logging_for_tests() -> None:
     """Detach and close the shared file handler (tests only)."""
     global _file_handler, _log_file_path
@@ -491,6 +565,8 @@ def get_logger(name: str) -> logging.Logger:
         logger.addHandler(_file_handler)
         if logger.level > _file_handler.level:
             logger.setLevel(_file_handler.level)
+    if _memory_handler is not None:
+        _attach(logger, _memory_handler)
 
     _loggers[name] = logger
     return logger

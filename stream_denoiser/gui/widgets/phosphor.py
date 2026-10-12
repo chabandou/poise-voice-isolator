@@ -39,6 +39,8 @@ FILES = {
     "cpu": "cpu",
     "sliders": "sliders-horizontal",
     "heart": "heart",
+    "copy": "copy",
+    "save": "floppy-disk",
 }
 
 _renderers: dict = {}

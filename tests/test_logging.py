@@ -22,6 +22,7 @@ from stream_denoiser.logging_config import (
 def _clean_logging():
     yield
     logging_config._reset_file_logging_for_tests()
+    logging_config._reset_memory_log_for_tests()
     # Leave TUI mode off for other tests
     set_tui_mode(False)
 
@@ -331,3 +332,63 @@ def test_crash_traceback_off_without_file_logging():
     )
     proc = _run_crashing_child(code)
     assert proc.returncode == 0, proc.stderr
+
+
+# -- in-memory session log (GUI Logs page) ---------------------------------------
+@pytest.fixture()
+def memory_log():
+    handler = logging_config.enable_memory_log()
+    yield handler
+    logging_config._reset_memory_log_for_tests()
+
+
+def test_memory_log_reaches_existing_and_late_loggers():
+    early = get_logger("test-poise-memory-early")      # exists before enabling
+    memory_log = logging_config.enable_memory_log()
+    early.info("from-early")
+    late = get_logger("test-poise-memory-late")         # created after
+    late.warning("from-late")
+    _, entries = memory_log.entries_since(0)
+    texts = [text for _, text in entries]
+    assert any("from-early" in t for t in texts)
+    assert any("from-late" in t and "[WARNING]" in t for t in texts)
+    assert logging_config.get_memory_handler() is memory_log
+    assert logging_config.enable_memory_log() is memory_log   # idempotent
+
+
+def test_memory_log_returns_only_new_entries(memory_log):
+    logger = get_logger("test-poise-memory-seq")
+    logger.info("one")
+    seq, first = memory_log.entries_since(0)
+    logger.error("two")
+    seq2, second = memory_log.entries_since(seq)
+    assert seq2 == seq + 1
+    assert [(lvl, "two" in text) for lvl, text in second] == [(logging.ERROR, True)]
+    assert memory_log.entries_since(seq2) == (seq2, [])
+    assert memory_log.text().endswith(second[0][1])
+
+
+def test_memory_log_skips_debug_and_stays_bounded():
+    handler = logging_config.MemoryLogHandler(capacity=3)
+    logger = logging.getLogger("test-poise-memory-bounded")
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        logger.debug("hidden")
+        for i in range(5):
+            logger.info(f"line-{i}")
+        seq, entries = handler.entries_since(0)
+        assert seq == 5
+        assert [t.split(": ")[-1] for _, t in entries] == ["line-2", "line-3", "line-4"]
+    finally:
+        logger.removeHandler(handler)
+
+
+def test_memory_log_detaches_on_reset():
+    handler = logging_config.enable_memory_log()
+    logger = get_logger("test-poise-memory-reset")
+    assert handler in logger.handlers
+    logging_config._reset_memory_log_for_tests()
+    assert handler not in logger.handlers
+    assert logging_config.get_memory_handler() is None

@@ -82,10 +82,35 @@ def _handle_client_message(socket: QLocalSocket, window: MainWindow):
         window.bring_to_front()
     socket.disconnectFromServer()
 
+def _start_logging():
+    """Feed the Logs page: this session in memory (every platform) plus the
+    usual file log (Linux default; --log-file / POISE_LOG_FILE anywhere)."""
+    try:
+        import argparse
+        import platform
+        from .. import __version__
+        from ..logging_config import (
+            add_log_args, enable_crash_traceback, enable_memory_log,
+            ensure_from_log_args,
+        )
+        enable_memory_log()
+        parser = add_log_args(argparse.ArgumentParser(add_help=False))
+        args, _ = parser.parse_known_args(sys.argv[1:])
+        path = ensure_from_log_args(args)
+        enable_crash_traceback()
+        _logger.info(f"Poise Voice Isolator {__version__} starting "
+                     f"(Python {platform.python_version()}, {platform.platform()})")
+        if path:
+            _logger.info(f"Logging to {path}")
+    except (Exception, SystemExit) as e:  # argparse exits on bad flags
+        _logger.warning(f"Log setup incomplete: {e}")
+
 def run_gui():
     """Start the Poise Voice Isolator GUI."""
     global _main_window
-    
+
+    _start_logging()
+
     # Set AppUserModelID for Windows taskbar icon
     # Set to human-readable name because Windows uses this as the notification header
     # when no start menu shortcut is installed.

@@ -142,3 +142,72 @@ def test_every_theme_switch_applies_cleanly(app, window):
     finally:
         ids = theme_store.theme_ids()
         window._on_theme_changed(ids.index(original))
+
+
+# -- Logs page ----------------------------------------------------------------------
+@pytest.fixture()
+def session_log():
+    from stream_denoiser import logging_config
+    handler = logging_config.enable_memory_log()
+    yield handler
+    logging_config._reset_memory_log_for_tests()
+
+
+def test_logs_page_follows_the_session_log_live(app, window, session_log):
+    from stream_denoiser.logging_config import get_logger
+    window._on_page_requested(2)
+    assert window._log_timer.isActive()
+    log = get_logger("test-poise-logs-page")
+    log.info("dial moved to -30 dB")
+    log.error("stream failed: device unplugged")
+    _pump(app, 0.8)                                  # > one poll interval
+    text = window.log_view.toPlainText()
+    assert "dial moved to -30 dB" in text
+    assert "stream failed: device unplugged" in text
+    window._on_page_requested(0)
+    assert not window._log_timer.isActive()
+
+
+def test_logs_page_colours_errors(window, session_log):
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui import themes
+    from stream_denoiser.logging_config import get_logger
+    get_logger("test-poise-logs-colour").error("boom-colour")
+    window._refresh_logs()
+    doc = window.log_view.document()
+    block = doc.findBlock(0)
+    while block.isValid() and "boom-colour" not in block.text():
+        block = block.next()
+    assert block.isValid()
+    colour = block.begin().fragment().charFormat().foreground().color()
+    assert colour == QColor(themes.current()["error"])
+
+
+def test_logs_copy_and_save_export_the_session(window, session_log, tmp_path,
+                                               monkeypatch):
+    from PyQt6.QtWidgets import QApplication, QFileDialog
+    from stream_denoiser.logging_config import get_logger
+    get_logger("test-poise-logs-export").warning("export-me")
+    window._copy_logs()
+    assert "export-me" in QApplication.clipboard().text()
+    assert window.log_copy_btn.text() == "Copied"
+    target = tmp_path / "poise-log.txt"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(target), ""))
+    window._save_logs()
+    assert "export-me" in target.read_text(encoding="utf-8")
+
+
+def test_logs_folder_button_only_with_a_log_file(window, tmp_path):
+    from stream_denoiser import logging_config
+    logging_config._reset_file_logging_for_tests()
+    try:
+        window._update_log_source()
+        assert window.log_folder_btn.isHidden()
+        assert "not saved to disk" in window.log_path_label.text()
+        logging_config.ensure_file_logging(log_file=tmp_path / "poise.log")
+        window._update_log_source()
+        assert not window.log_folder_btn.isHidden()
+        assert window.log_path_label.text() == str(tmp_path / "poise.log")
+    finally:
+        logging_config._reset_file_logging_for_tests()
