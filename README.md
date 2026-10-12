@@ -430,7 +430,7 @@ During processing, the script/GUI displays real-time statistics:
 
 - **RTF**: Real-time factor (processing time / frame duration, <1.0 means real-time capable)
 - **Avg**: Average processing time per frame in milliseconds
-- **AAD bypass**: Percentage of frames skipped due to silence
+- **AAD bypass**: Percentage of frames skipped due to silence (the GUI's status bar instead shows `skip on/off`: whether it is skipping right now)
 - **Buffer status**: Input/output buffer fill levels
 
 ##### Audio routing (how it works)

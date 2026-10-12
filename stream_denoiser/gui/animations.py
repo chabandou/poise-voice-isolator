@@ -11,6 +11,7 @@ Small, dependency-free micro-interaction toolkit for Qt Widgets:
 - Blend: an eased 0..1 state value (hover / checked / lit) for painted widgets
 - QssHoverFade: crossfades QSS :hover colours on stock buttons and fields
 - crossfade_from: fades a snapshot of the old look away (theme switches)
+- TextSwap: fades a label's old text out and the new one in (status lines)
 - shared Apple-like timings + easings
 
 QSS cannot animate, so all motion lives here in code. Every helper
@@ -50,6 +51,7 @@ from PyQt6.QtCore import (
     Qt,
     QTimer,
     QVariantAnimation,
+    pyqtSignal,
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -921,3 +923,116 @@ def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260):
         return overlay
     except Exception:
         return None
+
+
+class TextSwap(QObject):
+    """Change a label's text with a quick fade out, then fade in.
+
+    Opacity only (layout-safe), and the effect is removed once settled.
+    Updates coalesce: text that arrives while the old text is fading out
+    replaces the pending one, so a burst of status messages shows only the
+    newest instead of flashing through each. Hidden labels and reduced
+    motion change instantly.
+
+    The swap owns the label's effect while busy; a label that already has
+    another effect (e.g. a pulse) is changed instantly instead of nesting
+    fades. `settled` fires once the shown text is final and unfaded, so a
+    caller can start such a pulse only after the swap.
+    """
+
+    settled = pyqtSignal()
+
+    OUT_MS = 90
+    IN_MS = 170
+
+    def __init__(self, label, out_ms: int = OUT_MS, in_ms: int = IN_MS):
+        super().__init__(label)
+        self._label = label
+        self._out_ms, self._in_ms = out_ms, in_ms
+        self._text = label.text()
+        self._eff = None
+        self._anim = None
+        self._phase = None   # None | "out" | "in"
+        self._apply = None   # pending styling for the new text
+
+    @property
+    def busy(self) -> bool:
+        return self._phase is not None
+
+    def text(self) -> str:
+        """The text being shown, or about to be once the fade-out ends."""
+        return self._text
+
+    def set_text(self, text: str, on_apply=None) -> None:
+        """Swap to text. on_apply() runs as the new text appears (e.g. to
+        restyle it), not while the old text is still fading out."""
+        if text == self._text:
+            if on_apply is not None and self._phase != "out":
+                on_apply()
+            elif on_apply is not None:
+                self._apply = on_apply
+            return
+        self._text = text
+        self._apply = on_apply
+        label = self._label
+        foreign = (label.graphicsEffect() is not None
+                   and label.graphicsEffect() is not self._eff)
+        if not motion_ok() or not label.isVisible() or foreign:
+            self._settle()
+            return
+        if self._phase == "out":
+            return   # the pending text is picked up when the fade-out ends
+        self._run("out", self._opacity(), 0.0, self._out_ms)
+
+    def _opacity(self) -> float:
+        try:
+            return float(self._eff.opacity()) if self._eff is not None else 1.0
+        except RuntimeError:
+            return 1.0
+
+    def _run(self, phase: str, start: float, end: float, ms: int) -> None:
+        if self._anim is not None:
+            self._anim.stop()
+        if self._eff is None or self._label.graphicsEffect() is not self._eff:
+            self._eff = QGraphicsOpacityEffect(self._label)
+            self._label.setGraphicsEffect(self._eff)
+        self._eff.setOpacity(start)
+        self._phase = phase
+        anim = QPropertyAnimation(self._eff, b"opacity", self)
+        anim.setDuration(max(1, int(ms * abs(start - end))) if phase == "out"
+                         else ms)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(EASE_OUT)
+        anim.finished.connect(self._step)
+        self._anim = anim
+        anim.start()
+
+    def _show_text(self) -> None:
+        apply, self._apply = self._apply, None
+        if apply is not None:
+            apply()
+        self._label.setText(self._text)
+
+    def _step(self) -> None:
+        if self._phase == "out":
+            self._show_text()
+            self._run("in", 0.0, 1.0, self._in_ms)
+        else:
+            self._settle()
+
+    def _settle(self) -> None:
+        """Show the latest text at full opacity and drop the effect."""
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        self._show_text()
+        if self._eff is not None:
+            try:
+                if self._label.graphicsEffect() is self._eff:
+                    self._label.setGraphicsEffect(None)
+            except RuntimeError:
+                pass
+            self._eff = None
+        self._phase = None
+        self.settled.emit()

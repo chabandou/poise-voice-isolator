@@ -22,7 +22,7 @@ def _pump(app, secs=0.2):
 
 
 STATS = {"rtf": 0.11, "avg_time_ms": 1.2, "aad_bypass_ratio": 0.38,
-         "input_buffer": 2, "output_buffer": 2}
+         "aad_bypass_active": True, "input_buffer": 2, "output_buffer": 2}
 
 
 def test_stats_bar_idle_then_live_then_reset(app):
@@ -36,7 +36,7 @@ def test_stats_bar_idle_then_live_then_reset(app):
     assert bar._stats.isVisible() and not bar._hint.isVisible()
     assert bar._values["load"].text() == "0.11x"
     assert bar._values["frame"].text() == "1.2 ms"
-    assert bar._values["skipped"].text() == "38%"
+    assert bar._values["skip"].text() == "on"
     assert bar._values["buffer"].text() == "2/2"
     bar.reset()
     _pump(app)
@@ -57,11 +57,58 @@ def test_stats_bar_load_colour_thresholds(app, rtf, name):
 def test_stats_bar_state_dot(app):
     from stream_denoiser.gui.widgets.stats_bar import StatsBar
     bar = StatsBar()
-    bar.set_state("processing", "isolating")
+    assert bar._state.text() == "ready"
+    bar.set_state("processing", "loading model…")
     assert bar._dot.property("state") == "processing"
-    assert bar._state.text() == "isolating"
+    assert bar._state.text() == "loading model…"
+    bar.set_state("processing")
+    assert bar._state.text() == "processing"
     bar.set_state("error")
     assert bar._state.text() == "error"
+
+
+@pytest.mark.parametrize("state,message,word", [
+    ("ready", "Ready", "ready"),
+    ("ready", "Stopped", "ready"),
+    ("error", "Error: boom", "error"),
+    ("processing", "Initializing...", "starting…"),
+    ("processing", "Starting...", "starting…"),
+    ("processing", "Starting audio streams...", "starting…"),
+    ("processing", "Switching to 44100Hz output...", "starting…"),
+    ("processing", "Loading model...", "loading model…"),
+    ("processing", "Downloading audio tools... First time may take a few seconds...",
+     "downloading…"),
+    ("processing", "Installing AudioDeviceCmdlets... First time may take a few seconds...",
+     "installing…"),
+    ("processing", "Switching audio device...", "switching device…"),
+    ("processing", "Switched to VB-Cable (CABLE Input)", "switching device…"),
+    ("processing", "Isolating audio", "processing"),
+    ("processing", "Processing", "processing"),
+    ("processing", "Stopping...", "stopping…"),
+])
+def test_status_word_names_the_current_step(state, message, word):
+    from stream_denoiser.gui.widgets.stats_bar import status_word
+    assert status_word(state, message) == word
+
+
+def test_stats_bar_skip_is_live_and_hidden_without_aad(app):
+    from stream_denoiser.gui.widgets.stats_bar import StatsBar
+    bar = StatsBar()
+    bar.show()
+    bar.update_stats(STATS)
+    _pump(app)
+    assert bar._pairs["skip"].isVisible() and bar._values["skip"].text() == "on"
+    bar.update_stats(dict(STATS, aad_bypass_active=False))   # audio arrived
+    assert bar._values["skip"].text() == "off"
+    no_aad = {k: v for k, v in STATS.items() if not k.startswith("aad_")}
+    bar.update_stats(no_aad)                                   # skipping disabled
+    _pump(app)
+    assert not bar._pairs["skip"].isVisible()
+    bar.reset()
+    bar.update_stats(STATS)
+    _pump(app)
+    assert bar._pairs["skip"].isVisible()
+    bar.close()
 
 
 def test_model_cards_select_and_signal(app):

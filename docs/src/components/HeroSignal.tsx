@@ -270,7 +270,7 @@ const HeroSignal = ({ className = '' }: { className?: string }) => {
 				</span>
 				<span aria-live="polite" className="flex items-center gap-2">
 					<span className={`h-2 w-2 rounded-full transition-colors duration-300 ${live ? 'bg-accent' : 'bg-muted'}`} />
-					<span className={`transition-colors duration-300 ${live ? 'text-ink' : 'text-muted'}`}>{live ? 'isolating' : 'standby'}</span>
+					<span className={`transition-colors duration-300 ${live ? 'text-ink' : 'text-muted'}`}>{live ? 'processing' : 'ready'}</span>
 				</span>
 				<span className={`text-right transition-colors duration-500 ${live ? 'text-accent' : 'text-muted/60'}`}>
 					out · {live ? (

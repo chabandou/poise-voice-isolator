@@ -54,9 +54,9 @@ def test_stats_bar_has_no_vad_wording(app):
     bar.show()
     _pump(app)
     bar.update_stats({"rtf": 0.11, "avg_time_ms": 1.2,
-                      "aad_bypass_ratio": 0.38,
+                      "aad_bypass_ratio": 0.38, "aad_bypass_active": True,
                       "input_buffer": 2, "output_buffer": 2})
     texts = [w.text() for w in bar.findChildren(QLabel)]
-    assert "skipped" in texts
-    assert "38%" in texts
+    assert "skip" in texts
+    assert "on" in texts
     assert not any("VAD" in t for t in texts)

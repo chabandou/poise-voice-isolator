@@ -254,3 +254,62 @@ def test_theme_switch_is_instant_under_reduced_motion(app, monkeypatch):
     assert _fade_overlays(win) == []
     win._apply_theme(original)
     win.close()
+
+
+# -- TextSwap (status line fades) ----------------------------------------------------
+@pytest.fixture()
+def shown_label(app, monkeypatch):
+    from PyQt6.QtWidgets import QLabel
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    label = QLabel("old")
+    label.show()
+    _pump(app, 0.05)
+    yield label
+    label.close()
+
+
+def test_text_swap_fades_out_then_in_and_drops_the_effect(app, shown_label):
+    from stream_denoiser.gui.animations import TextSwap
+    swap = TextSwap(shown_label)
+    settled = []
+    swap.settled.connect(lambda: settled.append(shown_label.text()))
+    applied = []
+    swap.set_text("new", on_apply=lambda: applied.append(shown_label.text()))
+    assert shown_label.text() == "old" and swap.busy and swap.text() == "new"
+    assert applied == []                     # not while "old" fades out
+    _pump(app, 0.5)
+    assert shown_label.text() == "new" and not swap.busy
+    assert applied == ["old"]                # ran just before "new" appeared
+    assert settled == ["new"]
+    assert shown_label.graphicsEffect() is None
+
+
+def test_text_swap_coalesces_a_burst(app, shown_label):
+    from stream_denoiser.gui.animations import TextSwap
+    swap = TextSwap(shown_label)
+    seen = []
+    swap.settled.connect(lambda: seen.append(shown_label.text()))
+    for text in ("one", "two", "three"):
+        swap.set_text(text)
+    _pump(app, 0.5)
+    assert shown_label.text() == "three" and seen == ["three"]
+
+
+def test_text_swap_is_instant_when_hidden_reduced_or_effect_taken(
+        app, shown_label, monkeypatch):
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel
+    from stream_denoiser.gui.animations import TextSwap
+    hidden = QLabel("old")
+    TextSwap(hidden).set_text("new")
+    assert hidden.text() == "new"
+    pulse = QGraphicsOpacityEffect(shown_label)    # someone else's fade
+    shown_label.setGraphicsEffect(pulse)
+    swap = TextSwap(shown_label)
+    swap.set_text("new")
+    assert shown_label.text() == "new" and not swap.busy
+    assert shown_label.graphicsEffect() is pulse   # left alone, no nesting
+    shown_label.setGraphicsEffect(None)
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    swap.set_text("instant")
+    assert shown_label.text() == "instant"

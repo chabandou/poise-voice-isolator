@@ -53,7 +53,7 @@ from .widgets.chip import IconChip
 from .widgets.model_cards import ModelCards
 from .widgets.settings_row import SettingsRow
 from .widgets.setup_summary import SetupSummary
-from .widgets.stats_bar import StatsBar
+from .widgets.stats_bar import StatsBar, status_word
 from .widgets.emblem import Emblem
 from .widgets.pattern_card import PatternCard
 from ..logging_config import (
@@ -65,13 +65,13 @@ _logger = get_logger(__name__)
 
 HOME_TITLES = {
     "ready": "Ready to isolate",
-    "starting": "Getting ready...",
+    "starting": "Starting...",
     "isolating": "Isolating voices",
     "stopping": "Stopping...",
     "error": "Couldn't start",
 }
 HOME_READY_SUB = "Press the dial to start."
-HOME_ISOLATING_SUB = "Music and noise are removed."
+HOME_ISOLATING_SUB = "Processing"
 
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
 
         # Apple-style juice: window fade + staggered home entrance.
         self._status_pulse = None
+        self._status_pulse_eff = None
         self._shown_once = False
         try:
             from .animations import install_press_fade
@@ -336,6 +337,13 @@ class MainWindow(QMainWindow):
         self.status_label.setAlignment(center)
         self.status_label.setWordWrap(True)
         stage_layout.addWidget(self.status_label)
+        # Status changes fade instead of snapping (several can arrive in
+        # quick succession while starting; only the newest fades in).
+        from .animations import TextSwap
+        self._title_swap = TextSwap(self.home_title)
+        self._status_swap = TextSwap(self.status_label)
+        self._status_swap.settled.connect(self._on_status_settled)
+        self._pulse_wanted = False   # start the pulse once the text settles
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()
@@ -1105,14 +1113,19 @@ class MainWindow(QMainWindow):
             state = "processing"
 
         title_key, sub = self._home_copy(message, state)
-        self.home_title.setText(HOME_TITLES[title_key])
-        self.status_label.setText(sub)
-        self.status_label.setProperty("state", state)
-        self.status_label.style().unpolish(self.status_label)
-        self.status_label.style().polish(self.status_label)
-        word = {"ready": "standby", "error": "error"}.get(
-            state, "isolating" if title_key == "isolating" else "working")
-        self.stats_bar.set_state(state, word)
+        self._title_swap.set_text(HOME_TITLES[title_key])
+        if sub != self._status_swap.text():
+            # The swap needs the label's effect; the isolating pulse only
+            # belongs to the isolating line anyway.
+            self._stop_status_pulse()
+
+        def restyle(label=self.status_label, state=state):
+            label.setProperty("state", state)
+            label.style().unpolish(label)
+            label.style().polish(label)
+
+        self._status_swap.set_text(sub, on_apply=restyle)
+        self.stats_bar.set_state(state, status_word(state, message))
 
         _logger.info(f"Status update: {message}")
 
@@ -1125,19 +1138,36 @@ class MainWindow(QMainWindow):
             return "ready", (
                 HOME_READY_SUB if message.strip() in ("", "Ready") else message)
         lowered = message.lower()
-        if lowered.startswith("isolating"):
+        # "Processing" comes from the worker's loop, after the GUI already
+        # said "Isolating audio" (it used to flip Home back to the
+        # starting headline).
+        if lowered.startswith(("isolating", "processing")):
             return "isolating", HOME_ISOLATING_SUB
         if lowered.startswith("stopping"):
             return "stopping", message
         return "starting", message
 
     def _start_status_pulse(self) -> None:
-        """Breathe the status line while isolating (live-indicator feel)."""
+        """Breathe the status line while isolating (live-indicator feel).
+
+        Waits for a running text swap to settle: the swap and the pulse
+        each need the label's opacity effect, and fades must not nest.
+        """
+        self._pulse_wanted = True
+        if not self._status_swap.busy:
+            self._begin_status_pulse()
+
+    def _on_status_settled(self) -> None:
+        if self._pulse_wanted and self._status_pulse is None:
+            self._begin_status_pulse()
+
+    def _begin_status_pulse(self) -> None:
         try:
             from .animations import cancel_fade, motion_ok
             from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
             from PyQt6.QtWidgets import QGraphicsOpacityEffect
             self._stop_status_pulse()
+            self._pulse_wanted = True
             if not motion_ok():
                 return
             # The pulse owns the label's effect exclusively: void any
@@ -1146,6 +1176,7 @@ class MainWindow(QMainWindow):
             cancel_fade(self.status_label)
             eff = QGraphicsOpacityEffect(self.status_label)
             self.status_label.setGraphicsEffect(eff)
+            self._status_pulse_eff = eff
             eff.setOpacity(1.0)
             anim = QPropertyAnimation(eff, b"opacity", self)
             anim.setDuration(1400)
@@ -1160,6 +1191,7 @@ class MainWindow(QMainWindow):
             pass
 
     def _stop_status_pulse(self) -> None:
+        self._pulse_wanted = False
         try:
             if self._status_pulse is not None:
                 try:
@@ -1167,9 +1199,14 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
                 self._status_pulse = None
-            if hasattr(self, "status_label"):
+            # Remove only the pulse's own effect: a text swap may own the
+            # label's effect right now.
+            eff = getattr(self, "_status_pulse_eff", None)
+            self._status_pulse_eff = None
+            if eff is not None and hasattr(self, "status_label"):
                 try:
-                    self.status_label.setGraphicsEffect(None)
+                    if self.status_label.graphicsEffect() is eff:
+                        self.status_label.setGraphicsEffect(None)
                 except Exception:
                     pass
         except Exception:

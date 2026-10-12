@@ -5,9 +5,9 @@ import Dial from './Dial';
 import { getTheme, setTheme, subscribeTheme, THEMES } from '../themes';
 import { reveal } from '../reveal';
 
-type Stats = { load: number; frame: number; skipped: number; buffer: string };
+type Stats = { load: number; frame: number; skip: boolean; buffer: string };
 
-const idleStats: Stats = { load: 0.42, frame: 4.3, skipped: 12, buffer: '2/3' };
+const idleStats: Stats = { load: 0.42, frame: 4.3, skip: false, buffer: '2/3' };
 
 const navIcons = [
 	{ label: 'Home', Icon: Waveform },
@@ -29,7 +29,8 @@ const AppWindow = () => {
 			setStats({
 				load: 0.36 + Math.random() * 0.12,
 				frame: 3.8 + Math.random() * 1.1,
-				skipped: Math.round(8 + Math.random() * 9),
+				// Live like the app: on only while the input is silent.
+				skip: Math.random() < 0.15,
 				buffer: `${1 + Math.round(Math.random() * 2)}/3`,
 			});
 		}, 900);
@@ -75,7 +76,7 @@ const AppWindow = () => {
 								{live ? 'Isolating voices' : 'Ready to isolate'}
 							</h3>
 							<p className={`mt-1 text-[0.95rem] transition-colors duration-300 ${live ? 'text-accent' : 'text-muted'}`}>
-								{live ? 'Music and noise are removed.' : 'Press the dial to start.'}
+								{live ? 'Processing' : 'Press the dial to start.'}
 							</p>
 							<Dial
 								className="mx-auto mt-4 aspect-square w-full max-w-[17rem]"
@@ -94,13 +95,13 @@ const AppWindow = () => {
 			<div className="flex h-9 items-center gap-5 overflow-hidden whitespace-nowrap border-t border-white/8 bg-deep px-4 font-mono text-[0.72rem]">
 				<span className="flex items-center gap-2 text-ink">
 					<span className={`h-2 w-2 rounded-full transition-colors duration-300 ${live ? 'bg-accent' : 'bg-muted'}`} />
-					{live ? 'isolating' : 'standby'}
+					{live ? 'processing' : 'ready'}
 				</span>
 				{live ? (
 					<>
 						<span className="text-muted">load <span className="text-success">{stats.load.toFixed(2)}x</span></span>
 						<span className="hidden text-muted sm:inline">frame <span className="text-ink">{stats.frame.toFixed(1)} ms</span></span>
-						<span className="hidden text-muted md:inline">skipped <span className="text-ink">{stats.skipped}%</span></span>
+						<span className="hidden text-muted md:inline">skip <span className="text-ink">{stats.skip ? 'on' : 'off'}</span></span>
 					</>
 				) : (
 					<span className="text-muted">stats appear when running</span>

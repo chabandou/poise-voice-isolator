@@ -149,19 +149,65 @@ def test_controls_lock_while_running(window):
     assert window.output_selector._subtitle.text() == subtitle
 
 
-def test_status_messages_drive_headline_and_status_bar(window):
+def test_status_messages_drive_headline_and_status_bar(window, monkeypatch):
     from stream_denoiser.gui.main_window import HOME_TITLES
+    monkeypatch.setenv("POISE_NO_ANIM", "1")       # wording, not motion
     window.update_status("Starting...")
     assert window.home_title.text() == HOME_TITLES["starting"]
+    assert window.stats_bar._state.text() == "starting…"
+    window.update_status("Loading model...")
+    assert window.stats_bar._state.text() == "loading model…"
     window.update_status("Isolating audio")
     assert window.home_title.text() == HOME_TITLES["isolating"]
-    assert window.stats_bar._state.text() == "isolating"
+    assert window.stats_bar._state.text() == "processing"
+    # The worker's loop says "Processing" after that; Home must stay put.
+    window.update_status("Processing")
+    assert window.home_title.text() == HOME_TITLES["isolating"]
+    assert window.stats_bar._state.text() == "processing"
     window.update_status("Error: boom")
     assert window.home_title.text() == HOME_TITLES["error"]
     assert window.status_label.text() == "Error: boom"
     window.update_status("Ready")
     assert window.home_title.text() == HOME_TITLES["ready"]
-    assert window.stats_bar._state.text() == "standby"
+    assert window.stats_bar._state.text() == "ready"
+
+
+def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
+    """Home's headline/status line fade between messages; a burst of
+    messages shows only the newest; the isolating pulse waits its turn."""
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    from stream_denoiser.gui.main_window import HOME_TITLES
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    window._on_page_requested(0)
+    _pump(app)
+    window.update_status("Initializing...")
+    # Mid-fade: the old text is still up, fading out.
+    assert window.home_title.text() == HOME_TITLES["ready"]
+    assert isinstance(window.home_title.graphicsEffect(), QGraphicsOpacityEffect)
+    window.update_status("Loading model...")    # arrives during the fade-out
+    _pump(app, 0.5)
+    assert window.home_title.text() == HOME_TITLES["starting"]
+    assert window.status_label.text() == "Loading model..."
+    assert window.home_title.graphicsEffect() is None   # effect dropped
+    assert window.stats_bar._state.text() == "loading model…"
+
+    # Running: the pulse starts only after "Isolating" has faded in.
+    window.update_status("Isolating audio")
+    window._start_status_pulse()
+    assert window._status_pulse is None and window._status_swap.busy
+    _pump(app, 0.5)
+    assert window.status_label.text() == "Processing"
+    assert window._status_pulse is not None
+    assert window.status_label.graphicsEffect() is window._status_pulse_eff
+
+    # Leaving the isolating line stops the pulse so the swap can fade.
+    window.update_status("Stopping...")
+    assert window._status_pulse is None
+    _pump(app, 0.5)
+    assert window.status_label.text() == "Stopping..."
+    assert window.status_label.graphicsEffect() is None
+    window._stop_status_pulse()
 
 
 def test_home_only_keeps_the_everyday_controls(window):
