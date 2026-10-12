@@ -38,12 +38,19 @@ class HoverSlider(QSlider):
     def __init__(self, orientation=Qt.Orientation.Horizontal, parent=None):
         super().__init__(orientation, parent)
         self.setMouseTracking(True)
+        # No wheel focus: see wheelEvent.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._hoverT = 0.0
         self._hover_target = False
         self._anim = QPropertyAnimation(self, b"hoverT", self)
         self._anim.setDuration(self.DURATION_MS)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.finished.connect(self._finish_hover)
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        """Let the wheel scroll the page instead of nudging the value under
+        the pointer mid-scroll; drag, click and arrow keys still work."""
+        event.ignore()
 
     # -- animated property ------------------------------------------------
     def _get_hoverT(self) -> float:  # noqa: N802 (Qt-style name)

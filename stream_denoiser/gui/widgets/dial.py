@@ -33,6 +33,8 @@ from ..themes import current as current_theme
 ATTEN_STRONG = -50   # most reduction  -> ring full
 ATTEN_GENTLE = -10   # least reduction -> ring empty
 ATTEN_DEFAULT = -40
+WHEEL_STEP = 2          # dB per wheel notch
+WHEEL_STEP_COARSE = 10  # with Ctrl held
 
 REF = 300.0          # design square
 TICKS = 55           # ticks on the arc
@@ -252,7 +254,8 @@ class DialButton(PowerButton):
         steps = int(self._wheel_acc / 120)
         if steps:
             self._wheel_acc -= steps * 120
-            unit = 5 if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) else 1
+            ctrl = event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            unit = WHEEL_STEP_COARSE if ctrl else WHEEL_STEP
             self._user_set_strength(self._strength_db - steps * unit)  # up = stronger
         event.accept()
 

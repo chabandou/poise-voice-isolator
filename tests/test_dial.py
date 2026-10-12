@@ -150,7 +150,12 @@ def test_wheel_up_is_stronger(app):
                      Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
                      Qt.ScrollPhase.NoScrollPhase, False)
     QApplication.sendEvent(btn, ev)
-    assert btn.strength_db() == -31
+    assert btn.strength_db() == -32              # 2 dB per notch
+    ctrl = QWheelEvent(centre, centre, QPoint(0, 0), QPoint(0, -120),
+                       Qt.MouseButton.NoButton, Qt.KeyboardModifier.ControlModifier,
+                       Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(btn, ctrl)
+    assert btn.strength_db() == -22              # 10 dB with Ctrl, down = gentler
     btn.close()
 
 

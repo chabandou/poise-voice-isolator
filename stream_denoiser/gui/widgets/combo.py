@@ -154,6 +154,15 @@ class AnimatedComboBox(QComboBox):
         except Exception:
             pass
         self._prepare_popup_container()
+        # No wheel focus: see wheelEvent.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        """Let the wheel scroll the page. A stock QComboBox swallows it
+        under the pointer (stopping the scroll and silently switching the
+        output device); choosing happens via click or keys instead. The
+        open popup's list still scrolls on its own."""
+        event.ignore()
 
     # -- popup container -------------------------------------------------
     @staticmethod
