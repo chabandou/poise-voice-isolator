@@ -13,6 +13,7 @@ from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 
+from ..audio_gc import gc_paused
 from ..constants import PULSE_TARGET_SR, STATS_PRINT_INTERVAL_SEC
 from ..device_utils import print_stats, print_final_stats
 from ..logging_config import get_logger, get_log_file_path
@@ -73,7 +74,8 @@ def run_pulse_loop(processor,
                    sink: str,
                    should_stop: StopLike = None,
                    on_stats: Optional[Callable[[dict, float], None]] = None,
-                   stats_interval_sec: float = STATS_PRINT_INTERVAL_SEC
+                   stats_interval_sec: float = STATS_PRINT_INTERVAL_SEC,
+                   pause_gc: bool = False,
                    ) -> Tuple[dict, int]:
     """Run the capture -> process -> playback loop.
 
@@ -84,6 +86,8 @@ def run_pulse_loop(processor,
         should_stop: threading.Event, callable, or None.
         on_stats: Optional callback(stats, elapsed_sec) every interval.
         stats_interval_sec: Stats callback cadence.
+        pause_gc: Keep the garbage collector off while the streams are
+            open (only in a process that does nothing else; see audio_gc).
 
     Returns:
         (final_stats, empty_reads). There is no overflow counter:
@@ -120,7 +124,9 @@ def run_pulse_loop(processor,
     start_time = time.time()
     last_stats = start_time
     last_sync_log = start_time
-    with _fast_gil_handoff(), \
+    # The collection before the loop runs before the streams open: once
+    # capture runs, any time spent stays behind as backlog.
+    with gc_paused(pause_gc), _fast_gil_handoff(), \
             PulseCapture(source, block_size) as cap, \
             PulsePlayback(sink, block_size) as play:
         _run_logger.info("sync: node.group=%s", NODE_GROUP)
@@ -211,7 +217,7 @@ def process_with_pulse(processor,
     try:
         final_stats, _ = run_pulse_loop(
             processor, source, sink,
-            should_stop=None, on_stats=_on_stats,
+            should_stop=None, on_stats=_on_stats, pause_gc=True,
         )
     except KeyboardInterrupt:
         print("\n\nStopping...")

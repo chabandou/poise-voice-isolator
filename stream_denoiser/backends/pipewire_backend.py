@@ -20,6 +20,7 @@ from typing import Callable, Optional, Tuple
 
 import numpy as np
 
+from ..audio_gc import gc_paused
 from ..constants import (
     LINUX_BACKENDS,
     PULSE_TARGET_SR,
@@ -307,7 +308,8 @@ def run_pipewire_loop(processor,
                       stats_interval_sec: float = STATS_PRINT_INTERVAL_SEC,
                       route_default: bool = True,
                       node_name: str = PW_NODE_NAME,
-                      description: str = PW_NODE_DESCRIPTION) -> dict:
+                      description: str = PW_NODE_DESCRIPTION,
+                      pause_gc: bool = False) -> dict:
     """Run Poise as a PipeWire node until ``should_stop``.
 
     Args:
@@ -317,6 +319,8 @@ def run_pipewire_loop(processor,
         on_stats: Optional callback(stats, elapsed_sec) every interval.
         stats_interval_sec: Stats callback cadence.
         route_default: Make the Poise sink the default while running.
+        pause_gc: Keep the garbage collector off while frames run (only
+            in a process that does nothing else; see audio_gc).
 
     Returns:
         The processor's final stats.
@@ -354,8 +358,9 @@ def run_pipewire_loop(processor,
                     f"Sink {node_name} did not appear within "
                     f"{SINK_APPEAR_TIMEOUT_SEC:.0f}s ({node.status()})")
             router.switch()
-        _worker_loop(node, processor, should_stop, on_stats,
-                     stats_interval_sec, start_time)
+        with gc_paused(pause_gc):
+            _worker_loop(node, processor, should_stop, on_stats,
+                         stats_interval_sec, start_time)
     finally:
         if router is not None:
             router.restore()
@@ -432,7 +437,7 @@ def process_with_pipewire(processor, sink: Optional[str] = None,
         final_stats = run_pipewire_loop(
             processor, sink=sink, should_stop=None,
             on_stats=lambda stats, elapsed: print_stats(stats, elapsed),
-            route_default=route_default)
+            route_default=route_default, pause_gc=True)
     except KeyboardInterrupt:
         print("\n\nStopping...")
         final_stats = processor.get_stats()
