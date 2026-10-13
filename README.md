@@ -1,5 +1,5 @@
 <div align="center">
-<img src="stream_denoiser/gui/assets/banner.jpg" alt="Poise Banner"/>
+<img src="stream_denoiser/gui/assets/banner_lattice.png" alt="Poise: Take back control." width="100%"/>
 </div>
 
 
