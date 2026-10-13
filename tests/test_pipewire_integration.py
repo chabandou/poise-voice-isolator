@@ -277,3 +277,61 @@ def test_killed_process_leaves_no_sink_behind(out_sink, keep_default,
         if helper.poll() is None:
             helper.kill()
             helper.wait()
+
+
+# --- the audio process ---------------------------------------------------------
+
+def _audio_host():
+    from stream_denoiser.audio_host import AudioHost
+    from stream_denoiser.engines import available_models
+    models = available_models()
+    if not models:
+        pytest.skip("no denoising model available")
+    events = []
+    host = AudioHost(on_event=events.append)
+    config = {"model": models[0], "backend": "pipewire", "node_name": NODE,
+              "description": "Poise PW Test", "route_default": False}
+    return host, events, config
+
+
+def test_audio_process_runs_a_session(out_sink, keep_default):
+    """The node lives in the audio process: it appears, stats come back,
+    and stop removes it. The default sink is left alone here."""
+    import logging
+    from stream_denoiser import audio_gc
+    host, events, config = _audio_host()
+    lines = []
+    handler = logging.Handler(logging.INFO)
+    handler.emit = lambda record: lines.append(record.getMessage())
+    audio_gc._logger.addHandler(handler)
+    try:
+        host.start(dict(config, output_device=out_sink))
+        assert _wait_until(lambda: NODE in _sinks() or not host.running, 15)
+        assert host.running, events
+        assert _wait_until(lambda: host.stats.get("frame_size"), 5)
+        final = host.stop()
+        assert not host.running and "frame_count" in final
+        assert _wait_until(lambda: NODE not in _sinks(), 3)
+        assert [e["event"] for e in events if e["event"] != "ready"] \
+            == ["running", "stopped"]
+        # The child's gc line, forwarded to this process.
+        assert any(l.startswith("gc: off for the run") for l in lines)
+        assert _default() == keep_default
+    finally:
+        audio_gc._logger.removeHandler(handler)
+        host.shutdown()
+
+
+def test_killed_audio_process_ends_the_session(out_sink, keep_default):
+    from stream_denoiser.audio_host import CRASH_NOTICE
+    host, events, config = _audio_host()
+    try:
+        host.start(dict(config, output_device=out_sink))
+        assert _wait_until(lambda: NODE in _sinks() or not host.running, 15)
+        os.kill(host.pid, signal.SIGKILL)
+        assert _wait_until(lambda: not host.running, 5)
+        assert [e["event"] for e in events][-2:] == ["error", "stopped"]
+        assert events[-2]["notice"] == CRASH_NOTICE
+        assert _wait_until(lambda: NODE not in _sinks(), 3)
+    finally:
+        host.shutdown()

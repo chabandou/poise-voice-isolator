@@ -48,6 +48,10 @@ DEFAULT_BACKUP_COUNT = 3
 MEMORY_LOG_MAX_LINES = 2000
 _memory_handler: Optional["MemoryLogHandler"] = None
 
+# Further handlers attached to every logger (the audio process forwards
+# its records to the UI process this way; see forward_records()).
+_forward_handlers: list[logging.Handler] = []
+
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 
@@ -157,6 +161,14 @@ def get_log_file_path() -> Optional[str]:
 def get_file_handler() -> Optional[logging.Handler]:
     """The shared file handler, if file logging is active."""
     return _file_handler
+
+
+def forward_records(handler: logging.Handler) -> None:
+    """Attach ``handler`` to every logger, now and from get_logger() on."""
+    if handler not in _forward_handlers:
+        _forward_handlers.append(handler)
+    for logger in _loggers.values():
+        _attach(logger, handler)
 
 
 def _coerce_level(level: Union[int, str]) -> int:
@@ -408,6 +420,11 @@ def enable_crash_traceback() -> Optional[str]:
         return None
 
 
+def get_crash_log_path() -> Optional[str]:
+    """Path of the crash log enable_crash_traceback() opened, or None."""
+    return _crash_file.name if _crash_file is not None else None
+
+
 class MemoryLogHandler(logging.Handler):
     """Keeps the most recent formatted records in memory.
 
@@ -567,6 +584,8 @@ def get_logger(name: str) -> logging.Logger:
             logger.setLevel(_file_handler.level)
     if _memory_handler is not None:
         _attach(logger, _memory_handler)
+    for handler in _forward_handlers:
+        _attach(logger, handler)
 
     _loggers[name] = logger
     return logger

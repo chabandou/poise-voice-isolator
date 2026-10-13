@@ -245,6 +245,43 @@ def find_monitor_source_pulsectl() -> Optional[PulseAudioSource]:
         return None
 
 
+def wait_for_source(name: str, timeout_sec: float = 3.0,
+                    poll_interval_sec: float = 0.05) -> Optional[str]:
+    """Wait for a source (the null sink's monitor) to appear at Pulse level.
+
+    Polls ``pulsectl.source_list()`` for the exact name, e.g.
+    ``Poise_Capture.monitor``. Returns the source name when found, else
+    None after ``timeout_sec``. Fail fast: callers must not fall back to
+    the default input (that would capture silence while the default sink
+    points at the null sink).
+    """
+    if not USE_PULSECTL:
+        # Without pulsectl we cannot confirm; trust the expected name
+        # so offline tests can proceed, real runs need pulsectl anyway.
+        return name
+    deadline = time.monotonic() + max(0.0, timeout_sec)
+    while True:
+        try:
+            import pulsectl
+            with pulsectl.Pulse('denoiser-router-wait') as pulse:
+                names = {s.name for s in pulse.source_list()}
+            if name in names:
+                return name
+        except Exception as e:
+            _logger.debug(f"Monitor wait poll failed: {e}")
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(max(0.005, poll_interval_sec))
+    _logger.warning(
+        "Null sink monitor '%s' did not appear at the PulseAudio "
+        "level within %.1fs. Not starting: capturing the default input "
+        "instead would record silence. Fixes: check pavucontrol/PipeWire "
+        "Pulse backend, or use --no-vb-cable to keep default capture.",
+        name, timeout_sec,
+    )
+    return None
+
+
 class LinuxAudioRouter:
     """
     Automatic audio routing for Linux using PulseAudio/PipeWire.
@@ -371,41 +408,11 @@ class LinuxAudioRouter:
 
     def wait_for_monitor_source(self, timeout_sec: float = 3.0,
                                 poll_interval_sec: float = 0.05) -> Optional[str]:
-        """Wait for the null sink's monitor source to appear at Pulse level.
-
-        Polls ``pulsectl.source_list()`` for the exact name
-        ``Poise_Capture.monitor``. Returns the source name when found,
-        else None after ``timeout_sec``. Fail fast: callers must not fall
-        back to the default input (that would capture silence while the
-        default sink points at the null sink).
-        """
+        """Wait for the null sink's monitor source (see wait_for_source)."""
         if not self._monitor_source:
             return None
-        if not USE_PULSECTL:
-            # Without pulsectl we cannot confirm; trust the expected name
-            # so offline tests can proceed, real runs need pulsectl anyway.
-            return self._monitor_source
-        deadline = time.monotonic() + max(0.0, timeout_sec)
-        while True:
-            try:
-                import pulsectl
-                with pulsectl.Pulse('denoiser-router-wait') as pulse:
-                    names = {s.name for s in pulse.source_list()}
-                if self._monitor_source in names:
-                    return self._monitor_source
-            except Exception as e:
-                _logger.debug(f"Monitor wait poll failed: {e}")
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(max(0.005, poll_interval_sec))
-        _logger.warning(
-            "Null sink monitor '%s' did not appear at the PulseAudio "
-            "level within %.1fs. Not starting: capturing the default input "
-            "instead would record silence. Fixes: check pavucontrol/PipeWire "
-            "Pulse backend, or use --no-vb-cable to keep default capture.",
-            self._monitor_source, timeout_sec,
-        )
-        return None
+        return wait_for_source(self._monitor_source, timeout_sec,
+                               poll_interval_sec)
 
     def restore_original_sink(self) -> bool:
         """Restore the original default sink and clean up null sink."""

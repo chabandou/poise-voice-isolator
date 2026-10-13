@@ -10,16 +10,26 @@ import signal
 import time
 from pathlib import Path
 from typing import Optional
-import threading
 
 from textual.app import App, ComposeResult
+from textual.message import Message
 from textual.widgets import Header, Footer, Rule, Static
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
 from .widgets import DeviceList, StatsPanel, StatusLine
-from ..constants import DEFAULT_MODEL, DEFAULT_FRAME_SIZE, PULSE_TARGET_SR
+from ..audio_host import AudioHost
+from ..constants import DEFAULT_MODEL
 from ..logging_config import set_tui_mode, get_log_file_path
+
+
+class AudioEvent(Message):
+    """An event from the audio process (see audio_host), posted to the app
+    from the host's reader thread."""
+
+    def __init__(self, data: dict) -> None:
+        super().__init__()
+        self.data = data
 
 
 class PoiseApp(App):
@@ -43,14 +53,15 @@ class PoiseApp(App):
         super().__init__(**kwargs)
         self.model = model
         self.is_processing = False
-        self.processor = None
         self.engine = None
         self.onnx_session = None  # Backward-compat alias (unused for rnnoise)
         self.linux_router = None
         self.backend: Optional[str] = None  # "pipewire" or "pulse", per run
-        self.processing_thread: Optional[threading.Thread] = None
-        self.stop_event = threading.Event()
+        # The audio loop runs in its own process (own GIL and garbage
+        # collector), spawned at mount so Start does not wait for imports.
+        self.audio = AudioHost(on_event=self._post_audio_event)
         self.start_time = 0.0
+        self._audio_error: Optional[str] = None
         self._cleanup_done = False
         self._last_perf_log = 0.0
         self._setup_logging()
@@ -130,12 +141,13 @@ class PoiseApp(App):
         if self._cleanup_done:
             return
         self._cleanup_done = True
-        
-        # Stop processing thread
-        self.stop_event.set()
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=1.0)
-        
+
+        # End the audio process (its session restores the routing it set)
+        try:
+            self.audio.shutdown(timeout=1.0)
+        except Exception:
+            pass
+
         # Restore audio routing
         if self.linux_router:
             try:
@@ -196,6 +208,13 @@ class PoiseApp(App):
         """Called when app is mounted."""
         # Log session header to file (Linux only) for remote diagnosis
         self._log_session_header()
+
+        try:
+            self.audio.launch()
+        except Exception as e:
+            # Start tries again and reports the failure.
+            logging.getLogger("stream_denoiser").warning(
+                "Could not start the audio process: %s", e)
 
         # Load ONNX model
         self._load_model()
@@ -279,6 +298,12 @@ class PoiseApp(App):
         except Exception:
             pass
 
+    def check_action(self, action: str, parameters) -> bool | None:
+        """Dim the model switch in the footer while processing."""
+        if action == "cycle_model" and self.is_processing:
+            return None
+        return True
+
     def action_cycle_model(self) -> None:
         """Open the model picker (blocked while running)."""
         status_line = self.query_one("#status-line", StatusLine)
@@ -335,9 +360,8 @@ class PoiseApp(App):
         new_threshold = max(-80.0, min(0.0, aad_panel.threshold_db + delta))
         aad_panel.set_threshold(new_threshold)
         
-        # Update processor if running
-        if self.processor and self.processor.aad:
-            self.processor.aad.set_threshold(new_threshold)
+        # Update the running session (the next one starts with the panel's)
+        self.audio.set(aad_threshold_db=new_threshold)
         
         status_line = self.query_one("#status-line", StatusLine)
         status_line.notify(f"AAD threshold: {new_threshold:.1f} dB")
@@ -363,8 +387,8 @@ class PoiseApp(App):
         self.query_one("#stats-panel", StatsPanel).set_running(True)
         
         # Backend: the PipeWire node when available (fixed delay; it routes
-        # itself from the processing thread), else pulse-simple through
-        # the null sink set up here.
+        # itself from the audio process), else pulse-simple through the
+        # null sink set up here.
         try:
             from ..backends.pipewire_backend import (
                 linux_backend_preference, select_linux_backend)
@@ -395,69 +419,74 @@ class PoiseApp(App):
             except ImportError:
                 status_line.notify("Linux router not available.", "warning")
         
-        # Start processing in background thread
-        self.stop_event.clear()
+        # Start the session in the audio process. Linux input is always
+        # 48000 Hz; the audio process resolves pulse-simple's source and
+        # sink (waiting for the null sink's monitor to appear).
+        from .widgets import AADPanel
+        router = self.linux_router
+        config = {
+            "model": self.model,
+            "backend": self.backend,
+            "output_device": output_device or None,
+            "aad_threshold_db": self.query_one(
+                "#aad-panel", AADPanel).threshold_db,
+            "routed": router is not None,
+            "monitor_source": (router.get_monitor_source_name()
+                               if router else None),
+            "fallback_sink": router.original_sink_name if router else None,
+        }
         self.start_time = time.time()
         self._last_perf_log = 0.0
-        self._input_overflows = 0
-        self._empty_reads = 0
-        self.processing_thread = threading.Thread(
-            target=self._processing_loop,
-            args=(output_device,),
-            daemon=True
-        )
-        self.processing_thread.start()
-        
+        self._audio_error = None
+        try:
+            self.audio.start(config)
+        except Exception as e:
+            logging.getLogger("stream_denoiser").error(
+                "Cannot start: %s", e)
+            status_line.notify("Cannot start: audio process unavailable.",
+                               "error")
+            if self.linux_router:
+                self.linux_router.restore_original_sink()
+                self.linux_router = None
+            self.screen.remove_class("-running")
+            stats_panel.set_running(False)
+            return
+
         self.is_processing = True
+        self.refresh_bindings()
         status_line.set_running(True)
     
     def _stop_processing(self) -> None:
         """Stop audio processing."""
         status_line = self.query_one("#status-line", StatusLine)
-        stats_panel = self.query_one("#stats-panel", StatsPanel)
         
         status_line.notify("Stopping audio processing...")
         
-        # Signal thread to stop
-        self.stop_event.set()
-        
-        # Wait for thread to finish
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
+        # End the session; returns once the audio process has closed its
+        # streams and restored the routing it owns (the PipeWire node's).
+        final = self.audio.stop()
         
         # Restore audio routing
         if self.linux_router:
             self.linux_router.restore_original_sink()
             self.linux_router = None
         
-        # Mark cleanup as done to prevent double cleanup from atexit/signals
-        self._cleanup_done = True
-        
         self.is_processing = False
-        if self.processor is not None:
-            try:
-                import logging as _logging
-                try:
-                    _stats = self.processor.get_stats()
-                    _logging.getLogger("stream_denoiser").info(
-                        "run stop: frames=%s avg_ms=%.2f rtf=%.3f "
-                        "aad_total=%s aad_bypassed=%s bypass_ratio=%.2f "
-                        "overflows=%s empty_reads=%s elapsed=%.1fs log=%s",
-                        _stats.get("frame_count"), _stats.get("avg_time_ms", 0.0),
-                        _stats.get("rtf", 0.0), _stats.get("aad_total"),
-                        _stats.get("aad_bypassed"),
-                        _stats.get("aad_bypass_ratio", 0.0),
-                        getattr(self, "_input_overflows", 0),
-                        getattr(self, "_empty_reads", 0),
-                        time.time() - self.start_time if self.start_time else 0.0,
-                        get_log_file_path(),
-                    )
-                except Exception:
-                    pass
-                self.processor.close()
-            except Exception:
-                pass
-            self.processor = None
+        self.refresh_bindings()
+        if final.get("frame_count") is not None:
+            logging.getLogger("stream_denoiser").info(
+                "run stop: frames=%s avg_ms=%.2f rtf=%.3f "
+                "aad_total=%s aad_bypassed=%s bypass_ratio=%.2f "
+                "overflows=%s empty_reads=%s elapsed=%.1fs log=%s",
+                final.get("frame_count"), final.get("avg_time_ms", 0.0),
+                final.get("rtf", 0.0), final.get("aad_total"),
+                final.get("aad_bypassed"),
+                final.get("aad_bypass_ratio", 0.0),
+                0,  # neither backend can report overruns
+                final.get("empty_reads", 0),
+                time.time() - self.start_time if self.start_time else 0.0,
+                get_log_file_path(),
+            )
         status_line.set_running(False)
         self.screen.remove_class("-running")
         self.query_one("#stats-panel", StatsPanel).set_running(False)
@@ -470,189 +499,34 @@ class PoiseApp(App):
         except Exception:
             pass
 
-    def _notify_status_from_thread(self, message: str, level: str = "error") -> None:
-        """Thread-safe wrapper for background threads (never a log record)."""
-        try:
-            self.call_from_thread(self._notify_status, message, level)
-        except Exception:
-            pass
+    def _post_audio_event(self, data: dict) -> None:
+        """AudioHost callback (its reader thread): hand over to the app."""
+        self.post_message(AudioEvent(data))
 
-    def _abort_startup(self) -> None:
-        """Reset running state after a background-thread startup failure.
-
-        Runs on the UI thread (scheduled via call_from_thread): tears down
-        the null-sink routing and running UI state without joining the
-        current processing thread (which has already returned).
-        """
-        if self.is_processing:
+    def on_audio_event(self, message: AudioEvent) -> None:
+        """Errors get a short status note (the log has the detail); a
+        session that ended on its own (error, crash) resets the UI."""
+        kind = message.data.get("event")
+        if kind == "error":
+            self._audio_error = (message.data.get("notice")
+                                 or "Audio error. See log for details.")
+            self._notify_status(self._audio_error, "error")
+        elif kind == "stopped" and self.is_processing \
+                and not self.audio.running:
             self._stop_processing()
-
-    def _processing_loop(self, output_device: Optional[str]) -> None:
-        """Audio processing loop (runs in background thread).
-
-        Linux input is always 48000 Hz via pulse-simple; the shared
-        pulse loop (also used by the CLI) owns the read/process/write
-        body so the two paths cannot diverge.
-        """
-        try:
-            from ..processor import DenoiserAudioProcessor
-            from ..engines import create_engine
-            from ..backends.pulse_backend import run_pulse_loop
-
-            # Create a fresh engine per run (engines hold streaming state)
-            engine = create_engine(self.model)
-            # Create processor (frame size follows the engine)
-            self.processor = DenoiserAudioProcessor(
-                engine,
-                target_sr=PULSE_TARGET_SR,
-                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_aad=True,
-                aad_threshold_db=-40.0
-            )
-
-            if self.backend == "pipewire":
-                self._run_pipewire(output_device)
-                return
-
-            # Resolve the capture source by name. Fail fast when the
-            # monitor is not visible at the Pulse level: opening the
-            # default input instead would capture silence while the
-            # default sink points at the null sink (100% AAD bypass).
-            import logging as _early_logging
-            _early_run_logger = _early_logging.getLogger('stream_denoiser')
-            source = None
-            if self.linux_router:
-                try:
-                    _monitor_name = self.linux_router.get_monitor_source_name()
-                except Exception:
-                    _monitor_name = None
-                if _monitor_name:
-                    source = self.linux_router.wait_for_monitor_source()
-                    if source is None:
-                        _early_run_logger.error(
-                            "Null sink monitor '%s' not visible at the "
-                            "PulseAudio level. Not starting: capturing the "
-                            "default input instead would record silence. "
-                            "Fixes: check pavucontrol/PipeWire Pulse backend, "
-                            "or restart without auto-routing.",
-                            _monitor_name,
-                        )
-                        self._notify_status_from_thread(
-                            "Capture device not found. See log for fixes.", "error"
-                        )
-                        try:
-                            self.call_from_thread(self._abort_startup)
-                        except Exception:
-                            pass
-                        return
-                else:
-                    _early_run_logger.error(
-                        "Audio routing did not provide a monitor source.")
-                    self._notify_status_from_thread(
-                        "Capture device not found. See log for fixes.", "error"
-                    )
-                    try:
-                        self.call_from_thread(self._abort_startup)
-                    except Exception:
-                        pass
-                    return
-            else:
-                # No router (e.g. --no-vb-cable path): capture the default
-                # sink's monitor.
-                try:
-                    from ..backends.platform.linux import (
-                        find_monitor_source_pulsectl)
-                    _found = find_monitor_source_pulsectl()
-                    source = _found.name if _found else None
-                except Exception:
-                    source = None
-                if source is None:
-                    _early_run_logger.error("No PulseAudio monitor source found.")
-                    self._notify_status_from_thread(
-                        "Capture device not found. See log for fixes.", "error"
-                    )
-                    try:
-                        self.call_from_thread(self._abort_startup)
-                    except Exception:
-                        pass
-                    return
-
-            # Resolve the playback sink by name: explicit TUI selection
-            # wins, else the real hardware sink saved at routing setup,
-            # else the current default sink.
-            sink = output_device
-            if not sink:
-                try:
-                    sink = (self.linux_router.original_sink_name
-                            if self.linux_router else None)
-                except Exception:
-                    sink = None
-            if not sink:
-                try:
-                    from ..backends.platform.linux import get_default_sink_name
-                    sink = get_default_sink_name()
-                except Exception:
-                    sink = None
-            if not sink:
-                _early_run_logger.error("No PulseAudio sink found for playback.")
-                self._notify_status_from_thread(
-                    "Playback device not found. See log for fixes.", "error"
-                )
-                try:
-                    self.call_from_thread(self._abort_startup)
-                except Exception:
-                    pass
-                return
-
-            # Shared loop owns the run-start log line (source, sink,
-            # backend=pulse-simple, server name) and the read/process/write
-            # body. Stats reach the panel via the _update_stats timer.
-            _final, _empty = run_pulse_loop(
-                self.processor, source, sink,
-                should_stop=self.stop_event,
-                on_stats=None,
-            )
-            self._input_overflows = 0  # pa_simple cannot report overruns
-            self._empty_reads = _empty
-
-        except Exception as e:
-            # File log holds the full detail; the status line gets only a
-            # short UX-friendly note (never the raw record/traceback).
-            import logging
-            import traceback
-            logging.getLogger('stream_denoiser').error(f"Processing error: {e}")
-            logging.getLogger('stream_denoiser').debug(traceback.format_exc())
-            self._notify_status_from_thread(
-                "Audio error. See log for details.", "error"
-            )
-    
-    def _run_pipewire(self, output_device: Optional[str]) -> None:
-        """PipeWire node run (processing thread). The node makes the Poise
-        sink the default and restores the old one when it stops."""
-        from ..backends.pipewire_backend import run_pipewire_loop
-        try:
-            run_pipewire_loop(self.processor, output_device or None,
-                              should_stop=self.stop_event)
-        except Exception as e:
-            import traceback
-            _log = logging.getLogger('stream_denoiser')
-            _log.error(f"Processing error: {e}")
-            _log.debug(traceback.format_exc())
-            self._notify_status_from_thread(
-                "Audio error. See log for details.", "error")
-            try:
-                self.call_from_thread(self._abort_startup)
-            except Exception:
-                pass
+            if self._audio_error:
+                # Keep the reason up rather than "Processing stopped."
+                self._notify_status(self._audio_error, "error")
 
     def _update_stats(self) -> None:
         """Update stats display (called periodically)."""
-        if not self.is_processing or self.processor is None:
+        # Sent by the audio process every 0.5 s; empty until the first.
+        stats = self.audio.stats
+        if not self.is_processing or not stats:
             return
         
         try:
             stats_panel = self.query_one("#stats-panel", StatsPanel)
-            stats = self.processor.get_stats()
             running_time = time.time() - self.start_time
             stats_panel.update_stats(stats, running_time)
             # Throttled file snapshot (~every 5s): distinguishes AAD-bypass
@@ -660,9 +534,7 @@ class PoiseApp(App):
             now = time.monotonic()
             if now - getattr(self, "_last_perf_log", 0.0) >= 5.0:
                 self._last_perf_log = now
-                import logging as _logging
-                _diag = self.processor.get_diagnostics()
-                _logging.getLogger("stream_denoiser").info(
+                logging.getLogger("stream_denoiser").info(
                     "perf: frames=%s avg_ms=%.2f rtf=%.3f aad_total=%s "
                     "aad_active=%s aad_bypassed=%s bypass_ratio=%.2f "
                     "overflows=%s empty_reads=%s elapsed=%.1fs "
@@ -671,11 +543,11 @@ class PoiseApp(App):
                     stats.get("rtf", 0.0), stats.get("aad_total"),
                     stats.get("aad_active"), stats.get("aad_bypassed"),
                     stats.get("aad_bypass_ratio", 0.0),
-                    getattr(self, "_input_overflows", 0),
-                    getattr(self, "_empty_reads", 0), running_time,
-                    _diag.get("input_block_size"),
-                    _diag.get("resampler_backlog"),
-                    _diag.get("resampler_dropped"),
+                    0, 0,  # only known at the end of a run (run stop line)
+                    running_time,
+                    stats.get("input_block_size"),
+                    stats.get("resampler_backlog"),
+                    stats.get("resampler_dropped"),
                 )
         except Exception:
             pass
@@ -684,4 +556,5 @@ class PoiseApp(App):
         """Quit the application."""
         if self.is_processing:
             self._stop_processing()
+        self.audio.shutdown()
         self.exit()
