@@ -2,6 +2,7 @@ Claude_optimized_inf.py
 analyze_model.py
 stream_gtcrn_RT_Cld.py
 .cursor/
+.claude/
 __pycache__/
 dist/
 build/
