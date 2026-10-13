@@ -17,6 +17,7 @@ from textual.widgets import Header, Footer, Rule, Static
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
+from .settings import TuiSettings
 from .widgets import DeviceList, StatsPanel, StatusLine
 from ..audio_host import AudioHost
 from ..constants import DEFAULT_MODEL
@@ -49,9 +50,12 @@ class PoiseApp(App):
         Binding("q", "quit", "Quit"),
     ]
     
-    def __init__(self, model: str = DEFAULT_MODEL, **kwargs):
+    def __init__(self, model: Optional[str] = None, **kwargs):
+        """model: an explicit choice (--model) for this session only;
+        None uses the last model picked, else the default."""
         super().__init__(**kwargs)
-        self.model = model
+        self.settings = TuiSettings()
+        self.model = model or self._saved_model()
         self.is_processing = False
         self.engine = None
         self.onnx_session = None  # Backward-compat alias (unused for rnnoise)
@@ -198,9 +202,13 @@ class PoiseApp(App):
         
         with Vertical(id="main-container"):
             with Horizontal(id="panels-container"):
-                yield DeviceList(id="device-panel")
+                yield DeviceList(preferred=self.settings.output_device,
+                                 id="device-panel")
                 yield StatsPanel(id="stats-panel")
-                yield AADPanel(id="aad-panel")
+                threshold = self.settings.aad_threshold_db
+                yield AADPanel(
+                    threshold_db=-40.0 if threshold is None else threshold,
+                    id="aad-panel")
         
         yield Footer()
     
@@ -256,6 +264,14 @@ class PoiseApp(App):
             _ver, self.model, models, self._cpu_model(), sys.platform, path,
         )
     
+    def _saved_model(self) -> str:
+        """The last model picked, if this machine can still run it."""
+        from ..engines import model_unavailable_reason
+        saved = self.settings.model
+        if saved and model_unavailable_reason(saved) is None:
+            return saved
+        return DEFAULT_MODEL
+
     def _load_model(self) -> None:
         """Validate the selected denoising engine is available."""
         status_line = self.query_one("#status-line", StatusLine)
@@ -321,12 +337,16 @@ class PoiseApp(App):
 
     def _on_model_picked(self, model_id) -> None:
         """Validate and apply the model chosen in the picker."""
-        if not model_id or model_id == self.model:
+        if not model_id:
             return
-        status_line = self.query_one("#status-line", StatusLine)
-        self.model = model_id
-        self._load_model()
-        status_line.notify(f"Model: {model_id}")
+        if model_id != self.model:
+            self.model = model_id
+            self._load_model()
+            self.query_one("#status-line", StatusLine).notify(
+                f"Model: {model_id}")
+        # Remember it only if it loads, so the next start does not fail.
+        if self.engine is not None:
+            self.settings.model = model_id
     
     def action_toggle_processing(self) -> None:
         """Toggle audio processing on/off."""
@@ -342,6 +362,9 @@ class PoiseApp(App):
         
         status_line = self.query_one("#status-line", StatusLine)
         status_line.notify("Devices refreshed")
+
+    def on_device_list_picked(self, event: DeviceList.Picked) -> None:
+        self.settings.output_device = event.sink_name
     
     def action_increase_threshold(self) -> None:
         """Increase AAD threshold (less sensitive)."""
@@ -359,6 +382,7 @@ class PoiseApp(App):
         # Clamp threshold between -80 and 0 dB
         new_threshold = max(-80.0, min(0.0, aad_panel.threshold_db + delta))
         aad_panel.set_threshold(new_threshold)
+        self.settings.aad_threshold_db = new_threshold
         
         # Update the running session (the next one starts with the panel's)
         self.audio.set(aad_threshold_db=new_threshold)

@@ -3,6 +3,7 @@ Device List Widget
 
 Displays available PulseAudio output sinks (by name) with selection.
 """
+from textual.message import Message
 from textual.widgets import Static, ListView, ListItem, Label
 from textual.containers import Vertical
 from textual.reactive import reactive
@@ -34,8 +35,17 @@ class DeviceList(Static):
 
     selected_device: reactive[Optional[str]] = reactive(None)
 
-    def __init__(self, **kwargs) -> None:
+    class Picked(Message):
+        """The user picked a sink (not posted for the automatic choice)."""
+
+        def __init__(self, sink_name: str) -> None:
+            super().__init__()
+            self.sink_name = sink_name
+
+    def __init__(self, preferred: Optional[str] = None, **kwargs) -> None:
         super().__init__(**kwargs)
+        # The sink to select whenever it is present (the last one picked).
+        self.preferred = preferred
         self.devices: List[Tuple[str, str]] = []  # (sink_name, description)
         self.border_title = "\\[ OUTPUT DEVICES ]"
 
@@ -75,11 +85,14 @@ class DeviceList(Static):
                 self.devices.append((sink.name, sink.description))
                 list_view.append(DeviceListItem(sink.name, sink.description))
 
-            # Default to the original default sink, else the first sink.
+            # Prefer the last picked sink, then the original default sink,
+            # else the first sink.
             selected = None
             if self.devices:
                 names = [name for name, _ in self.devices]
-                if default_sink in names:
+                if self.preferred in names:
+                    selected = self.preferred
+                elif default_sink in names:
                     selected = default_sink
                 else:
                     selected = names[0]
@@ -104,6 +117,8 @@ class DeviceList(Static):
         """Handle sink selection."""
         if isinstance(event.item, DeviceListItem):
             self.selected_device = event.item.sink_name
+            self.preferred = event.item.sink_name
+            self.post_message(self.Picked(event.item.sink_name))
             # Show feedback in status line
             try:
                 from .status_line import StatusLine

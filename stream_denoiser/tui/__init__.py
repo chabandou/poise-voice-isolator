@@ -22,9 +22,10 @@ def main(argv=None):
         enable_crash_traceback,
     )
     parser = argparse.ArgumentParser(description='Poise Voice Isolator TUI')
-    parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+    parser.add_argument('--model', type=str, default=None,
                         choices=list(ALL_MODELS),
-                        help=f'Denoising engine to use (default: {DEFAULT_MODEL})')
+                        help=f'Denoising engine for this session (default: '
+                             f'the last one picked, else {DEFAULT_MODEL})')
     parser.add_argument('--backend', type=str, default=None,
                         choices=list(LINUX_BACKENDS),
                         help='Audio backend: auto (default) runs Poise as a '

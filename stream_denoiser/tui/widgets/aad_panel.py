@@ -26,8 +26,9 @@ class AADPanel(Static):
     MIN_DB = -80.0
     MAX_DB = 0.0
     
-    def __init__(self, **kwargs):
+    def __init__(self, threshold_db: float = -40.0, **kwargs):
         super().__init__(**kwargs)
+        self.set_reactive(AADPanel.threshold_db, threshold_db)
         self.border_title = "\[ AUDIO DETECTOR ]"
     
     def compose(self):
@@ -40,12 +41,12 @@ class AADPanel(Static):
             # Threshold row with value
             with Horizontal(classes="aad-row"):
                 yield Static("Threshold", classes="aad-label")
-                yield Static("-40.0 dB", classes="aad-value", id="aad-threshold-value")
+                yield Static(f"{self.threshold_db:.1f} dB", classes="aad-value", id="aad-threshold-value")
             
             # Visual bar
             with Horizontal(classes="aad-row"):
                 yield Static("", classes="aad-label")  # spacer
-                yield Static(self._render_bar(-40.0), classes="aad-bar", id="aad-threshold-bar")
+                yield Static(self._render_bar(self.threshold_db), classes="aad-bar", id="aad-threshold-bar")
             
             # Key hints
             with Horizontal(classes="aad-row"):
