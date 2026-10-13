@@ -16,6 +16,7 @@ except (ImportError, OSError):
 from ..constants import STATS_PRINT_INTERVAL_SEC
 from ..processor import DenoiserAudioProcessor
 from ..logging_config import get_logger
+from ..sync import StallCounter
 from ..device_utils import (
     find_loopback_device, 
     get_output_device_id, 
@@ -24,17 +25,80 @@ from ..device_utils import (
     print_final_stats
 )
 
+# Cadence of the "sync:" file-log line.
+SYNC_LOG_INTERVAL_SEC = 30.0
+
+
+class PortAudioSyncLog:
+    """"sync:" log lines for the PortAudio loop (the fallback path).
+
+    PortAudio's blocking WASAPI streams report neither overflows nor
+    underflows (measured: a 300 ms stall flagged nothing while the audio
+    of it was lost), so losses are inferred from time: StallCounter
+    compares the audio the loop got through with the wall time that
+    passed. Capture backlog and output queue come from read_available
+    and write_available, logged as their range over the interval.
+    """
+
+    def __init__(self, input_stream, output_stream, block_ms: float,
+                 input_sr: int, output_sr: int):
+        self._in, self._out = input_stream, output_stream
+        self._in_ms = 1000.0 / input_sr
+        self._out_ms = 1000.0 / output_sr
+        # Output buffer size: the stream's latency is its length; before
+        # the first write (unless primed) it is all free.
+        self._out_size = max(
+            output_stream.write_available,
+            int(round(output_stream.latency * output_sr)))
+        self.stalls = StallCounter(block_ms)
+        self._logger = get_logger(__name__)
+        self._last = None
+        self._reset()
+
+    def _reset(self):
+        self._backlog = [float("inf"), 0.0]
+        self._queue = [float("inf"), 0.0]
+
+    def observe(self, now: float) -> None:
+        """Call once per loop iteration (monotonic seconds)."""
+        stall = self.stalls.observe(now)
+        if stall:
+            self._logger.info("sync: loop stalled %.0f ms (audio lost)",
+                              stall)
+        try:
+            backlog = self._in.read_available * self._in_ms
+            queue = (self._out_size - self._out.write_available) * self._out_ms
+        except Exception:
+            return
+        for rng, v in ((self._backlog, backlog), (self._queue, queue)):
+            rng[0], rng[1] = min(rng[0], v), max(rng[1], v)
+        if self._last is None:
+            self._last = now
+        elif now - self._last >= SYNC_LOG_INTERVAL_SEC:
+            self._logger.info(
+                "sync: backend=portaudio capture_backlog=%.0f-%.0fms "
+                "output_queue=%.0f-%.0fms stalls=%d max_stall=%.0fms "
+                "lost=%.0fms", *self._backlog, *self._queue,
+                self.stalls.count, self.stalls.max_ms, self.stalls.lost_ms)
+            self._last = now
+            self._reset()
+
 
 def process_with_sounddevice(processor: DenoiserAudioProcessor, 
                              input_device: Optional[int] = None, 
-                             output_device: Optional[int] = None) -> None:
+                             output_device: Optional[int] = None,
+                             backend: Optional[str] = None) -> None:
     """
-    Process system audio using sounddevice for both input and output.
-    
+    Process system audio from CABLE Output to the output device.
+
+    Runs on the native WASAPI path when available (see wasapi_backend),
+    else on PortAudio blocking streams.
+
     Args:
         processor: DenoiserAudioProcessor instance
         input_device: Input device ID (optional)
         output_device: Output device ID (optional)
+        backend: "auto", "wasapi" or "portaudio"; None reads POISE_BACKEND
     """
     if not USE_SOUNDDEVICE:
         raise RuntimeError("This mode requires sounddevice library")
@@ -70,6 +134,27 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
     
     input_device_info = sd.query_devices(input_dev_id)
     output_device_info = sd.query_devices(output_dev_id)
+
+    # Native path first: fixed delay, clocks bridged, no Python in the
+    # audio thread. PortAudio stays as the fallback.
+    from .wasapi_backend import (
+        WasapiStartError, process_with_wasapi, select_windows_backend,
+        windows_backend_preference)
+    preference = windows_backend_preference(backend)
+    chosen, reason = select_windows_backend(preference)
+    get_logger(__name__).info("Windows backend: %s (%s)", chosen, reason)
+    if chosen == "wasapi":
+        try:
+            process_with_wasapi(processor, input_device_info['name'],
+                                output_device_info['name'])
+            return
+        except WasapiStartError as e:
+            if preference == "wasapi":
+                raise
+            get_logger(__name__).warning(
+                "Native audio path did not start (%s); using PortAudio", e)
+            print(f"Warning: native audio path did not start ({e}); "
+                  "using PortAudio")
     
     input_sr = int(input_device_info['default_samplerate'])
     
@@ -170,6 +255,10 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
             # Reused stereo buffer with one sample of headroom: output takes
             # dither around out_block_size (e.g. 470/471 averaging 470.4).
             stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
+            sync_log = PortAudioSyncLog(
+                input_stream, output_stream,
+                block_ms=processor.frame_size * 1000.0 / processor.target_sr,
+                input_sr=input_sr, output_sr=int(output_stream.samplerate))
             while True:
                 # Read audio chunk. The size is dithered around the
                 # rate-scaled block so it resamples to ~one frame on average.
@@ -203,6 +292,7 @@ def process_with_sounddevice(processor: DenoiserAudioProcessor,
                     stereo_output[:n, 0] = audio_output[:n]
                     stereo_output[:n, 1] = audio_output[:n]
                     output_stream.write(stereo_output[:n])
+                sync_log.observe(time.monotonic())
                 
                 # Print stats
                 current_time = time.time()

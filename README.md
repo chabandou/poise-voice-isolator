@@ -269,6 +269,15 @@ pip install samplerate
 make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
 ```
 
+4. Windows: the native audio path, `poise_wasapi.dll` (CABLE Output to
+   the speakers with a fixed delay, on an MMCSS thread). Cross-compiled
+   with mingw-w64 like `rnnoise.dll`; without it Poise falls back to
+   PortAudio streams (`POISE_BACKEND=portaudio` forces that).
+
+```bash
+make -C native/poise_wasapi    # -> stream_denoiser/native/poise_wasapi.dll
+```
+
 #### Usage
 
 ##### CLI Mode
@@ -357,7 +366,9 @@ stream_denoiser/
 │   ├── pipewire_backend.py  # Linux: Poise as a PipeWire node (default)
 │   ├── pipewire_node.py     # ctypes binding for libpoise_pw.so (native/poise_pw)
 │   ├── pulse_backend.py     # Linux fallback: pulse-simple loop
-│   ├── sounddevice_backend.py # Cross-platform support (VB Cable on Windows)
+│   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
+│   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
+│   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
 │   └── platform/            # Platform-specific code
 │       ├── linux.py         # PulseAudio integration
 │       └── windows.py       # WASAPI support

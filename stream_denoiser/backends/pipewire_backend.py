@@ -371,7 +371,10 @@ def run_pipewire_loop(processor,
 
 
 def _worker_loop(node: PipeWireNode, processor, should_stop, on_stats,
-                 stats_interval_sec: float, start_time: float) -> None:
+                 stats_interval_sec: float, start_time: float,
+                 log_sync=_log_sync, log_events=_log_events) -> None:
+    """Inference for the node's fixed-delay core until stopped. Also runs
+    the Windows WASAPI node (same core), with its own log lines."""
     buf = np.empty(node.frame, dtype=np.float32)
     last_stats = last_sync = last_event = time.time()
     seen = node.stats()
@@ -397,7 +400,7 @@ def _worker_loop(node: PipeWireNode, processor, should_stop, on_stats,
                 busy_max = max(busy_max, time.perf_counter() - t_frame)
             now = time.time()
             if now - last_event >= EVENT_CHECK_SEC:
-                seen = _log_events(node, seen, gap_max, busy_max)
+                seen = log_events(node, seen, gap_max, busy_max)
                 gap_max = busy_max = 0.0
                 last_event = now
             due = now - last_stats >= stats_interval_sec
@@ -413,7 +416,7 @@ def _worker_loop(node: PipeWireNode, processor, should_stop, on_stats,
                         pass
                 last_stats = now
             if now - last_sync >= SYNC_LOG_INTERVAL_SEC:
-                _log_sync(node)
+                log_sync(node)
                 last_sync = now
 
 

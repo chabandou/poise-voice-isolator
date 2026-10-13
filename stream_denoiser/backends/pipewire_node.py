@@ -7,7 +7,8 @@ never waits on Python. It hands frames to an inference thread through
 releases the GIL while the thread waits.
 
 ``DelayCore`` is the same fixed-delay exchange without PipeWire, driven
-by hand; the tests use it to check timing exactly.
+by hand; the tests use it to check timing exactly. The Windows audio
+path (wasapi_node) runs the same core.
 """
 import ctypes
 import os
@@ -63,10 +64,11 @@ def _candidate_paths():
     return [os.path.normpath(p) for p in paths]
 
 
-def _bind(lib) -> None:
+def core_signatures() -> dict:
+    """ctypes signatures of poise_core (also exported by poise_wasapi.dll)."""
     u32, i64, u64 = ctypes.c_uint32, ctypes.c_int64, ctypes.c_uint64
     vp, fp = ctypes.c_void_p, ctypes.c_void_p
-    sigs = {
+    return {
         "poise_core_new": ([u32, u32, u32, u32, u32, ctypes.c_float], vp),
         "poise_core_free": ([vp], None),
         "poise_core_cycle_mono": ([vp, fp, u32, fp, u32], ctypes.c_int),
@@ -77,6 +79,21 @@ def _bind(lib) -> None:
         "poise_core_delay": ([vp], u64),
         "poise_core_frame": ([vp], u32),
         "poise_core_stat_count": ([], u32),
+    }
+
+
+def bind(lib, sigs: dict) -> None:
+    for name, (args, res) in sigs.items():
+        fn = getattr(lib, name)
+        fn.argtypes = args
+        fn.restype = res
+
+
+def _bind(lib) -> None:
+    u32 = ctypes.c_uint32
+    vp = ctypes.c_void_p
+    sigs = {
+        **core_signatures(),
         "poise_pw_new": ([ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
                           u32, u32, u32, u32, u32, ctypes.c_float,
                           ctypes.c_char_p, ctypes.c_size_t], vp),
@@ -87,10 +104,7 @@ def _bind(lib) -> None:
                              ctypes.c_char_p, ctypes.c_size_t], ctypes.c_int),
         "poise_pw_library_version": ([], ctypes.c_char_p),
     }
-    for name, (args, res) in sigs.items():
-        fn = getattr(lib, name)
-        fn.argtypes = args
-        fn.restype = res
+    bind(lib, sigs)
 
 
 def load_library():
@@ -173,12 +187,16 @@ class _CoreOps:
 
 
 class DelayCore(_CoreOps):
-    """The fixed-delay exchange alone, cycles driven by the caller."""
+    """The fixed-delay exchange alone, cycles driven by the caller.
+
+    ``lib``: a loaded library exporting poise_core (default
+    libpoise_pw.so; on Windows, wasapi_node.load_library()).
+    """
 
     def __init__(self, frame: int, engine_latency: int = 0,
                  quantum: int = 512, margin: int = 1024, fade: int = 64,
-                 dry_gain: float = 1.0):
-        self._lib = load_library()
+                 dry_gain: float = 1.0, lib=None):
+        self._lib = lib if lib is not None else load_library()
         self.frame = int(frame)
         self._core = self._lib.poise_core_new(
             self.frame, int(engine_latency), int(quantum), int(margin),

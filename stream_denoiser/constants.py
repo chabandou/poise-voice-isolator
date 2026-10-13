@@ -24,6 +24,21 @@ PW_FADE_SAMPLES = 64
 # Linux backend: "auto" (PipeWire node when available, else pulse-simple),
 # "pipewire" or "pulse". Override with POISE_BACKEND or --backend.
 LINUX_BACKENDS = ("auto", "pipewire", "pulse")
+
+# Windows native audio path (backends/wasapi_backend.py): CABLE Output to
+# the speakers through poise_wasapi.dll, the same fixed-delay core.
+# Time the inference thread gets per frame (samples); a frame later than
+# this plays unprocessed. Override with POISE_WIN_MARGIN_MS.
+WIN_MARGIN_SAMPLES = 1024
+WIN_FADE_SAMPLES = PW_FADE_SAMPLES
+# Clock-bridge headroom for capture packets that arrive late (samples).
+WIN_FIFO_SAFETY_SAMPLES = 240
+# Audio kept queued for the speakers (samples); 0 = the whole WASAPI
+# buffer.
+WIN_RENDER_FILL_SAMPLES = 0
+# Windows backend: "auto" (native path when available, else PortAudio),
+# "wasapi" or "portaudio". Override with POISE_BACKEND or --backend.
+WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
 DEFAULT_FRAME_SIZE = 480
 FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 
