@@ -358,12 +358,15 @@ class LinuxAudioRouter:
                     _logger.info(f"Set default sink to: {self.SINK_NAME}")
                     return True
 
-                # Create null sink using pactl (pulsectl doesn't support module loading directly)
+                # Create null sink using pactl (pulsectl doesn't support module loading directly).
+                # The whole property list is quoted: unquoted, PulseAudio
+                # rejects the space in the description ("Module
+                # initialization failed") and PipeWire keeps only "Poise".
                 import subprocess
                 result = subprocess.run(
                     ['pactl', 'load-module', 'module-null-sink',
                      f'sink_name={self.SINK_NAME}',
-                     f'sink_properties=device.description="{self.SINK_DESCRIPTION}"'],
+                     f"sink_properties='device.description=\"{self.SINK_DESCRIPTION}\"'"],
                     capture_output=True, text=True
                 )
 
