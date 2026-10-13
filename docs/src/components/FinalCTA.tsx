@@ -30,6 +30,7 @@ const buildGuides = (windowsUrl: string): InstallGuide[] => [
 		intro: "The native Windows app: one dial to start and stop, live stats, and six colour themes.",
 		steps: [
 			"Download Poise_Setup.exe and run it.",
+			"If Windows says “Windows protected your PC”, click More info, then Run anyway. The installer is not code-signed yet, so SmartScreen does not recognise it.",
 			"The installer sets up VB-Cable, the virtual audio cable Poise listens to, if it is missing. Restart if Windows asks.",
 			"Launch Poise Voice Isolator from the Start menu and press the dial.",
 		],

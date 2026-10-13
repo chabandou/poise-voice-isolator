@@ -96,6 +96,14 @@ Poise is a real-time audio filter that runs in the background while you browse, 
 
 #### Windows
 
+Download `Poise_Setup.exe` from the
+[latest release](https://github.com/chabandou/poise-voice-isolator/releases/latest)
+and run it.
+
+> **"Windows protected your PC"?** The installer is not code-signed yet,
+> so SmartScreen does not recognise it. Click **More info**, then
+> **Run anyway**.
+
 The installer bundles the VB-Cable driver (by VB-Audio,
 https://vb-audio.com/Cable/ — donationware, consider supporting them)
 and installs it automatically when CABLE endpoints are missing
