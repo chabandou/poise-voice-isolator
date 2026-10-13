@@ -21,7 +21,7 @@ else:
 def main(argv=None):
     import argparse
     try:
-        from ..constants import ALL_MODELS, DEFAULT_MODEL
+        from ..constants import ALL_MODELS
         from ..logging_config import (
             add_log_args,
             announce_log_path,
@@ -30,7 +30,7 @@ def main(argv=None):
             enable_crash_traceback,
         )
         parser = argparse.ArgumentParser(description='Poise Voice Isolator TUI')
-        parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+        parser.add_argument('--model', type=str, default=None,
                             choices=list(ALL_MODELS))
         add_log_args(parser)
         args, _ = parser.parse_known_args(argv)

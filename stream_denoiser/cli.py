@@ -285,9 +285,10 @@ Examples:
         """
     )
 
-    parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+    parser.add_argument('--model', type=str, default=None,
                         choices=list(ALL_MODELS),
-                        help=f'Denoising engine to use (default: {DEFAULT_MODEL}). '
+                        help=f'Denoising engine to use (default: {DEFAULT_MODEL}; '
+                             f'with --tui, the last one picked there). '
                              f'rnnoise uses the system librnnoise on Linux '
                              f'(same as EasyEffects) or the bundled rnnoise.dll '
                              f'on Windows.')
@@ -342,6 +343,9 @@ Examples:
     add_log_args(parser)
 
     args = parser.parse_args()
+    # The TUI falls back to its saved model, not DEFAULT_MODEL.
+    tui_model = args.model
+    args.model = args.model or DEFAULT_MODEL
 
     # File logging first (Linux only inside ensure_file_logging) so health
     # checks, engine creation, and routing decisions are all captured.
@@ -407,7 +411,7 @@ Examples:
             sys.exit(1)
         try:
             from .tui import PoiseApp
-            app = PoiseApp(model=args.model)
+            app = PoiseApp(model=tui_model)
             app.run()
             sys.exit(0)
         except ImportError as e:
