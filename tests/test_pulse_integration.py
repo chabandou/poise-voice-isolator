@@ -241,6 +241,11 @@ def test_sinks_restored_after_sigterm(tmp_path):
     if proc.returncode != 0:
         pytest.skip(f"could not create null sink: {proc.stderr}")
     out_module = proc.stdout.strip()
+    # Without sound cards (CI) the server picks a default only once a sink
+    # exists, in its own time: until then it reports a placeholder
+    # ("@DEFAULT_SINK@") the router never sees.
+    assert _wait_until(lambda: get_default_sink_name() in _sinks(), 5), (
+        f"no default sink: {get_default_sink_name()!r}")
     before = get_default_sink_name()
     log_path = tmp_path / "helper.log"
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

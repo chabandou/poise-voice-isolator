@@ -159,6 +159,11 @@ FooterKey>.footer-key--key {
     padding: 0 1;
 }
 
+/* Unavailable right now (e.g. model switch while processing). */
+FooterKey.-disabled>.footer-key--key {
+    background: $accent 35%;
+}
+
 /* NOTE: bare `.footer-key--*` selectors feed FooterKey's render-time
    component styles (older Textual renders key/description as Text spans,
    not child widgets, so descendant selectors match nothing there). */
