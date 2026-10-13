@@ -320,6 +320,7 @@ class MainWindow(QMainWindow):
         # --- Left: dial card (state headline, Start/Stop, strength) ---
         stage = PatternCard()
         stage.setObjectName("card")
+        self._stage = stage
         stage_layout = QVBoxLayout(stage)
         stage_layout.setContentsMargins(sp(26), sp(28), sp(26), sp(24))
         stage_layout.setSpacing(sp(8))
@@ -1073,6 +1074,7 @@ class MainWindow(QMainWindow):
         """Called when worker successfully starts."""
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(True)
+        self._stage.set_live(True)
         # First successful start: device switching (incl. one-time
         # AudioDeviceCmdlets install) has completed, so future runs
         # show the short "Switching audio device..." status.
@@ -1101,6 +1103,7 @@ class MainWindow(QMainWindow):
         """Called when worker stops."""
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(False)
+        self._stage.set_live(False)
         self._stop_status_pulse()
 
         # Re-enable controls
