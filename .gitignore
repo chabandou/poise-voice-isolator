@@ -5,6 +5,7 @@ stream_gtcrn_RT_Cld.py
 __pycache__/
 dist/
 build/
+*.egg-info/
 todo.md
 AGENTS.md
 stream_denoiser_RT.py
