@@ -278,6 +278,17 @@ make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
 make -C native/poise_wasapi    # -> stream_denoiser/native/poise_wasapi.dll
 ```
 
+   To measure the delay on real devices (not in a VM: virtual audio
+   timing there is nothing like a sound card's), `native/latmeter` plays
+   noise into CABLE Input the way a video player does and records the
+   speakers; `tools/win_latency.py` runs Poise beside it under chosen
+   load and reports the A/V offset over time, split at CABLE Output.
+
+```bash
+make -C native/latmeter        # -> build/latmeter.exe
+python tools/win_latency.py run --backend wasapi --phases idle:60,cpu:60
+```
+
 #### Usage
 
 ##### CLI Mode
@@ -304,8 +315,9 @@ python -m stream_denoiser.cli
 - `--list-devices`: List all available audio devices and exit
 - `--no-vb-cable`: Disable automatic VB Cable switching (use current default device). On Linux, keeps the default sink as it is; route apps to the Poise sink yourself
 - `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
-- `--backend`: Linux only: `auto` (default; the PipeWire node when available), `pipewire`, or `pulse`. Also `POISE_BACKEND`
+- `--backend`: `auto` (default; the PipeWire node on Linux, the native WASAPI path on Windows, when available), `pipewire` or `pulse` (Linux), `wasapi` or `portaudio` (Windows). Also `POISE_BACKEND`
 - `POISE_PW_MARGIN_MS` (environment): extra time each frame gets on the PipeWire node before it plays unprocessed (default 21 ms; adds to the fixed delay)
+- `POISE_WIN_MARGIN_MS` (environment): the same on the Windows native path
 
 ### Models
 
