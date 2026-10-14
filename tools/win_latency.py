@@ -7,9 +7,10 @@ Measure Poise's delay on Windows from outside, on real devices.
 ``run`` starts Poise, capturing CABLE Output and playing to the speakers:
   portaudio-proc  the PortAudio loop in the audio process (audio_host),
                   this process standing in for the UI;
+  wasapi-proc     the native path in the audio process, likewise;
   portaudio       the PortAudio loop on a thread of this process, as the
                   GUI runs it (the load threads share its GIL);
-  wasapi          the native path, where the branch has it.
+  wasapi          the native path on a thread of this process.
 It also starts
 latmeter.exe (native/latmeter), which plays band-limited noise into
 CABLE Input like a video player and records loopback streams of CABLE
@@ -205,6 +206,7 @@ class NodeWatch:
 
     def __init__(self, path: Path):
         self.node = None
+        self.host = None      # AudioHost: its stats carry the node's
         self._f = open(path, "w")
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, daemon=True)
@@ -214,14 +216,20 @@ class NodeWatch:
 
     def _run(self):
         while not self._stop.wait(1.0):
-            node = self.node
-            if node is None or node._handle is None:
+            node, host = self.node, self.host
+            if host is not None:
+                stats = dict(host.stats)
+                if "frames_wet" not in stats:
+                    continue
+                rec = {"t": time.perf_counter(), **stats}
+            elif node is None or node._handle is None:
                 continue
-            try:
-                rec = {"t": time.perf_counter(), **node.stats(),
-                       **node.io_stats(), "latency": node.latency_samples}
-            except Exception:
-                continue
+            else:
+                try:
+                    rec = {"t": time.perf_counter(), **node.stats(),
+                           **node.io_stats(), "latency": node.latency_samples}
+                except Exception:
+                    continue
             self._f.write(json.dumps(rec) + "\n")
             self._f.flush()
 
@@ -254,16 +262,16 @@ def cmd_run(args) -> Path:
         raise SystemExit(f"{LATMETER} missing: build native/latmeter first")
 
     if args.engine is None:
-        args.engine = "df3" if args.backend == "portaudio-proc" else "shadow"
+        args.engine = "df3" if args.backend.endswith("-proc") else "shadow"
     if args.atten_lim_db is None:
         # Real DF3 output: keep 89% of the input so the noise is measurable.
         args.atten_lim_db = -1.0 if args.engine == "df3" else -60.0
     if args.onnx_threads:
         # Before the engine modules are imported (here and in a child).
         os.environ["POISE_ONNX_THREADS"] = str(args.onnx_threads)
-    child = args.backend == "portaudio-proc"
+    child = args.backend.endswith("-proc")
     if child and args.engine != "df3":
-        raise SystemExit("portaudio-proc builds its own engine: use --engine df3 "
+        raise SystemExit(f"{args.backend} builds its own engine: use --engine df3 "
                          "(with --atten-lim-db -1 so the noise stays measurable)")
     proc = None
     if not child:
@@ -316,9 +324,11 @@ def cmd_run(args) -> Path:
                         started.set()
 
                 host = AudioHost(on_event)
+                watch.host = host
                 try:
                     host.start({
-                        "backend": "portaudio", "model": "deepfilternet3",
+                        "backend": args.backend[:-len("-proc")],
+                        "model": "deepfilternet3",
                         "atten_lim_db": args.atten_lim_db,
                         "input_device": _device_id(CAPTURE, False),
                         "output_device": _device_id(args.speakers, True),
@@ -636,10 +646,11 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    r.add_argument("--backend", choices=("wasapi", "portaudio", "portaudio-proc"),
-                   default="portaudio-proc")
+    r.add_argument("--backend", choices=("wasapi", "wasapi-proc", "portaudio",
+                                         "portaudio-proc"),
+                   default="wasapi-proc")
     r.add_argument("--engine", choices=("shadow", "df3", "passthrough"),
-                   default=None, help="default: df3 for portaudio-proc, "
+                   default=None, help="default: df3 for the -proc backends, "
                    "else shadow")
     r.add_argument("--atten-lim-db", type=float, default=None,
                    help="default: -1 with df3")

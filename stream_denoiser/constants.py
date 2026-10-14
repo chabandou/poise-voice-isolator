@@ -30,8 +30,15 @@ LINUX_BACKENDS = ("auto", "pipewire", "pulse")
 # Windows native audio path (backends/wasapi_backend.py): CABLE Output to
 # the speakers through poise_wasapi.dll, the same fixed-delay core.
 # Time the inference thread gets per frame (samples); a frame later than
-# this plays unprocessed. Override with POISE_WIN_MARGIN_MS.
+# this plays unprocessed; it adds to the fixed delay. Override with
+# POISE_WIN_MARGIN_MS. In the UI's process inference waits for the GIL
+# behind the UI: 21 ms (an 11 ms margin let 69 frames in 2 minutes play
+# unprocessed with a busy UI under load). In the audio process
+# (audio_host) nothing else holds it, and inference under MMCSS takes
+# p99 4 ms even with every core busy: 5 ms played every frame processed
+# under full load and cut the A/V offset by 19 ms.
 WIN_MARGIN_SAMPLES = 1024
+WIN_PROCESS_MARGIN_SAMPLES = 256
 WIN_FADE_SAMPLES = PW_FADE_SAMPLES
 # Clock-bridge headroom for capture packets that arrive late (samples).
 WIN_FIFO_SAFETY_SAMPLES = 240

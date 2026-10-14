@@ -77,9 +77,11 @@ def test_runs_in_real_time_and_feeds_the_worker():
     assert io["capture_frames"] == pytest.approx(3 * SR, rel=0.1)
     assert io["render_frames"] == pytest.approx(3 * SR, rel=0.1)
     assert got == pytest.approx(3 * SR / 512, rel=0.15)
-    assert io["capture_glitches"] == 0
     assert io["fifo_resyncs"] == 0
     assert io["fifo_level"] > io["render_period"]
+    # After the start, where the full suite (other tests just used the
+    # cable) once left a packet flagged discontinuous.
+    assert io["capture_glitches"] - settled["capture_glitches"] == 0
     assert st["frames_late"] - settled["frames_late"] == 0
     assert io["fifo_starved"] - settled["fifo_starved"] == 0
     assert io["render_underruns"] == 0

@@ -17,7 +17,7 @@ UI -> audio   {"cmd": "start", "config": {...}}     (see AudioHost.start)
               {"cmd": "set", "aad_threshold_db": x}  also "atten_lim_db"
               {"cmd": "stop"}   {"cmd": "quit"}
 audio -> UI   {"event": "ready", "pid": n}
-              {"event": "running", "backend": "pipewire"|"pulse"|"portaudio"}
+              {"event": "running", "backend": "pipewire"|"pulse"|"portaudio"|"wasapi"}
               {"event": "stats", "stats": {...}, "elapsed": s}
               {"event": "error", "message": "...", "notice": "..."}
               {"event": "stopped", "stats": {...}}   ends every session
@@ -200,12 +200,14 @@ class AudioHost:
     def start(self, config: dict) -> None:
         """Start a session.
 
-        config keys: model, backend ("pipewire", "pulse" or "portaudio"),
+        config keys: model, backend ("pipewire", "pulse", "portaudio" or
+        "wasapi"),
         output_device, aad_threshold_db, atten_lim_db (optional);
         pipewire only, optional: route_default, node_name, description;
         pulse only: routed (the UI set up the null sink), monitor_source,
-        fallback_sink; portaudio (Windows) only, optional: input_device
-        and output_device (PortAudio IDs), realtime (MMCSS, default on).
+        fallback_sink; portaudio and wasapi (Windows), optional:
+        input_device and output_device (PortAudio IDs or names);
+        portaudio only: realtime (MMCSS, default on).
         """
         if self.running:
             raise RuntimeError("audio session already running")
@@ -462,9 +464,12 @@ class _Control:
                 processor.engine.set_atten_lim_db(float(value))
         self._pending.clear()
 
-    def on_stats(self, _stats: dict, elapsed: float) -> None:
+    def on_stats(self, stats: dict, elapsed: float) -> None:
+        """The processor's diagnostics, plus whatever the loop adds (the
+        native node's counters)."""
         self.channel.send({"event": "stats", "elapsed": elapsed,
-                           "stats": self.processor.get_diagnostics()})
+                           "stats": {**(stats or {}),
+                                     **self.processor.get_diagnostics()}})
 
     @contextmanager
     def signals(self):
@@ -577,7 +582,33 @@ def _run_backend(processor, config: dict, ctl: _Control) -> dict:
             stats_interval_sec=STATS_INTERVAL_SEC, pause_gc=True,
             realtime=bool(config.get("realtime", True)))
         return {}
+    if backend == "wasapi":
+        from .backends.wasapi_backend import run_wasapi_loop
+        from .constants import WIN_PROCESS_MARGIN_SAMPLES
+        ctl.channel.send({"event": "running", "backend": backend})
+        # Nothing else holds this process's GIL: inference needs far less
+        # time per frame than in the UI's process (see constants).
+        run_wasapi_loop(
+            processor, _device_name(config.get("input_device"), "input"),
+            _device_name(config.get("output_device"), "output"),
+            should_stop=ctl.should_stop, on_stats=ctl.on_stats,
+            stats_interval_sec=STATS_INTERVAL_SEC,
+            margin=WIN_PROCESS_MARGIN_SAMPLES, pause_gc=True)
+        return {}
     raise ValueError(f"unknown audio backend {backend!r}")
+
+
+def _device_name(device, kind: str) -> Optional[str]:
+    """A WASAPI endpoint name for the native path: names pass through,
+    PortAudio IDs are looked up; None finds CABLE Output (input) or keeps
+    the default (output)."""
+    if isinstance(device, str) or (device is None and kind == "output"):
+        return device or None
+    import sounddevice as sd
+    if device is None:
+        from .device_utils import find_loopback_device
+        device = find_loopback_device(None)
+    return sd.query_devices(int(device))["name"]
 
 
 def _run_session(channel: _Channel, config: dict) -> bool:

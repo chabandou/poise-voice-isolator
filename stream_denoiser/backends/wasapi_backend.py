@@ -21,6 +21,7 @@ import time
 from contextlib import contextmanager
 from typing import Callable, Optional, Tuple
 
+from ..audio_gc import gc_paused
 from ..constants import (
     DEFAULT_SAMPLE_RATE,
     STATS_PRINT_INTERVAL_SEC,
@@ -40,10 +41,9 @@ _logger = get_logger(__name__)
 
 MARGIN_ENV = "POISE_WIN_MARGIN_MS"
 RATE = DEFAULT_SAMPLE_RATE
-# SetThreadPriority level for the inference thread, and the MMCSS task it
-# joins when it can.
+# SetThreadPriority level for the inference thread when MMCSS is
+# unavailable.
 THREAD_PRIORITY_HIGHEST = 2
-MMCSS_TASK = "Pro Audio"
 
 
 class WasapiStartError(WasapiError):
@@ -90,15 +90,15 @@ def select_windows_backend(preference: str = "auto") -> Tuple[str, str]:
     return "portaudio", detail
 
 
-def margin_samples() -> int:
-    """Worker margin in samples (POISE_WIN_MARGIN_MS overrides the default)."""
+def margin_samples(default: int = WIN_MARGIN_SAMPLES) -> int:
+    """Worker margin in samples (POISE_WIN_MARGIN_MS overrides ``default``)."""
     value = os.environ.get(MARGIN_ENV)
     if value:
         try:
             return max(0, int(float(value) * RATE / 1000.0))
         except ValueError:
             _logger.warning("Ignoring %s=%r (not a number)", MARGIN_ENV, value)
-    return WIN_MARGIN_SAMPLES
+    return int(default)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +163,8 @@ def _raised_thread_priority():
     realtime range (p99 4 ms under the same load); HIGHEST stays as the
     fallback when MMCSS is unavailable.
     """
+    from .platform.windows import MMCSS_TASK, mmcss_thread
+
     try:
         k32 = ctypes.windll.kernel32
         thread = k32.GetCurrentThread()
@@ -171,23 +173,13 @@ def _raised_thread_priority():
     except Exception:
         yield
         return
-    avrt = mmcss = None
     try:
-        avrt = ctypes.WinDLL("avrt")
-        avrt.AvSetMmThreadCharacteristicsW.restype = ctypes.c_void_p
-        avrt.AvRevertMmThreadCharacteristics.argtypes = [ctypes.c_void_p]
-        task = ctypes.c_ulong(0)
-        mmcss = avrt.AvSetMmThreadCharacteristicsW(MMCSS_TASK,
-                                                   ctypes.byref(task))
-    except Exception:
-        pass
-    _logger.info("Inference thread: %s",
-                 f"MMCSS {MMCSS_TASK!r}" if mmcss else "HIGHEST (no MMCSS)")
-    try:
-        yield
+        with mmcss_thread() as mmcss:
+            _logger.info("Inference thread: %s",
+                         f"MMCSS {MMCSS_TASK!r}" if mmcss
+                         else "HIGHEST (no MMCSS)")
+            yield
     finally:
-        if mmcss:
-            avrt.AvRevertMmThreadCharacteristics(mmcss)
         k32.SetThreadPriority(thread, previous)
 
 
@@ -197,7 +189,9 @@ def run_wasapi_loop(processor,
                     should_stop=None,
                     on_stats: Optional[Callable[[dict, float], None]] = None,
                     stats_interval_sec: float = STATS_PRINT_INTERVAL_SEC,
-                    on_started: Optional[Callable[[], None]] = None) -> dict:
+                    on_started: Optional[Callable[[], None]] = None,
+                    margin: Optional[int] = None,
+                    pause_gc: bool = False) -> dict:
     """Run Poise on the native WASAPI path until ``should_stop``.
 
     Args:
@@ -208,6 +202,14 @@ def run_wasapi_loop(processor,
         on_stats: Optional callback(stats, elapsed_sec) every interval.
         stats_interval_sec: Stats callback cadence.
         on_started: Called once the devices are open and running.
+        margin: Time the inference thread gets per frame (samples);
+            None = WIN_MARGIN_SAMPLES, sized for a thread in the UI's
+            process. POISE_WIN_MARGIN_MS overrides either.
+        pause_gc: Keep the garbage collector off while the devices are
+            open (only in a process that does nothing else; see audio_gc).
+
+    on_stats also gets the node's counters (frames_dry, fifo_level, ...)
+    and its latency in samples.
 
     Raises:
         WasapiStartError: the devices could not be opened (nothing ran).
@@ -222,7 +224,17 @@ def run_wasapi_loop(processor,
     frame = processor.frame_size
     engine = processor.engine
     engine_latency = int(getattr(engine, "latency_samples", 0) or 0)
-    margin = margin_samples()
+    margin = margin_samples(WIN_MARGIN_SAMPLES if margin is None else margin)
+    with gc_paused(pause_gc):
+        return _run_node(processor, capture, render, should_stop, on_stats,
+                         stats_interval_sec, on_started, frame,
+                         engine_latency, margin)
+
+
+def _run_node(processor, capture, render, should_stop, on_stats,
+              stats_interval_sec, on_started, frame, engine_latency,
+              margin) -> dict:
+    engine = processor.engine
     try:
         node = WasapiNode(
             capture=capture, render=render, frame=frame,
@@ -246,6 +258,12 @@ def run_wasapi_loop(processor,
         io["render_fill"], io["mmcss"], get_log_file_path())
     if on_started is not None:
         on_started()
+    if on_stats is not None:
+        report = on_stats
+
+        def on_stats(stats, elapsed):
+            report({**stats, **node.stats(), **node.io_stats(),
+                    "latency": node.latency_samples}, elapsed)
     start_time = time.time()
     try:
         with _raised_thread_priority():
