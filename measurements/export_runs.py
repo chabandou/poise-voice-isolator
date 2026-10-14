@@ -40,6 +40,8 @@ RUNS = {
     "M5-wasapi": ("native", "ui", 5.3, "MMCSS", 1, "small margin, no UI load"),
     "W1-wasapi-proc": ("native", "audio process", 5.3, "MMCSS", 1, "AudioHost"),
     "W2-wasapi-proc": ("native", "audio process", 5.3, "MMCSS", 1, "AudioHost"),
+    "G1-gui": ("native", "audio process", 5.3, "MMCSS", 1,
+               "the GUI's AudioWorker end to end (tools/win_gui_check.py)"),
 }
 
 FIELDS = ["run", "date", "path", "process", "margin_ms", "priority",

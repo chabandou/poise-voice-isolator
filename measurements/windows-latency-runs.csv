@@ -92,3 +92,6 @@ W2-wasapi-proc,2026-10-14 11:59,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),A
 W2-wasapi-proc,2026-10-14 11:59,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),AudioHost,gilblock,360.3,357,0,0,0.0,203.4,203.36,203.39,1.12,56.2,147.21,-0.003,0
 W2-wasapi-proc,2026-10-14 11:59,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),AudioHost,cpugil,450.4,477,0,0,0.0,203.64,203.31,203.59,1.22,56.25,147.39,-0.024,0
 W2-wasapi-proc,2026-10-14 11:59,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),AudioHost,idle,570.7,235,0,0,0.0,203.35,203.63,203.4,1.19,56.2,147.18,-0.037,0
+G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),idle,0.0,236,9,0,0.0,203.89,202.62,203.96,2.69,52.05,151.87,0.121,0
+G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),gilblock,60.0,236,0,0,0.0,203.82,203.7,203.67,1.27,52.08,151.75,-0.083,0
+G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),cpugil,120.0,237,0,0,0.0,204.75,203.9,204.64,1.42,52.08,152.69,0.383,0

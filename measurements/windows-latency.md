@@ -229,6 +229,26 @@ driver's DMA buffer (4096 samples, both sides) is not among the settings.
 (One change before 3x 2048 left CABLE Output delivering pure silence
 until it was set again.)
 
+## 8. The GUI on the audio process
+
+`tools/win_gui_check.py` runs the GUI's AudioWorker as the main window
+does (Qt event loop, signals, a live dial change) with VB-Cable
+switching off (latmeter plays into CABLE Input itself); the load runs in
+the GUI's process. Real DF3 at -1 dB, 60 s per phase (G1-gui):
+
+| Phase | Dropouts | Dry frames | A/V (p99-p1) | VB-Cable | Poise |
+|---|---|---|---|---|---|
+| idle | 0 | 0 | 203.9 ms (2.7) | 52.1 ms | 151.9 ms |
+| gilblock (the GUI holding the GIL 80 ms every second) | 0 | 0 | 203.8 ms (1.3) | 52.1 ms | 151.8 ms |
+| cpugil | 0 | 0 | 204.8 ms (1.4) | 52.1 ms | 152.7 ms |
+
+Short checks (15-20 s idle, GUI worker and harness `wasapi-proc`
+alternating): A/V 196.5-211.6 ms, 0 dropouts, 0 dry frames. The first of
+them, the first session after the VB-Cable setting changes of section 7,
+had VB-Cable's share at 177.5 ms (A/V 330.9 ms) for the whole run, with
+Poise's share normal (153.4 ms): a VB-Cable start outlier, not seen in
+~40 other starts.
+
 ## Open issues
 
 - The glitch staircase (section 3).
