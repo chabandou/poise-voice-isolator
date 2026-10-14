@@ -34,6 +34,7 @@ IO_STAT_NAMES = (
     "fifo_resyncs", "fifo_dropped", "rate_ppb", "capture_period",
     "capture_buffer", "render_period", "render_buffer", "render_fill",
     "mmcss", "fifo_stalls", "render_queue", "capture_age_us",
+    "capture_restarts",
 )
 # Order of poise_bridge_get_stats() (enum poise_bridge_stat).
 BRIDGE_STAT_NAMES = ("safety", "target", "level", "headroom", "starved",

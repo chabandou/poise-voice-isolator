@@ -42,6 +42,8 @@ enum poise_win_stat {
 	                             * (samples; least over the last second) */
 	POISE_WIN_CAPTURE_AGE_US,   /* age of capture packets when read, from their time stamps
 	                             * (us; least over the last second) */
+	POISE_WIN_CAPTURE_RESTARTS, /* capture restarts at the start to get clear of the
+	                             * cable's timer (see "capture timing") */
 	POISE_WIN_STAT_COUNT
 };
 

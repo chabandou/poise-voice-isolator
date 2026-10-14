@@ -115,6 +115,7 @@ def _log_sync(node: WasapiNode) -> None:
         "sync: latency=%.1fms (io=%d delay=%d engine=%d samples) wet=%d "
         "dry=%d late=%d skipped=%d bridge=%.1f/%.1fms headroom=%.1fms "
         "rate=%+.0fppm starved=%d resyncs=%d capture_glitches=%d "
+        "capture_age=%.1fms capture_restarts=%d "
         "render_underruns=%d render_late=%d max_render_gap=%.1fms",
         _ms(node.latency_samples), node.io_latency_samples,
         node.delay_samples, node.engine_latency, st["frames_wet"],
@@ -122,7 +123,8 @@ def _log_sync(node: WasapiNode) -> None:
         _ms(io["fifo_level"]), _ms(io["fifo_target"]),
         _ms(io["fifo_headroom"]),
         io["rate_ppb"] / 1000.0, io["fifo_starved"], io["fifo_resyncs"],
-        io["capture_glitches"], io["render_underruns"], io["render_late"],
+        io["capture_glitches"], io["capture_age_us"] / 1000.0,
+        io["capture_restarts"], io["render_underruns"], io["render_late"],
         io["render_gap_max_us"] / 1000.0)
 
 

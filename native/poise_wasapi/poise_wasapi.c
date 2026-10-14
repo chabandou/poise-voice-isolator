@@ -7,7 +7,9 @@
  * WASAPI streams (event-driven, shared mode, 48 kHz float; the audio
  * engine converts from whatever the devices run at):
  *
- *   capture event: every packet goes into the bridge FIFO.
+ *   capture event: every packet goes into the bridge FIFO (once the
+ *                  capture's timing is chosen at the start; see
+ *                  "Capture timing").
  *   render event:  the speakers' free space is filled, in cycles of at
  *                  most one render period: the bridge resamples exactly
  *                  that many samples out of the FIFO, and poise_core
@@ -469,6 +471,38 @@ void poise_bridge_get_stats(poise_bridge *b, uint64_t *out, uint32_t n)
 
 /* ==== WASAPI =========================================================== */
 
+/*
+ * Capture timing. In shared mode the audio engine hands over CABLE
+ * Output's packets at a fixed point of VB-Cable's own 10 ms cycle, the
+ * same for the whole session and set when the stream starts: packets
+ * arrive 10.5 to 19.5 ms after their time stamps. At either end the two
+ * race: some packets miss a pass and come two at once 20 ms apart, and
+ * the FIFO then holds ~8 ms more all session (7 of 8 starts with a
+ * player running). Just past the lower end nothing races and packets
+ * are freshest. A fresh start lands at an end more often than not;
+ * stopping and starting the stream again lands somewhere else.
+ *
+ * So before the bridge takes any audio, each try reads STEER_PACKETS
+ * packets (after STEER_SKIP) and the capture restarts until they are
+ * STEER_LO..STEER_HI older than one period, none of them paired. After
+ * STEER_TRIES_NEAR tries anywhere clear of the edge will do (up to
+ * STEER_RELAXED_HI), and after STEER_TRIES the timing stays as it is
+ * (the bridge copes with pairs, at the cost above). ~0.13 s per try
+ * (the age of 10 packets is within ~0.3 ms of 20's, and a restart does
+ * not bunch the first ones); each restart moves the timing ~0.3-0.8 ms
+ * later, so a start at an end takes a few. Measured on VB-Cable
+ * (measurements/windows-latency.md, section 10).
+ */
+#define STEER_PACKETS 10
+#define STEER_SKIP 3
+#define STEER_LO 0.0025
+#define STEER_HI 0.0055
+#define STEER_RELAXED_HI 0.008
+#define STEER_TRIES_NEAR 6
+#define STEER_TRIES 12
+/* Packets this close together came in the same pass (s). */
+#define STEER_PAIR_GAP 0.003
+
 typedef HANDLE (WINAPI *av_set_fn)(LPCWSTR, LPDWORD);
 typedef BOOL (WINAPI *av_revert_fn)(HANDLE);
 
@@ -505,6 +539,16 @@ struct poise_wasapi {
 	double t_diag;            /* start of the diagnostics second */
 	int64_t queue_min;        /* least render queue this second (samples) */
 	int64_t age_min;          /* least capture packet age this second (us) */
+
+	/* Choosing the capture timing (see above); packets go to the
+	 * bridge once steering is 0. */
+	int steering;
+	uint32_t steer_tries;
+	uint32_t steer_seen;      /* packets read this try */
+	uint32_t steer_n;         /* ... of which measured */
+	uint32_t steer_pairs;
+	double steer_last;        /* arrival of the previous packet (s) */
+	double steer_age[STEER_PACKETS];
 
 	_Atomic uint64_t stats[POISE_WIN_STAT_COUNT];
 	_Atomic int failed;
@@ -709,6 +753,58 @@ static void close_stream(struct stream *s)
 	memset(s, 0, sizeof(*s));
 }
 
+static int cmp_double(const void *a, const void *b)
+{
+	double x = *(const double *)a, y = *(const double *)b;
+
+	return x < y ? -1 : x > y;
+}
+
+/* A packet read while choosing the capture timing (time stamp in 100 ns
+ * QPC units). */
+static void steer_note(poise_wasapi *w, double now, UINT64 stamp)
+{
+	if (w->steer_seen++ >= STEER_SKIP) {
+		if (now - w->steer_last < STEER_PAIR_GAP)
+			w->steer_pairs++;
+		w->steer_age[w->steer_n++] = now - (double)stamp * 1e-7;
+	}
+	w->steer_last = now;
+}
+
+/* A try is complete: keep this timing, or start the capture again. */
+static HRESULT steer(poise_wasapi *w)
+{
+	double period = (double)w->cap.period / POISE_RATE;
+	double hi = w->steer_tries < STEER_TRIES_NEAR ? STEER_HI : STEER_RELAXED_HI;
+	double late;
+	HRESULT hr;
+
+	qsort(w->steer_age, w->steer_n, sizeof(double), cmp_double);
+	late = w->steer_age[w->steer_n / 2] - period;
+	/* Packets younger than a period come from a device that keeps the
+	 * time itself (a microphone: ~0.2 ms, the same after any restart):
+	 * nothing races, nothing to steer. */
+	if ((w->steer_pairs == 0 && late < 0.0) ||
+	    (w->steer_pairs == 0 && late >= STEER_LO && late <= hi) ||
+	    w->steer_tries >= STEER_TRIES) {
+		w->steering = 0;
+		return S_OK;
+	}
+	hr = IAudioClient_Stop(w->cap.client);
+	if (SUCCEEDED(hr))
+		hr = IAudioClient_Reset(w->cap.client);
+	if (SUCCEEDED(hr))
+		hr = IAudioClient_Start(w->cap.client);
+	if (FAILED(hr))
+		return hr;
+	w->steer_tries++;
+	w->steer_seen = w->steer_n = w->steer_pairs = 0;
+	w->first_packet = 1;
+	wstat_add(w, POISE_WIN_CAPTURE_RESTARTS, 1);
+	return S_OK;
+}
+
 static HRESULT drain_capture(poise_wasapi *w)
 {
 	for (;;) {
@@ -740,7 +836,11 @@ static HRESULT drain_capture(poise_wasapi *w)
 		if ((flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) && !w->first_packet)
 			wstat_add(w, POISE_WIN_CAPTURE_GLITCHES, 1);
 		w->first_packet = 0;
-		for (done = 0; done < frames; ) {
+		if (w->steering && stamp == 0)
+			w->steering = 0;   /* no time stamps: nothing to steer by */
+		if (w->steering)
+			steer_note(w, now, stamp);
+		for (done = 0; !w->steering && done < frames; ) {
 			UINT32 n = frames - done;
 			const float *src = (const float *)data + 2 * done;
 
@@ -760,6 +860,13 @@ static HRESULT drain_capture(poise_wasapi *w)
 			return hr;
 		wstat_add(w, POISE_WIN_CAPTURE_FRAMES, frames);
 		wstat_add(w, POISE_WIN_CAPTURE_PACKETS, 1);
+		if (w->steering && w->steer_n == STEER_PACKETS) {
+			hr = steer(w);
+			if (FAILED(hr))
+				return hr;
+			if (w->steering)
+				return S_OK;   /* started again: nothing left to read */
+		}
 	}
 }
 
@@ -953,6 +1060,7 @@ static DWORD WINAPI audio_thread(void *arg)
 	/* Silence queued before the start: the first events then ask for one
 	 * period, like every later one. */
 	w->first_packet = 1;
+	w->steering = 1;
 	hr = render_cycle(w, 0);
 	if (SUCCEEDED(hr))
 		hr = IAudioClient_Start(w->cap.client);

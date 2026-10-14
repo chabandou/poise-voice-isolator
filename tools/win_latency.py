@@ -644,7 +644,7 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
             "render_gap_max_us", "rate_ppb", "fifo_target", "fifo_level",
             "fifo_headroom", "capture_period", "render_period",
             "render_buffer", "render_fill", "latency", "mmcss", "fifo_stalls",
-            "render_queue", "capture_age_us") if k in last}
+            "render_queue", "capture_age_us", "capture_restarts") if k in last}
     (out / "report.json").write_text(json.dumps(report, indent=1))
     return report
 
