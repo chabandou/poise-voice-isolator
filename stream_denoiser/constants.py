@@ -3,6 +3,7 @@ Stream Denoiser Constants
 
 Central location for all configuration constants used across the package.
 """
+import sys
 
 # Audio processing constants
 DEFAULT_SAMPLE_RATE = 48000
@@ -87,8 +88,14 @@ AUDIO_CLIP_MAX = 1.0
 # the boosted signal still can't exceed [-1, 1].
 OUTPUT_GAIN_DB = 6.0
 
-# ONNX threading constants
-ONNX_INTRA_OP_THREADS = 2
+# ONNX threading constants. On Windows the inference thread runs under
+# MMCSS (backends/wasapi_backend.py), but ONNX Runtime's pool threads
+# run at normal priority: with every core busy they made DF3 frames
+# take up to 37 ms (p99 23 ms) instead of ~2 ms, longer than the margin,
+# so frames played unprocessed. One thread does all the work on the
+# inference thread itself (p99 4 ms under the same load) and is no
+# slower when idle: the model is small.
+ONNX_INTRA_OP_THREADS = 1 if sys.platform == "win32" else 2
 ONNX_INTER_OP_THREADS = 1
 
 # Buffer and timing constants

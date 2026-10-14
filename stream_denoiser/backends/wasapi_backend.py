@@ -40,8 +40,10 @@ _logger = get_logger(__name__)
 
 MARGIN_ENV = "POISE_WIN_MARGIN_MS"
 RATE = DEFAULT_SAMPLE_RATE
-# SetThreadPriority level for the inference thread.
+# SetThreadPriority level for the inference thread, and the MMCSS task it
+# joins when it can.
 THREAD_PRIORITY_HIGHEST = 2
+MMCSS_TASK = "Pro Audio"
 
 
 class WasapiStartError(WasapiError):
@@ -129,6 +131,7 @@ _IO_EVENTS = (
     ("render_underruns", "the output buffer ran dry (audible gap)"),
     ("capture_glitches", "capture overflowed (audio lost)"),
     ("fifo_starved", "capture fell short of a cycle; silence inserted"),
+    ("fifo_stalls", "capture stalled (50 ms or more without audio)"),
     ("fifo_resyncs", "capture ran far ahead; excess dropped"),
 )
 
@@ -150,8 +153,16 @@ def _log_events(node: WasapiNode, seen: dict, gap_max: float,
 
 @contextmanager
 def _raised_thread_priority():
-    """Run the inference thread above normal priority, so other programs
-    (a video player decoding) delay its frames less."""
+    """Run the inference thread above other programs, so they (a video
+    player decoding, a build) delay its frames less.
+
+    HIGHEST alone is not enough: with every core busy, Windows lifts
+    starved normal threads to priority 15 for a quantum now and then,
+    and those preempt it (measured: DF3 frames up to 46 ms instead of
+    ~2 ms). MMCSS "Pro Audio", as the audio thread uses, puts it in the
+    realtime range (p99 4 ms under the same load); HIGHEST stays as the
+    fallback when MMCSS is unavailable.
+    """
     try:
         k32 = ctypes.windll.kernel32
         thread = k32.GetCurrentThread()
@@ -160,9 +171,23 @@ def _raised_thread_priority():
     except Exception:
         yield
         return
+    avrt = mmcss = None
+    try:
+        avrt = ctypes.WinDLL("avrt")
+        avrt.AvSetMmThreadCharacteristicsW.restype = ctypes.c_void_p
+        avrt.AvRevertMmThreadCharacteristics.argtypes = [ctypes.c_void_p]
+        task = ctypes.c_ulong(0)
+        mmcss = avrt.AvSetMmThreadCharacteristicsW(MMCSS_TASK,
+                                                   ctypes.byref(task))
+    except Exception:
+        pass
+    _logger.info("Inference thread: %s",
+                 f"MMCSS {MMCSS_TASK!r}" if mmcss else "HIGHEST (no MMCSS)")
     try:
         yield
     finally:
+        if mmcss:
+            avrt.AvRevertMmThreadCharacteristics(mmcss)
         k32.SetThreadPriority(thread, previous)
 
 
