@@ -3,6 +3,8 @@ Stream Denoiser Constants
 
 Central location for all configuration constants used across the package.
 """
+import os
+import sys
 
 # Audio processing constants
 DEFAULT_SAMPLE_RATE = 48000
@@ -73,7 +75,14 @@ AUDIO_CLIP_MAX = 1.0
 OUTPUT_GAIN_DB = 6.0
 
 # ONNX threading constants
-ONNX_INTRA_OP_THREADS = 2
+# On Windows the audio loop runs under MMCSS (backends/platform/windows),
+# but ONNX Runtime's pool threads run at normal priority: with every core
+# busy they made DF3 frames take up to 37 ms (p99 23 ms) instead of ~2 ms.
+# One thread does all the work on the loop thread itself (p99 4 ms under
+# the same load) and is no slower when idle: the model is small.
+# POISE_ONNX_THREADS overrides it (measurements).
+ONNX_INTRA_OP_THREADS = int(os.environ.get(
+    "POISE_ONNX_THREADS", 1 if sys.platform == "win32" else 2))
 ONNX_INTER_OP_THREADS = 1
 
 # Buffer and timing constants

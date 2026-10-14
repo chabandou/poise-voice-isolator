@@ -1,11 +1,16 @@
 """
 Measure Poise's delay on Windows from outside, on real devices.
 
-    python tools/win_latency.py run --backend wasapi --phases idle:60,cpu:60
+    python tools/win_latency.py run --backend portaudio-proc --phases idle:60
     python tools/win_latency.py analyze <run dir>
 
-``run`` starts Poise in this process (native WASAPI path or the PortAudio
-fallback), capturing CABLE Output and playing to the speakers, and starts
+``run`` starts Poise, capturing CABLE Output and playing to the speakers:
+  portaudio-proc  the PortAudio loop in the audio process (audio_host),
+                  this process standing in for the UI;
+  portaudio       the PortAudio loop on a thread of this process, as the
+                  GUI runs it (the load threads share its GIL);
+  wasapi          the native path, where the branch has it.
+It also starts
 latmeter.exe (native/latmeter), which plays band-limited noise into
 CABLE Input like a video player and records loopback streams of CABLE
 Input and of the speakers with their QPC times. ``analyze`` lines the two
@@ -248,14 +253,31 @@ def cmd_run(args) -> Path:
     if not LATMETER.exists():
         raise SystemExit(f"{LATMETER} missing: build native/latmeter first")
 
-    engine = make_engine(args.engine, args.atten_lim_db)
-    proc = DenoiserAudioProcessor(engine, frame_size=engine.required_frame_size,
-                                  atten_lim_db=args.atten_lim_db)
+    if args.engine is None:
+        args.engine = "df3" if args.backend == "portaudio-proc" else "shadow"
+    if args.atten_lim_db is None:
+        # Real DF3 output: keep 89% of the input so the noise is measurable.
+        args.atten_lim_db = -1.0 if args.engine == "df3" else -60.0
+    if args.onnx_threads:
+        # Before the engine modules are imported (here and in a child).
+        os.environ["POISE_ONNX_THREADS"] = str(args.onnx_threads)
+    child = args.backend == "portaudio-proc"
+    if child and args.engine != "df3":
+        raise SystemExit("portaudio-proc builds its own engine: use --engine df3 "
+                         "(with --atten-lim-db -1 so the noise stays measurable)")
+    proc = None
+    if not child:
+        engine = make_engine(args.engine, args.atten_lim_db)
+        proc = DenoiserAudioProcessor(engine,
+                                      frame_size=engine.required_frame_size,
+                                      atten_lim_db=args.atten_lim_db)
     stop = threading.Event()
     watch = NodeWatch(out / "node.jsonl")
     started = threading.Event()
     meta = {"backend": args.backend, "engine": args.engine,
-            "priority_class": not args.no_priority_class,
+            "atten_lim_db": args.atten_lim_db,
+            "realtime": not args.no_realtime,
+            "onnx_threads": os.environ.get("POISE_ONNX_THREADS"),
             "margin_env": os.environ.get("POISE_WIN_MARGIN_MS"),
             "speakers": args.speakers, "phases": phases, "log": log_path}
 
@@ -263,8 +285,6 @@ def cmd_run(args) -> Path:
         try:
             if args.backend == "wasapi":
                 from stream_denoiser.backends import wasapi_backend
-                if args.no_priority_class:
-                    wasapi_backend.ABOVE_NORMAL_PRIORITY_CLASS =                         wasapi_backend.NORMAL_PRIORITY_CLASS
                 real_node = wasapi_backend.WasapiNode
 
                 class Watched(real_node):
@@ -276,23 +296,43 @@ def cmd_run(args) -> Path:
                 wasapi_backend.run_wasapi_loop(
                     proc, CAPTURE, args.speakers, should_stop=stop,
                     on_started=started.set)
-            else:
+            elif args.backend == "portaudio":
+                # In this process, beside the load threads: as in the GUI.
                 from stream_denoiser.backends import sounddevice_backend
-                started.set()
-                sounddevice_backend.process_with_sounddevice(
+                sounddevice_backend.run_portaudio_loop(
                     proc, _device_id(CAPTURE, False),
-                    _device_id(args.speakers, True), backend="portaudio")
+                    _device_id(args.speakers, True), should_stop=stop,
+                    on_started=lambda *_: started.set(),
+                    realtime=not args.no_realtime)
+            else:
+                # In the audio process (audio_host), this one being the UI.
+                from stream_denoiser.audio_host import AudioHost
+
+                def on_event(msg):
+                    if msg.get("event") == "running":
+                        started.set()
+                    elif msg.get("event") == "error":
+                        meta["error"] = msg.get("message")
+                        started.set()
+
+                host = AudioHost(on_event)
+                try:
+                    host.start({
+                        "backend": "portaudio", "model": "deepfilternet3",
+                        "atten_lim_db": args.atten_lim_db,
+                        "input_device": _device_id(CAPTURE, False),
+                        "output_device": _device_id(args.speakers, True),
+                        "realtime": not args.no_realtime})
+                    stop.wait()
+                    meta["final_stats"] = host.stop(timeout=10.0)
+                finally:
+                    host.shutdown()
         except Exception as e:  # reported in meta
             meta["error"] = repr(e)
             started.set()
 
-    if args.backend == "wasapi":
-        th = threading.Thread(target=poise, daemon=True)
-        th.start()
-    else:
-        # PortAudio loop: blocking until KeyboardInterrupt, so it gets the
-        # main thread and the schedule runs beside it.
-        th = None
+    th = threading.Thread(target=poise, daemon=True)
+    th.start()
     watch.start()
 
     def schedule():
@@ -325,19 +365,10 @@ def cmd_run(args) -> Path:
             except subprocess.TimeoutExpired:
                 meter.kill()
             stop.set()
-            if th is None:
-                import _thread
-                _thread.interrupt_main()
 
     sched = threading.Thread(target=schedule, daemon=True)
     sched.start()
-    if th is None:
-        try:
-            poise()
-        except KeyboardInterrupt:
-            pass
-    else:
-        th.join()
+    th.join()
     sched.join(60)
     watch.stop()
     meta["qpc_freq"] = _qpc_freq()
@@ -605,17 +636,22 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
-    r.add_argument("--backend", choices=("wasapi", "portaudio"), default="wasapi")
+    r.add_argument("--backend", choices=("wasapi", "portaudio", "portaudio-proc"),
+                   default="portaudio-proc")
     r.add_argument("--engine", choices=("shadow", "df3", "passthrough"),
-                   default="shadow")
-    r.add_argument("--atten-lim-db", type=float, default=-60.0)
+                   default=None, help="default: df3 for portaudio-proc, "
+                   "else shadow")
+    r.add_argument("--atten-lim-db", type=float, default=None,
+                   help="default: -1 with df3")
     r.add_argument("--phases", default="idle:60")
     r.add_argument("--speakers", default=DEFAULT_SPEAKERS)
     r.add_argument("--settle", type=float, default=3.0,
                    help="seconds Poise runs before the measurement starts")
     r.add_argument("--out", default=None)
-    r.add_argument("--no-priority-class", action="store_true",
-                   help="leave the process at normal priority (A/B tests)")
+    r.add_argument("--no-realtime", action="store_true",
+                   help="PortAudio loop thread without MMCSS (A/B tests)")
+    r.add_argument("--onnx-threads", type=int, default=0,
+                   help="ONNX Runtime intra-op threads (default: Poise's)")
     a = sub.add_parser("analyze")
     a.add_argument("dir")
     args = ap.parse_args()

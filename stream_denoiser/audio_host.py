@@ -17,7 +17,7 @@ UI -> audio   {"cmd": "start", "config": {...}}     (see AudioHost.start)
               {"cmd": "set", "aad_threshold_db": x}  also "atten_lim_db"
               {"cmd": "stop"}   {"cmd": "quit"}
 audio -> UI   {"event": "ready", "pid": n}
-              {"event": "running", "backend": "pipewire"|"pulse"}
+              {"event": "running", "backend": "pipewire"|"pulse"|"portaudio"}
               {"event": "stats", "stats": {...}, "elapsed": s}
               {"event": "error", "message": "...", "notice": "..."}
               {"event": "stopped", "stats": {...}}   ends every session
@@ -200,11 +200,12 @@ class AudioHost:
     def start(self, config: dict) -> None:
         """Start a session.
 
-        config keys: model, backend ("pipewire" or "pulse"),
+        config keys: model, backend ("pipewire", "pulse" or "portaudio"),
         output_device, aad_threshold_db, atten_lim_db (optional);
         pipewire only, optional: route_default, node_name, description;
         pulse only: routed (the UI set up the null sink), monitor_source,
-        fallback_sink.
+        fallback_sink; portaudio (Windows) only, optional: input_device
+        and output_device (PortAudio IDs), realtime (MMCSS, default on).
         """
         if self.running:
             raise RuntimeError("audio session already running")
@@ -567,6 +568,15 @@ def _run_backend(processor, config: dict, ctl: _Control) -> dict:
             on_stats=ctl.on_stats, stats_interval_sec=STATS_INTERVAL_SEC,
             pause_gc=True)
         return {"empty_reads": empty_reads}
+    if backend == "portaudio":
+        from .backends.sounddevice_backend import run_portaudio_loop
+        ctl.channel.send({"event": "running", "backend": backend})
+        run_portaudio_loop(
+            processor, config.get("input_device"), config.get("output_device"),
+            should_stop=ctl.should_stop, on_stats=ctl.on_stats,
+            stats_interval_sec=STATS_INTERVAL_SEC, pause_gc=True,
+            realtime=bool(config.get("realtime", True)))
+        return {}
     raise ValueError(f"unknown audio backend {backend!r}")
 
 
