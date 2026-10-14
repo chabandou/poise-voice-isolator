@@ -224,9 +224,9 @@ That reading is not delay. Across 13 runs, Poise's share minus its core
 delay and FIFO stays at 98.5-104.6 ms whether `render_queue` reads 33 or
 44 ms (correlation 0.17): the speaker stream's clock reports a different
 position on some starts. What does vary per start is the FIFO, 15.9-25.6
-ms: a clean start keeps it at 16.4 ms, VB-Cable packets arriving bunched
-in the first second raise it, and it never comes back down on these
-devices (up to ~9 ms for the session).
+ms: 16.4 ms when VB-Cable's packets arrive one by one, up to ~25 ms
+when some arrive in pairs, which lasts the whole session; the capture's
+timing is now steered clear of the pairs at the start (section 10).
 
 ## 7. VB-Cable's own delay
 
@@ -292,11 +292,110 @@ received and what the headphones got, latmeter's record-only mode):
 - Silent stretches in the headphone loopback are 16-bit rounding of
   near-silence after the volume, not dropouts.
 
+## 10. The FIFO's level per start: VB-Cable's paired packets
+
+A trace build of the DLL (every capture packet, render cycle, bridge
+read and rate-control window; a scratch patch, not in the shipped DLL),
+16 starts of 12 s, passthrough engine, nothing else running. "Paired":
+packets that came in the same wake-up as the one before, after a 20 ms
+gap, instead of 10 ms apart.
+
+| CABLE Input | Paired packets, per start | FIFO target at the end, per start |
+|---|---|---|
+| idle | 0, 0, 0-3, 7, 9, 12, 13, 22 % | 16.4 ms x5, 22.2, 23.3, 23.6 ms |
+| a player started 2 s before | 1, 21-31 % (x7) | 19.5-24.9 ms, all raised |
+
+- Each start keeps its rate of pairs for the whole session (steady from
+  one second to the next), and the pairs fall at random, not in a
+  rhythm. In a pair, the first packet arrives 20 ms after its time stamp
+  instead of ~10 ms: Windows' audio engine missed a pass on CABLE Output
+  and delivered two periods at once. VB-Cable's own time stamps stay
+  10 ms apart (also in latmeter's recordings of every earlier run).
+- One pair at the wrong moment, against a read, starves a FIFO held at
+  16.4 ms: the first-second rises are those. The level the bridge ends
+  at is what the pairs need: the worst read in the rest of the session
+  had the safety's 5 ms left within -2 to +2 ms (median +0.8 ms with a
+  player). So the rise is not left over from the start, and holding the
+  FIFO lower instead would starve on every badly placed pair.
+- Not the timer resolution: the system's was already 1 ms (latmeter
+  asks for it too).
+
+CABLE Output captured in exclusive mode instead (a test program, 24-bit
+PCM, the driver's 3 ms period; latmeter playing into CABLE Input, its
+clock as the reference, 5 starts each mode, alternating):
+
+| Capture | Packets | Arrival after the time stamp | Late (paired) | Readable after CABLE Input's clock |
+|---|---|---|---|---|
+| shared (as Poise) | 480 (10 ms) | median 10-20 ms, per start | 0-31 % per start | median 63.9 ms (59.9-77.3) |
+| exclusive | 144 (3 ms) | 0.6 ms (max 4.6) | 0.1-0.2 % | median 159.7 ms (155.0-160.1) |
+
+Exclusive mode removes the pairs and the engine's 10-20 ms, but
+VB-Cable then delivers the audio ~96 ms later: ~149 ms of buffer (its
+latency setting, 7168 samples by default, would account for it; not
+tested with another setting) plus one period. Not usable as it is.
+
+Also no help:
+
+- CABLE Input's engine at 128 frames (2.7 ms; a silent IAudioClient3
+  stream on it moves every stream there to that period, as Microsoft's
+  low-latency notes say): paired packets 0-26 % per start and VB-Cable's
+  delay 57-72 ms, as without (5 starts each, stream started before or
+  after the player).
+- Capturing CABLE Input's loopback instead of CABLE Output: readable
+  137-161 ms after CABLE Input's clock (the earlier cable-* recordings),
+  vs 62-72 ms for CABLE Output.
+
+### Steering the capture timing
+
+When packets arrive after their time stamp ("age") stays put for a
+session (median per second within 0.5 ms over 12 s), and pairs happen
+only at the two ends: ~10.5 ms (just after VB-Cable's tick) and ~19.5 ms
+(just before the next). Fresh starts land at an end more often than not
+(5 of 8 with a player at 19.5 ms, 3 at 10.6-11.0). Stopping and starting
+the same stream (Stop, Reset, Start) moves the age, mostly a little
+later each time (+0.3-0.8 ms per restart in Poise, wrapping from 19.5 to
+~10.6); a new client instead lands anywhere. VB-Cable's own delay (its
+time stamps against CABLE Input's clock) does not change with restarts
+(46.7 ms, then 62.7 ms for 7 restarts in one run), so only the age can
+be chosen. A microphone's packets arrive 0.2 ms after their stamp after
+any restart: hardware keeps the time itself.
+
+The native path now restarts the capture before the bridge takes any
+audio until 10 packets (after 3 skipped) arrive 12.5-15.5 ms after
+their stamps with none paired (12.5-18 ms after 6 tries; as it comes
+after 12; devices with packets younger than a period are left alone).
+10 packets are enough: over 44 tries their median age was within
+~0.3 ms of 20 packets', and restarts do not bunch the first packets
+(pairs as frequent at every position after a restart). Starts with a
+player running (trace build, passthrough, 15 s each):
+
+| | Starts at the FIFO's floor (16.4 ms) | Packet age after the start | Paired | Restarts | Silence at the start |
+|---|---|---|---|---|---|
+| before (8 starts) | 0 | 10.6-11.0 or 19.5 ms | 1-31 % | - | ~0.05 s |
+| steered, 20-packet tries (10 starts) | 10 | 12.5-13.6 ms | 0 | 0-6 | 0.4-2.3 s |
+| steered, 10-packet tries (10 starts) | 10 | 12.4-14.1 ms | 0 | 1-4 | 0.3-0.7 s |
+
+End to end, real DF3 in the audio process, 60 s idle each (F1-F3 with
+20-packet tries, F4 with 10):
+
+| Run | A/V | VB-Cable | Poise | FIFO | Restarts |
+|---|---|---|---|---|---|
+| F1-steer | 191.6 ms (p99-p1 0.9) | 47.4 ms | 144.1 ms | 16.4 ms | 2 |
+| F2-steer | 198.6 ms (1.2) | 52.4 ms | 146.2 ms | 16.4 ms | 1 |
+| F3-steer | 196.9 ms, then 206.1 after a staircase step at 11 s | 62.5 ms | 143.6 ms | 16.4 ms | 3 |
+| F4-steer | 193.2 ms (1.3) | 48.5 ms | 144.8 ms | 16.4 ms | 0 |
+
+Poise's share is 143.6-146.2 ms on every start (147 ms on W1/W2, which
+started clean; a start with pairs adds its FIFO's ~8 ms). VB-Cable's share
+now includes the steered age (12.4-14.1 ms instead of up to 19.5 ms) but
+still varies with VB-Cable's own delay. The cost: 0.3-0.7 s of silence
+when a session starts (up to ~1.6 s if all 12 tries are needed); a
+session took ~1 s from start to sound before.
+
 ## Open issues
 
 - The glitch staircase (section 3).
-- The FIFO's level after a bunched start, up to ~9 ms for the session
-  (section 6).
 - PortAudio's bad starts (section 4).
 - VB-Cable's share of the A/V offset: 45-68 ms depending on the start;
-  its latency setting does not reduce it (section 7).
+  neither its latency setting (section 7) nor restarting the capture
+  (section 10) reduces its own part of it.

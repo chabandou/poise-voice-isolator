@@ -42,6 +42,12 @@ RUNS = {
     "W2-wasapi-proc": ("native", "audio process", 5.3, "MMCSS", 1, "AudioHost"),
     "G1-gui": ("native", "audio process", 5.3, "MMCSS", 1,
                "the GUI's AudioWorker end to end (tools/win_gui_check.py)"),
+    "F1-steer": ("native", "audio process", 5.3, "MMCSS", 1, "capture timing steered"),
+    "F2-steer": ("native", "audio process", 5.3, "MMCSS", 1, "capture timing steered"),
+    "F3-steer": ("native", "audio process", 5.3, "MMCSS", 1,
+                 "capture timing steered; staircase step at 11 s"),
+    "F4-steer": ("native", "audio process", 5.3, "MMCSS", 1,
+                 "capture timing steered, 10-packet tries"),
 }
 
 FIELDS = ["run", "date", "path", "process", "margin_ms", "priority",

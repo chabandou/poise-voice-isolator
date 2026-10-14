@@ -95,3 +95,7 @@ W2-wasapi-proc,2026-10-14 11:59,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),A
 G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),idle,0.0,236,9,0,0.0,203.89,202.62,203.96,2.69,52.05,151.87,0.121,0
 G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),gilblock,60.0,236,0,0,0.0,203.82,203.7,203.67,1.27,52.08,151.75,-0.083,0
 G1-gui,2026-10-14 12:55,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),the GUI's AudioWorker end to end (tools/win_gui_check.py),cpugil,120.0,237,0,0,0.0,204.75,203.9,204.64,1.42,52.08,152.69,0.383,0
+F1-steer,2026-10-14 21:17,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture timing steered,idle,0.0,237,0,0,0.0,191.56,191.55,191.63,0.85,47.43,144.14,0.1,0
+F2-steer,2026-10-14 21:18,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture timing steered,idle,0.0,237,0,1,5.5,198.58,198.19,198.76,1.22,52.41,146.17,0.661,0
+F3-steer,2026-10-14 21:19,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture timing steered; staircase step at 11 s,idle,0.0,237,0,2,10.5,206.09,196.9,206.0,9.63,62.45,143.63,7.046,0
+F4-steer,2026-10-14 22:15,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),"capture timing steered, 10-packet tries",idle,0.0,236,0,0,0.0,193.23,193.01,193.36,1.33,48.49,144.76,0.473,0
