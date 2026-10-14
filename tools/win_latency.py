@@ -484,13 +484,18 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
     search = SR // 2
     rows = []
     guess = None
+    misses = 0
     for L in range(SR, len(lis) - win, step):
         seg = lis[L:L + win].astype(np.float64)
         if np.dot(seg, seg) < 1e-6 * win:
             rows.append((t_lis[L], np.nan, np.nan, 0.0, np.nan))
             continue
         # Where in the reference recording this audio should be: about one
-        # latency earlier (first window: anywhere in the first seconds).
+        # latency earlier (first window, or after a second without a
+        # match, as when PortAudio drops a startup backlog: anywhere
+        # within 2 s).
+        if misses >= 4:
+            guess, misses = None, 0
         if guess is None:
             centre = np.searchsorted(t_ref, t_lis[L] - 0.15)
             half = SR * 2
@@ -504,7 +509,9 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
         R, corr = _best_lag(seg, ref[lo:hi].astype(np.float64), lo)
         lat = t_lis[L] - t_ref[R]
         if corr > 0.8:
-            guess = lat
+            guess, misses = lat, 0
+        else:
+            misses += 1
         av = cable = np.nan
         off = offset(R)
         if off is not None and dev[0] <= R - off <= dev[-1]:
@@ -524,6 +531,14 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
     def holes(pk):
         return len(_holes(pk))
 
+    # Dropouts: runs of silence in what the speakers played (the signal is
+    # continuous noise, so any is a gap), as (QPC time, samples).
+    quiet = np.abs(lis) < 1e-4
+    edges = np.diff(np.concatenate([[0], quiet.view(np.int8), [0]]))
+    g0, g1 = np.where(edges == 1)[0], np.where(edges == -1)[0]
+    keep = (g1 - g0) >= 64
+    gaps = np.column_stack([t_lis[g0[keep]], (g1 - g0)[keep]])
+
     marks = meta.get("marks", [])
     report = {"backend": meta["backend"], "engine": meta["engine"],
               "recording_holes": {"ref": holes(ref_pk), "lis": holes(lis_pk)},
@@ -534,8 +549,14 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
         sel = (rows[:, 0] >= a["t"] + 1.0) & (rows[:, 0] < b["t"])
         good = sel & (rows[:, 3] > 0.8) & np.isfinite(rows[:, 1])
         lat = rows[good, 1]
+        in_phase = (gaps[:, 0] >= a["t"]) & (gaps[:, 0] < b["t"])
+        dropouts = {"speaker_gaps": int(in_phase.sum()),
+                    "speaker_gap_ms": round(float(gaps[in_phase, 1].sum())
+                                            * 1000.0 / SR, 1)}
         if len(lat) < 4:
-            report["phases"].append({"phase": a["phase"], "windows": int(sel.sum())})
+            report["phases"].append({"phase": a["phase"], "windows": int(sel.sum()),
+                                     "bad_windows": int(sel.sum() - good.sum()),
+                                     **dropouts})
             continue
         tt = rows[good, 0]
         slope = np.polyfit(tt - tt[0], lat, 1)[0] * 60.0
@@ -554,6 +575,7 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
                                             - np.percentile(lat, 1)), 2),
             },
             "loop_ms_median": round(float(np.median(rows[good, 2])), 2),
+            **dropouts,
             **_split(rows[good]),
             "drift_ms_per_min": round(float(slope), 3),
         })
