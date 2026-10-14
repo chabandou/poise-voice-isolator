@@ -39,6 +39,7 @@
 #include <avrt.h>
 #include <timeapi.h>
 
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -165,10 +166,102 @@ static IAudioClient *open_client(IMMDeviceEnumerator *en, EDataFlow flow,
 	return client;
 }
 
+/* Bytes on their way to a file. The audio threads only copy into a ring;
+ * the writer thread does the file I/O (a disk stall under load once held
+ * a writing capture thread for 1.9 s, and loopback then lost audio
+ * without flagging it). One producer, one consumer. */
+struct ring {
+	char *buf;
+	size_t size;              /* power of two */
+	_Atomic size_t head, tail;
+	_Atomic uint64_t lost;    /* bytes dropped: the writer fell 1 ring behind */
+	FILE *file;
+};
+
+#define MAX_RINGS 8
+static struct ring *g_rings[MAX_RINGS];
+static int g_n_rings;
+static _Atomic int g_writer_stop;
+
+static void ring_open(struct ring *r, const char *path, const char *mode,
+		size_t size)
+{
+	r->buf = malloc(size);
+	r->size = size;
+	atomic_init(&r->head, 0);
+	atomic_init(&r->tail, 0);
+	atomic_init(&r->lost, 0);
+	r->file = fopen(path, mode);
+	if (r->buf == NULL || r->file == NULL || g_n_rings == MAX_RINGS) {
+		fprintf(stderr, "latmeter: cannot write %s\n", path);
+		exit(1);
+	}
+	g_rings[g_n_rings++] = r;
+}
+
+static void ring_put(struct ring *r, const void *data, size_t n)
+{
+	size_t head = atomic_load_explicit(&r->head, memory_order_relaxed);
+	size_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
+	size_t at = head & (r->size - 1), first;
+
+	if (head - tail + n > r->size) {
+		atomic_fetch_add(&r->lost, n);
+		return;
+	}
+	first = n < r->size - at ? n : r->size - at;
+	memcpy(r->buf + at, data, first);
+	memcpy(r->buf, (const char *)data + first, n - first);
+	atomic_store_explicit(&r->head, head + n, memory_order_release);
+}
+
+static void ring_printf(struct ring *r, const char *fmt, ...)
+{
+	char line[256];
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+	if (n > 0)
+		ring_put(r, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1);
+}
+
+static void ring_flush(struct ring *r)
+{
+	size_t head = atomic_load_explicit(&r->head, memory_order_acquire);
+	size_t tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
+	size_t n = head - tail, at = tail & (r->size - 1), first;
+
+	if (n == 0)
+		return;
+	first = n < r->size - at ? n : r->size - at;
+	fwrite(r->buf + at, 1, first, r->file);
+	fwrite(r->buf, 1, n - first, r->file);
+	atomic_store_explicit(&r->tail, head, memory_order_release);
+}
+
+static DWORD WINAPI writer_thread(void *arg)
+{
+	int i;
+
+	while (!atomic_load(&g_writer_stop)) {
+		for (i = 0; i < g_n_rings; i++)
+			ring_flush(g_rings[i]);
+		Sleep(20);
+	}
+	for (i = 0; i < g_n_rings; i++) {
+		ring_flush(g_rings[i]);
+		fclose(g_rings[i]->file);
+	}
+	return 0;
+}
+
 struct loopback {
 	IAudioClient *client;
 	IAudioCaptureClient *cap;
-	FILE *pcm, *log;
+	struct ring pcm, log;
 	uint64_t pos;
 	float *mono;
 	UINT32 mono_size;
@@ -191,15 +284,16 @@ static void open_recording(IMMDeviceEnumerator *en, EDataFlow flow,
 		die("loopback GetService", hr);
 	IAudioClient_GetBufferSize(lb->client, &lb->mono_size);
 	lb->mono = calloc(lb->mono_size, sizeof(float));
-	snprintf(path, sizeof(path), "%s.%s.f32", prefix, tag);
-	lb->pcm = fopen(path, "wb");
-	snprintf(path, sizeof(path), "%s.%s.csv", prefix, tag);
-	lb->log = fopen(path, "w");
-	if (!lb->mono || !lb->pcm || !lb->log) {
-		fprintf(stderr, "latmeter: cannot write %s.*\n", prefix);
+	if (lb->mono == NULL) {
+		fprintf(stderr, "latmeter: out of memory\n");
 		exit(1);
 	}
-	fprintf(lb->log, "pos,qpc100ns,frames,flags,read100ns\n");
+	/* 87 s of samples and minutes of packet lines in hand. */
+	snprintf(path, sizeof(path), "%s.%s.f32", prefix, tag);
+	ring_open(&lb->pcm, path, "wb", (size_t)1 << 24);
+	snprintf(path, sizeof(path), "%s.%s.csv", prefix, tag);
+	ring_open(&lb->log, path, "w", (size_t)1 << 20);
+	ring_printf(&lb->log, "pos,qpc100ns,frames,flags,read100ns\n");
 }
 
 static uint64_t now_100ns(void)
@@ -238,8 +332,8 @@ static void drain_loopback(struct loopback *lb)
 			lb->mono[i] = (flags & AUDCLNT_BUFFERFLAGS_SILENT) ? 0.0f :
 				0.5f * (s[0] + s[1]);
 		}
-		fwrite(lb->mono, sizeof(float), frames, lb->pcm);
-		fprintf(lb->log, "%llu,%llu,%u,%lu,%llu\n", (unsigned long long)lb->pos,
+		ring_put(&lb->pcm, lb->mono, frames * sizeof(float));
+		ring_printf(&lb->log, "%llu,%llu,%u,%lu,%llu\n", (unsigned long long)lb->pos,
 				(unsigned long long)qpc, frames, (unsigned long)flags,
 				(unsigned long long)now_100ns());
 		lb->pos += frames;
@@ -256,7 +350,7 @@ struct player {
 	UINT64 freq;
 	uint64_t written;
 	size_t sig_pos;
-	FILE *log;
+	struct ring log;
 };
 
 static void play_fill(struct player *p)
@@ -282,7 +376,7 @@ static void play_fill(struct player *p)
 		p->written += avail;
 	}
 	if (SUCCEEDED(IAudioClock_GetPosition(p->clock, &pos, &qpc)))
-		fprintf(p->log, "%llu,%.3f,%llu\n", (unsigned long long)p->written,
+		ring_printf(&p->log, "%llu,%.3f,%llu\n", (unsigned long long)p->written,
 				(double)pos * RATE / (double)p->freq,
 				(unsigned long long)qpc);
 }
@@ -328,7 +422,9 @@ int main(int argc, char **argv)
 	IMMDeviceEnumerator *en = NULL;
 	struct player p;
 	struct loopback ref, lis, tap;
-	int with_tap = argc == 7;
+	int with_tap = argc == 7, i;
+	uint64_t lost = 0;
+	HANDLE writer;
 	char path[1024];
 	double seconds;
 	ULONGLONG t_end;
@@ -371,12 +467,8 @@ int main(int argc, char **argv)
 	p.event = CreateEventW(NULL, FALSE, FALSE, NULL);
 	IAudioClient_SetEventHandle(p.client, p.event);
 	snprintf(path, sizeof(path), "%s.clk.csv", argv[5]);
-	p.log = fopen(path, "w");
-	if (p.log == NULL) {
-		fprintf(stderr, "latmeter: cannot write %s\n", path);
-		return 1;
-	}
-	fprintf(p.log, "written,devpos,qpc100ns\n");
+	ring_open(&p.log, path, "w", (size_t)1 << 20);
+	ring_printf(&p.log, "written,devpos,qpc100ns\n");
 
 	open_recording(en, eRender, argv[1], argv[5], "ref", &ref);
 	open_recording(en, eRender, argv[2], argv[5], "lis", &lis);
@@ -384,6 +476,7 @@ int main(int argc, char **argv)
 		open_recording(en, eCapture, argv[6], argv[5], "tap", &tap);
 	IMMDeviceEnumerator_Release(en);
 
+	writer = CreateThread(NULL, 0, writer_thread, NULL, 0, NULL);
 	play_fill(&p);
 	if (FAILED(hr = IAudioClient_Start(ref.client)))
 		die("start reference loopback", hr);
@@ -399,7 +492,8 @@ int main(int argc, char **argv)
 
 	/* Recordings must not lose audio under the load being measured: this
 	 * thread drains them with MMCSS priority into 2 s buffers (at normal
-	 * priority it once went 1.3 s without a CPU under full load). */
+	 * priority it once went 1.3 s without a CPU under full load) and
+	 * leaves the files to the writer thread. */
 	{
 		DWORD task = 0;
 		AvSetMmThreadCharacteristicsW(L"Pro Audio", &task);
@@ -419,17 +513,18 @@ int main(int argc, char **argv)
 	if (with_tap) {
 		drain_loopback(&tap);
 		IAudioClient_Stop(tap.client);
-		fclose(tap.pcm);
-		fclose(tap.log);
 	}
 	IAudioClient_Stop(p.client);
 	IAudioClient_Stop(ref.client);
 	IAudioClient_Stop(lis.client);
-	fclose(p.log);
-	fclose(ref.pcm);
-	fclose(ref.log);
-	fclose(lis.pcm);
-	fclose(lis.log);
+	atomic_store(&g_writer_stop, 1);
+	WaitForSingleObject(writer, INFINITE);
+	for (i = 0; i < g_n_rings; i++)
+		lost += atomic_load(&g_rings[i]->lost);
+	if (lost)
+		fprintf(stderr, "latmeter: WARNING: %llu bytes not written (disk too "
+				"slow): the recordings are incomplete\n",
+				(unsigned long long)lost);
 	fprintf(stderr, "latmeter: done (%llu samples played, %llu/%llu recorded)\n",
 			(unsigned long long)p.written, (unsigned long long)ref.pos,
 			(unsigned long long)lis.pos);
