@@ -15,7 +15,7 @@ from ..engines import create_engine, DEFAULT_DF3_ONNX
 from ..vb_cable import VB_CableSwitcher
 from ..constants import (
     DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE, DEVICE_SWITCH_INIT_DELAY_SEC,
-    DEVICE_SWITCH_SUCCESS_HOLD_SEC,
+    DEVICE_SWITCH_SUCCESS_HOLD_SEC, STATS_UPDATE_INTERVAL_SEC,
     MSG_NO_BACKEND, DEFAULT_MODEL, MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHED
 )
 from ..backend_detection import USE_SOUNDDEVICE, sd
@@ -196,15 +196,57 @@ class AudioWorker(QThread):
             self._cleanup()
             self.stopped_processing.emit()
     
+    def _run_native_loop(self, capture: str, render: str) -> bool:
+        """
+        Run on the native WASAPI path: a fixed delay, the two devices'
+        clocks bridged, and no Python in the audio thread (see
+        backends/wasapi_backend.py). Inference runs in this QThread.
+
+        Returns False when the path is unavailable or did not start, so
+        the caller falls back to the PortAudio loop.
+        """
+        from ..backends.wasapi_backend import (
+            WasapiError, WasapiStartError, run_wasapi_loop,
+            select_windows_backend, windows_backend_preference,
+        )
+        try:
+            preference = windows_backend_preference()
+            backend, reason = select_windows_backend(preference)
+        except (ValueError, RuntimeError) as e:
+            self.error_occurred.emit(f"Audio backend: {e}")
+            return True
+        _logger.info("Windows backend: %s (%s)", backend, reason)
+        if backend != "wasapi":
+            return False
+        try:
+            run_wasapi_loop(
+                self._processor, capture, render,
+                should_stop=lambda: not self._running,
+                on_stats=lambda stats, _elapsed: self.stats_updated.emit(stats),
+                stats_interval_sec=STATS_UPDATE_INTERVAL_SEC,
+                on_started=lambda: self.status_changed.emit("Processing"))
+        except WasapiStartError as e:
+            if preference == "wasapi":
+                self.error_occurred.emit(f"Audio device error: {e}")
+                return True
+            _logger.warning(
+                "Native audio path did not start (%s); using PortAudio", e)
+            return False
+        except WasapiError as e:
+            self.error_occurred.emit(f"Audio device error: {e}")
+        return True
+
     def _run_processing_loop(self) -> None:
         """
-        Main processing loop using the sounddevice backend (blocking I/O).
+        Main processing loop: the native WASAPI path when available, else
+        the sounddevice backend (blocking I/O).
 
         Captures CABLE Output as a regular WASAPI input device, processes
         through DenoiserAudioProcessor, and plays to the output device.
         Runs in this QThread; stops when self._running is cleared.
         """
         import numpy as np
+        from ..backends.sounddevice_backend import PortAudioSyncLog
         from ..device_utils import (
             find_loopback_device,
             get_output_device_id,
@@ -238,10 +280,6 @@ class AudioWorker(QThread):
             )
             return
 
-        input_sr = int(input_device_info.get('default_samplerate', 48000))
-        self._processor.setup_resampler(input_sr)
-        in_block_size = self._processor.input_block_size
-
         # Find output device (match input host API for compatibility)
         try:
             input_host_api = sd.query_hostapis(input_device_info['hostapi'])['name']
@@ -261,6 +299,15 @@ class AudioWorker(QThread):
 
         output_sr = self._processor.target_sr
         output_device_info = sd.query_devices(output_dev_id)
+
+        if self._run_native_loop(
+                input_name, str(output_device_info.get('name', ''))):
+            return
+
+        # PortAudio fallback.
+        input_sr = int(input_device_info.get('default_samplerate', 48000))
+        self._processor.setup_resampler(input_sr)
+        in_block_size = self._processor.input_block_size
 
         # Open input stream at its native rate, stereo (see note below),
         # then downmix to mono in software like the old PyAudio path did.
@@ -336,6 +383,12 @@ class AudioWorker(QThread):
 
         try:
             with input_stream, output_stream:
+                sync_log = PortAudioSyncLog(
+                    input_stream, output_stream,
+                    block_ms=(self._processor.frame_size * 1000.0
+                              / self._processor.target_sr),
+                    input_sr=input_sr,
+                    output_sr=int(output_stream.samplerate))
                 while self._running:
                     try:
                         audio_chunk, overflowed = input_stream.read(
@@ -370,6 +423,7 @@ class AudioWorker(QThread):
                         except Exception as e:
                             self.error_occurred.emit(f"Output write failed: {e}")
                             return
+                    sync_log.observe(time.monotonic())
 
                     current_time = time.time()
                     if current_time - last_stats_time >= 0.1:  # Every 100ms

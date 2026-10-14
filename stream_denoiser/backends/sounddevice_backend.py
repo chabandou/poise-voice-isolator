@@ -84,6 +84,61 @@ def _realtime_thread(enabled: bool):
     return mmcss_thread()
 
 
+class PortAudioSyncLog:
+    """"sync:" log lines for the PortAudio loop (the fallback path).
+
+    PortAudio's blocking WASAPI streams report neither overflows nor
+    underflows (measured: a 300 ms stall flagged nothing while the audio
+    of it was lost), so losses are inferred from time: StallCounter
+    compares the audio the loop got through with the wall time that
+    passed. Capture backlog and output queue come from read_available
+    and write_available, logged as their range over the interval.
+    """
+
+    def __init__(self, input_stream, output_stream, block_ms: float,
+                 input_sr: int, output_sr: int):
+        self._in, self._out = input_stream, output_stream
+        self._in_ms = 1000.0 / input_sr
+        self._out_ms = 1000.0 / output_sr
+        # Output buffer size: the stream's latency is its length; before
+        # the first write (unless primed) it is all free.
+        self._out_size = max(
+            output_stream.write_available,
+            int(round(output_stream.latency * output_sr)))
+        self.stalls = StallCounter(block_ms)
+        self._logger = get_logger(__name__)
+        self._last = None
+        self._reset()
+
+    def _reset(self):
+        self._backlog = [float("inf"), 0.0]
+        self._queue = [float("inf"), 0.0]
+
+    def observe(self, now: float) -> None:
+        """Call once per loop iteration (monotonic seconds)."""
+        stall = self.stalls.observe(now)
+        if stall:
+            self._logger.info("sync: loop stalled %.0f ms (audio lost)",
+                              stall)
+        try:
+            backlog = self._in.read_available * self._in_ms
+            queue = (self._out_size - self._out.write_available) * self._out_ms
+        except Exception:
+            return
+        for rng, v in ((self._backlog, backlog), (self._queue, queue)):
+            rng[0], rng[1] = min(rng[0], v), max(rng[1], v)
+        if self._last is None:
+            self._last = now
+        elif now - self._last >= SYNC_LOG_INTERVAL_SEC:
+            self._logger.info(
+                "sync: backend=portaudio capture_backlog=%.0f-%.0fms "
+                "output_queue=%.0f-%.0fms stalls=%d max_stall=%.0fms "
+                "lost=%.0fms", *self._backlog, *self._queue,
+                self.stalls.count, self.stalls.max_ms, self.stalls.lost_ms)
+            self._last = now
+            self._reset()
+
+
 def select_devices(processor: DenoiserAudioProcessor,
                    input_device: Optional[int] = None,
                    output_device: Optional[int] = None) -> Tuple[int, int]:
@@ -312,17 +367,45 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
 
 def process_with_sounddevice(processor: DenoiserAudioProcessor,
                              input_device: Optional[int] = None,
-                             output_device: Optional[int] = None) -> None:
+                             output_device: Optional[int] = None,
+                             backend: Optional[str] = None) -> None:
     """
-    Process system audio using sounddevice for both input and output.
+    Process system audio from CABLE Output to the output device.
+
+    Runs on the native WASAPI path when available (see wasapi_backend),
+    else on PortAudio blocking streams.
 
     Args:
         processor: DenoiserAudioProcessor instance
         input_device: Input device ID (optional)
         output_device: Output device ID (optional)
+        backend: "auto", "wasapi" or "portaudio"; None reads POISE_BACKEND
     """
     if not USE_SOUNDDEVICE:
         raise RuntimeError("This mode requires sounddevice library")
+
+    # Native path first: fixed delay, clocks bridged, no Python in the
+    # audio thread. PortAudio stays as the fallback.
+    from .wasapi_backend import (
+        WasapiStartError, process_with_wasapi, select_windows_backend,
+        windows_backend_preference)
+    preference = windows_backend_preference(backend)
+    chosen, reason = select_windows_backend(preference)
+    _logger.info("Windows backend: %s (%s)", chosen, reason)
+    if chosen == "wasapi":
+        input_id, output_id = select_devices(processor, input_device,
+                                             output_device)
+        try:
+            process_with_wasapi(processor, sd.query_devices(input_id)['name'],
+                                sd.query_devices(output_id)['name'])
+            return
+        except WasapiStartError as e:
+            if preference == "wasapi":
+                raise
+            _logger.warning(
+                "Native audio path did not start (%s); using PortAudio", e)
+            print(f"Warning: native audio path did not start ({e}); "
+                  "using PortAudio")
 
     def started(input_id: int, output_id: int) -> None:
         print(f"\nStarting real-time system audio processing...")

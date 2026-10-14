@@ -5,11 +5,16 @@
 #include "poise_core.h"
 
 #include <errno.h>
-#include <semaphore.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <semaphore.h>
+#endif
 
 #define HIST_MASK (POISE_HIST_SIZE - 1u)
 /* Input and output counts may differ by a few samples per cycle when the
@@ -23,6 +28,54 @@
 #define HIST_GUARD 4096
 /* Peak below which audio counts as silence (about -100 dBFS). */
 #define SILENCE 1e-5f
+
+/* The worker's wake-up: a POSIX semaphore, or a Win32 one on Windows
+ * (the WASAPI path). Posting never blocks on either. */
+#ifdef _WIN32
+typedef HANDLE poise_sem;
+
+static int sem_open_(poise_sem *s)
+{
+	*s = CreateSemaphoreW(NULL, 0, 0x7fffffff, NULL);
+	return *s != NULL;
+}
+
+static void sem_close_(poise_sem *s)
+{
+	CloseHandle(*s);
+}
+
+static void sem_post_(poise_sem *s)
+{
+	ReleaseSemaphore(*s, 1, NULL);
+}
+
+/* Wait until deadline_ms (GetTickCount64 time): 0 = posted, -1 = timeout. */
+static int sem_wait_until_(poise_sem *s, uint64_t deadline_ms)
+{
+	uint64_t now = GetTickCount64();
+	DWORD wait = deadline_ms > now ? (DWORD)(deadline_ms - now) : 0;
+
+	return WaitForSingleObject(*s, wait) == WAIT_OBJECT_0 ? 0 : -1;
+}
+#else
+typedef sem_t poise_sem;
+
+static int sem_open_(poise_sem *s)
+{
+	return sem_init(s, 0, 0) == 0;
+}
+
+static void sem_close_(poise_sem *s)
+{
+	sem_destroy(s);
+}
+
+static void sem_post_(poise_sem *s)
+{
+	sem_post(s);
+}
+#endif
 
 struct poise_core {
 	uint32_t frame;
@@ -51,7 +104,7 @@ struct poise_core {
 	/* Worker thread only. */
 	int64_t worker_next;
 
-	sem_t sem;
+	poise_sem sem;
 	int sem_ok;
 	_Atomic uint64_t stats[POISE_STAT_COUNT];
 	_Atomic uint64_t wet_id[POISE_WET_SLOTS]; /* frame index + 1, 0 = empty */
@@ -104,7 +157,7 @@ poise_core *poise_core_new(uint32_t frame, uint32_t dry_delay,
 		free(c);
 		return NULL;
 	}
-	if (sem_init(&c->sem, 0, 0) == 0)
+	if (sem_open_(&c->sem))
 		c->sem_ok = 1;
 	c->frame = frame;
 	c->dry_delay = dry_delay;
@@ -123,7 +176,7 @@ void poise_core_free(poise_core *c)
 	if (c == NULL)
 		return;
 	if (c->sem_ok)
-		sem_destroy(&c->sem);
+		sem_close_(&c->sem);
 	free(c->wet);
 	free(c);
 }
@@ -135,7 +188,7 @@ static void publish(poise_core *c, uint64_t old_pos, uint64_t new_pos)
 	atomic_store_explicit(&c->in_pos, new_pos, memory_order_release);
 	stat_set(c, POISE_STAT_IN_POS, new_pos);
 	if (c->sem_ok && new_pos / c->frame > old_pos / c->frame)
-		sem_post(&c->sem);
+		sem_post_(&c->sem);
 }
 
 void poise_core_input(poise_core *c, const float *const *planes,
@@ -340,6 +393,9 @@ static int64_t committed_frame(poise_core *c)
 int64_t poise_core_wait_frame(poise_core *c, float *dst, int timeout_ms)
 {
 	const int64_t F = c->frame;
+#ifdef _WIN32
+	uint64_t deadline = GetTickCount64() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 0);
+#else
 	struct timespec deadline;
 
 	clock_gettime(CLOCK_REALTIME, &deadline);
@@ -351,6 +407,7 @@ int64_t poise_core_wait_frame(poise_core *c, float *dst, int timeout_ms)
 			deadline.tv_nsec -= 1000000000L;
 		}
 	}
+#endif
 	for (;;) {
 		uint64_t ip;
 		int64_t next, first_open, oldest, limit, i;
@@ -393,10 +450,15 @@ int64_t poise_core_wait_frame(poise_core *c, float *dst, int timeout_ms)
 		c->worker_next = next;
 		if (timeout_ms <= 0 || !c->sem_ok)
 			return -1;
+#ifdef _WIN32
+		if (sem_wait_until_(&c->sem, deadline) != 0)
+			return atomic_load(&c->stopping) ? -2 : -1;
+#else
 		while (sem_timedwait(&c->sem, &deadline) != 0) {
 			if (errno != EINTR)
 				return atomic_load(&c->stopping) ? -2 : -1;
 		}
+#endif
 	}
 }
 
@@ -419,7 +481,7 @@ void poise_core_stop(poise_core *c)
 {
 	atomic_store_explicit(&c->stopping, 1, memory_order_release);
 	if (c->sem_ok)
-		sem_post(&c->sem);
+		sem_post_(&c->sem);
 }
 
 void poise_core_get_stats(poise_core *c, uint64_t *out, uint32_t n)
