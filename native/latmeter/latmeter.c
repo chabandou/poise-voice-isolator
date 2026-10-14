@@ -14,8 +14,11 @@
  * ~145 ms after it for VB-Cable (its reported latency). The clock log is
  * the reference that matches what a player sees.
  *
- *   latmeter <play-endpoint> <listen-endpoint> <signal.f32> <seconds>
+ *   latmeter <play-endpoint|-> <listen-endpoint> <signal.f32|-> <seconds>
  *            <out-prefix> [tap-capture-endpoint]
+ *
+ * With "-" as the play endpoint it only records (the listen loopback and
+ * the tap), e.g. what Poise gets and plays during a real session.
  *
  * signal.f32: mono float32 at 48 kHz, looped. Writes <prefix>.<tag>.f32
  * (mono float32) and <prefix>.<tag>.csv (one line per packet: first
@@ -423,22 +426,25 @@ int main(int argc, char **argv)
 	struct player p;
 	struct loopback ref, lis, tap;
 	int with_tap = argc == 7, i;
+	/* "-" as the play endpoint: record only (no signal, no reference),
+	 * e.g. what Poise gets and what it plays during a real session. */
+	int play = argc >= 2 && strcmp(argv[1], "-") != 0;
 	uint64_t lost = 0;
 	HANDLE writer;
 	char path[1024];
 	double seconds;
 	ULONGLONG t_end;
-	HANDLE th;
+	HANDLE th = NULL;
 	HRESULT hr;
 
 	if (argc != 6 && argc != 7) {
-		fprintf(stderr, "usage: latmeter <play-endpoint> <listen-endpoint> "
-				"<signal.f32> <seconds> <out-prefix> "
+		fprintf(stderr, "usage: latmeter <play-endpoint|-> <listen-endpoint> "
+				"<signal.f32|-> <seconds> <out-prefix> "
 				"[tap-capture-endpoint]\n");
 		return 2;
 	}
-	g_signal = read_signal(argv[3], &g_signal_len);
-	if (g_signal == NULL) {
+	g_signal = play ? read_signal(argv[3], &g_signal_len) : NULL;
+	if (play && g_signal == NULL) {
 		fprintf(stderr, "latmeter: cannot read %s (>= 1 s of float32)\n", argv[3]);
 		return 1;
 	}
@@ -454,41 +460,48 @@ int main(int argc, char **argv)
 		die("device enumerator", hr);
 
 	memset(&p, 0, sizeof(p));
-	p.client = open_client(en, eRender, argv[1],
-			AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 300000);
-	if (FAILED(hr = IAudioClient_GetService(p.client, &IID_IAudioRenderClient_,
-			(void **)&p.ren)))
-		die("render GetService", hr);
-	if (FAILED(hr = IAudioClient_GetService(p.client, &IID_IAudioClock_,
-			(void **)&p.clock)))
-		die("clock GetService", hr);
-	IAudioClock_GetFrequency(p.clock, &p.freq);
-	IAudioClient_GetBufferSize(p.client, &p.buffer);
-	p.event = CreateEventW(NULL, FALSE, FALSE, NULL);
-	IAudioClient_SetEventHandle(p.client, p.event);
-	snprintf(path, sizeof(path), "%s.clk.csv", argv[5]);
-	ring_open(&p.log, path, "w", (size_t)1 << 20);
-	ring_printf(&p.log, "written,devpos,qpc100ns\n");
-
-	open_recording(en, eRender, argv[1], argv[5], "ref", &ref);
+	memset(&ref, 0, sizeof(ref));
+	if (play) {
+		p.client = open_client(en, eRender, argv[1],
+				AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 300000);
+		if (FAILED(hr = IAudioClient_GetService(p.client, &IID_IAudioRenderClient_,
+				(void **)&p.ren)))
+			die("render GetService", hr);
+		if (FAILED(hr = IAudioClient_GetService(p.client, &IID_IAudioClock_,
+				(void **)&p.clock)))
+			die("clock GetService", hr);
+		IAudioClock_GetFrequency(p.clock, &p.freq);
+		IAudioClient_GetBufferSize(p.client, &p.buffer);
+		p.event = CreateEventW(NULL, FALSE, FALSE, NULL);
+		IAudioClient_SetEventHandle(p.client, p.event);
+		snprintf(path, sizeof(path), "%s.clk.csv", argv[5]);
+		ring_open(&p.log, path, "w", (size_t)1 << 20);
+		ring_printf(&p.log, "written,devpos,qpc100ns\n");
+		open_recording(en, eRender, argv[1], argv[5], "ref", &ref);
+	}
 	open_recording(en, eRender, argv[2], argv[5], "lis", &lis);
 	if (with_tap)
 		open_recording(en, eCapture, argv[6], argv[5], "tap", &tap);
 	IMMDeviceEnumerator_Release(en);
 
 	writer = CreateThread(NULL, 0, writer_thread, NULL, 0, NULL);
-	play_fill(&p);
-	if (FAILED(hr = IAudioClient_Start(ref.client)))
-		die("start reference loopback", hr);
+	if (play) {
+		play_fill(&p);
+		if (FAILED(hr = IAudioClient_Start(ref.client)))
+			die("start reference loopback", hr);
+	}
 	if (FAILED(hr = IAudioClient_Start(lis.client)))
 		die("start listen loopback", hr);
 	if (with_tap && FAILED(hr = IAudioClient_Start(tap.client)))
 		die("start tap capture", hr);
-	if (FAILED(hr = IAudioClient_Start(p.client)))
-		die("start player", hr);
-	th = CreateThread(NULL, 0, player_thread, &p, 0, NULL);
-	fprintf(stderr, "latmeter: playing into \"%s\", listening to \"%s\" for %.0f s\n",
-			argv[1], argv[2], seconds);
+	if (play) {
+		if (FAILED(hr = IAudioClient_Start(p.client)))
+			die("start player", hr);
+		th = CreateThread(NULL, 0, player_thread, &p, 0, NULL);
+	}
+	fprintf(stderr, "latmeter: %s \"%s\", listening to \"%s\" for %.0f s\n",
+			play ? "playing into" : "not playing; recording",
+			play ? argv[1] : (with_tap ? argv[6] : "-"), argv[2], seconds);
 
 	/* Recordings must not lose audio under the load being measured: this
 	 * thread drains them with MMCSS priority into 2 s buffers (at normal
@@ -500,22 +513,27 @@ int main(int argc, char **argv)
 	}
 	t_end = GetTickCount64() + (ULONGLONG)(seconds * 1000.0);
 	while (!atomic_load(&g_stop) && GetTickCount64() < t_end) {
-		drain_loopback(&ref);
+		if (play)
+			drain_loopback(&ref);
 		drain_loopback(&lis);
 		if (with_tap)
 			drain_loopback(&tap);
 		Sleep(2);
 	}
 	atomic_store(&g_stop, 1);
-	WaitForSingleObject(th, INFINITE);
-	drain_loopback(&ref);
+	if (th)
+		WaitForSingleObject(th, INFINITE);
+	if (play)
+		drain_loopback(&ref);
 	drain_loopback(&lis);
 	if (with_tap) {
 		drain_loopback(&tap);
 		IAudioClient_Stop(tap.client);
 	}
-	IAudioClient_Stop(p.client);
-	IAudioClient_Stop(ref.client);
+	if (play) {
+		IAudioClient_Stop(p.client);
+		IAudioClient_Stop(ref.client);
+	}
 	IAudioClient_Stop(lis.client);
 	atomic_store(&g_writer_stop, 1);
 	WaitForSingleObject(writer, INFINITE);
@@ -525,9 +543,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "latmeter: WARNING: %llu bytes not written (disk too "
 				"slow): the recordings are incomplete\n",
 				(unsigned long long)lost);
-	fprintf(stderr, "latmeter: done (%llu samples played, %llu/%llu recorded)\n",
-			(unsigned long long)p.written, (unsigned long long)ref.pos,
-			(unsigned long long)lis.pos);
+	fprintf(stderr, "latmeter: done (%llu samples played, %llu/%llu/%llu "
+			"recorded)\n", (unsigned long long)p.written,
+			(unsigned long long)ref.pos, (unsigned long long)lis.pos,
+			(unsigned long long)(with_tap ? tap.pos : 0));
 	timeEndPeriod(1);
 	CoUninitialize();
 	return 0;
