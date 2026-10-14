@@ -68,6 +68,8 @@ static const IID IID_IAudioCaptureClient_ = {0xC8ADBD64, 0xE71E, 0x48A0,
 	{0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17}};
 static const IID IID_IAudioRenderClient_ = {0xF294ACFC, 0x3146, 0x4483,
 	{0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2}};
+static const IID IID_IAudioClock_ = {0xCD63314F, 0x3FBA, 0x4A1B,
+	{0x81, 0x2C, 0xEF, 0x96, 0x35, 0x87, 0x28, 0xE7}};
 static const GUID SUBTYPE_IEEE_FLOAT_ = {0x00000003, 0x0000, 0x0010,
 	{0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 static const PROPERTYKEY PKEY_Device_FriendlyName_ = {{0xA45C254E, 0xDF1C,
@@ -99,9 +101,19 @@ static const PROPERTYKEY PKEY_Device_FriendlyName_ = {{0xA45C254E, 0xDF1C,
  * left beyond what a read needed, worst per window, as it would have
  * been with the fill at target (so it describes the capture timing, not
  * where the fill happens to be). When it runs thin the target rises at
- * once (by at most 10 ms per window, so a stall cannot inflate it), and
- * once a whole HOLD_WINDOWS stretch had headroom to spare it comes back
- * down slowly, never below where it started.
+ * once (by at most 10 ms per window), and once a whole HOLD_WINDOWS
+ * stretch had headroom to spare it comes back down slowly, never below
+ * where it started.
+ *
+ * A capture stall is not lateness that headroom could cover: reads come
+ * up short one after another until the shortfall passes STALL_SAMPLES.
+ * Such a window buys no headroom, and a rise made when the stall began
+ * (it looked like a late packet then) is taken back, so a stall costs
+ * the silence it leaves and nothing else: no delay added, nothing to
+ * release. (Raising by 10 ms per window, a 150 ms stall across a window
+ * boundary cost 20 ms for ~50 s, and stalls every half minute would
+ * ratchet the delay up.) Stall windows still count in the hold, so the
+ * target does not come down right after one.
  *
  * PI loop, critically damped: time constant 4 s while locking on, then
  * 10 s; at most 0.5%. Tracking a 2000 ppm clock difference costs a few
@@ -124,6 +136,10 @@ static const PROPERTYKEY PKEY_Device_FriendlyName_ = {{0xA45C254E, 0xDF1C,
 /* Fill above target dropped at once rather than resampled away (e.g. the
  * backlog of a capture stall), in samples. */
 #define RESYNC_SAMPLES (POISE_RATE / 25)
+/* Shortfall in a row (samples) beyond which capture stalled rather than
+ * ran late: more than packets 15 ms late in a rough stretch ever add up
+ * to, less than a dropout anyone would call a hiccup. */
+#define STALL_SAMPLES (POISE_RATE / 20)
 /* Capture runs this long before reading starts (s): its first packets
  * tend to come bunched up, and the read position is set from them. */
 #define START_SETTLE_SEC 0.05
@@ -145,8 +161,14 @@ struct poise_bridge {
 	double win_area;       /* fill integrated over this window */
 	int64_t win_min;       /* worst headroom in this window */
 	uint32_t win_reads;
+	uint32_t last_read;    /* samples the last read produced */
 	double hold[HOLD_WINDOWS];  /* headroom of recent windows, at target */
 	uint32_t n_hold, hold_pos;
+	uint32_t episode;      /* runs of short reads so far */
+	int64_t ep_short;      /* shortfall of the current run (0: none) */
+	int win_stall;         /* a run in this window passed STALL_SAMPLES */
+	uint32_t rise_episode; /* run in progress at the last rise (0: none) */
+	double rise;           /* what that rise added */
 	double iterm;          /* integral part of the rate correction */
 	uint64_t stats[POISE_BRIDGE_STAT_COUNT];
 };
@@ -301,9 +323,18 @@ static void end_window(poise_bridge *b, double now)
 		if (b->hold[i] < held)
 			held = b->hold[i];
 
-	if (room < b->safety / 2.0) {
+	if (b->win_stall) {
+		/* A stall: nothing headroom would have covered. */
+		b->win_stall = 0;
+	} else if (room < b->safety / 2.0) {
 		double rise = b->safety - room;
-		b->target += rise < MAX_RISE ? rise : MAX_RISE;
+
+		if (rise > MAX_RISE)
+			rise = MAX_RISE;
+		b->target += rise;
+		/* Short reads still going on: this may be a stall beginning. */
+		b->rise = rise;
+		b->rise_episode = b->ep_short > 0 ? b->episode : 0;
 	} else if (b->n_hold == HOLD_WINDOWS &&
 		   held > b->safety + RELEASE_SPARE) {
 		double spare = held - (b->safety + RELEASE_SPARE);
@@ -315,10 +346,12 @@ static void end_window(poise_bridge *b, double now)
 		b->target = BRIDGE_SIZE / 4;
 
 	/* A backlog far above target (capture caught up after a stall):
-	 * drop it now, down to the target. */
+	 * drop it now, down to the target. Windows end just before a read,
+	 * where the fill is half a read above its time average. */
 	fill = (double)bridge_fill(b) - b->frac;
-	if (mean > b->target + RESYNC_SAMPLES && fill > b->target) {
-		int64_t drop = (int64_t)(fill - b->target);
+	if (mean > b->target + RESYNC_SAMPLES &&
+	    fill > b->target + b->last_read / 2.0) {
+		int64_t drop = (int64_t)(fill - b->target - b->last_read / 2.0);
 		b->ipos += drop;
 		mean = b->target;
 		b->stats[POISE_BRIDGE_RESYNCS]++;
@@ -373,17 +406,36 @@ void poise_bridge_read(poise_bridge *b, float *out, uint32_t n)
 	}
 	need = b->ipos + (int64_t)ceil(b->frac + n * b->ratio) + TAPS_HALF + 1;
 	b->win_reads++;
+	b->last_read = n;
 	if (b->wpos - need < b->win_min)
 		b->win_min = b->wpos - need;
 	if (need > b->wpos) {
 		/* Capture fell short: what is missing is silence, so the output
 		 * keeps time. The late audio then lands behind it, raising the
-		 * fill by the shortfall; the target rises with it. */
+		 * fill by the shortfall; the target rises with it, unless the
+		 * shortfall keeps growing into a stall. */
 		int64_t short_by = need - b->wpos;
 		while (b->wpos < need)
 			bridge_write(b, 0.0f);
 		b->stats[POISE_BRIDGE_STARVED]++;
 		b->stats[POISE_BRIDGE_INSERTED] += (uint64_t)short_by;
+		if (b->ep_short == 0)
+			b->episode++;
+		if (b->ep_short <= STALL_SAMPLES &&
+		    b->ep_short + short_by > STALL_SAMPLES) {
+			b->stats[POISE_BRIDGE_STALLS]++;
+			if (b->rise_episode == b->episode) {
+				b->target -= b->rise;
+				if (b->target < b->start_level)
+					b->target = b->start_level;
+				b->rise_episode = 0;
+			}
+		}
+		b->ep_short += short_by;
+		if (b->ep_short > STALL_SAMPLES)
+			b->win_stall = 1;
+	} else {
+		b->ep_short = 0;
 	}
 	for (i = 0; i < n; i++) {
 		double ph = b->frac * PHASES;
@@ -424,6 +476,8 @@ struct stream {
 	IAudioClient *client;
 	IAudioCaptureClient *capture;
 	IAudioRenderClient *render;
+	IAudioClock *clock;   /* render only; NULL if unavailable */
+	UINT64 clock_freq;
 	HANDLE event;
 	UINT32 period;   /* samples at 48 kHz */
 	UINT32 buffer;   /* samples */
@@ -447,6 +501,10 @@ struct poise_wasapi {
 	int first_packet;
 	LARGE_INTEGER qpc_freq;
 	int64_t last_render_qpc;
+	uint64_t written;         /* samples handed to the speakers */
+	double t_diag;            /* start of the diagnostics second */
+	int64_t queue_min;        /* least render queue this second (samples) */
+	int64_t age_min;          /* least capture packet age this second (us) */
 
 	_Atomic uint64_t stats[POISE_WIN_STAT_COUNT];
 	_Atomic int failed;
@@ -621,6 +679,15 @@ static HRESULT open_stream(poise_wasapi *w, IMMDeviceEnumerator *en,
 	if (flow == eCapture)
 		return IAudioClient_GetService(s->client, &IID_IAudioCaptureClient_,
 				(void **)&s->capture);
+	/* The device clock shows what the speakers still have to play,
+	 * beyond our buffer (diagnostics only). */
+	if (SUCCEEDED(IAudioClient_GetService(s->client, &IID_IAudioClock_,
+			(void **)&s->clock)) &&
+	    (FAILED(IAudioClock_GetFrequency(s->clock, &s->clock_freq)) ||
+	     s->clock_freq == 0)) {
+		IAudioClock_Release(s->clock);
+		s->clock = NULL;
+	}
 	return IAudioClient_GetService(s->client, &IID_IAudioRenderClient_,
 			(void **)&s->render);
 }
@@ -633,6 +700,8 @@ static void close_stream(struct stream *s)
 		IAudioCaptureClient_Release(s->capture);
 	if (s->render)
 		IAudioRenderClient_Release(s->render);
+	if (s->clock)
+		IAudioClock_Release(s->clock);
 	if (s->client)
 		IAudioClient_Release(s->client);
 	if (s->event)
@@ -646,6 +715,7 @@ static HRESULT drain_capture(poise_wasapi *w)
 		BYTE *data;
 		UINT32 frames, next = 0, i, done;
 		DWORD flags;
+		UINT64 stamp = 0;
 		HRESULT hr;
 		double now;
 
@@ -655,12 +725,17 @@ static HRESULT drain_capture(poise_wasapi *w)
 		if (next == 0)
 			return S_OK;
 		hr = IAudioCaptureClient_GetBuffer(w->cap.capture, &data, &frames,
-				&flags, NULL, NULL);
+				&flags, NULL, &stamp);
 		if (FAILED(hr))
 			return hr;
 		if (hr == AUDCLNT_S_BUFFER_EMPTY)
 			return S_OK;
 		now = qpc_seconds(w, NULL);
+		if (stamp) {
+			int64_t age = (int64_t)(now * 1e6) - (int64_t)(stamp / 10);
+			if (age < w->age_min)
+				w->age_min = age;
+		}
 		/* The first packet always carries the flag. */
 		if ((flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) && !w->first_packet)
 			wstat_add(w, POISE_WIN_CAPTURE_GLITCHES, 1);
@@ -702,6 +777,33 @@ static void publish_bridge_stats(poise_wasapi *w)
 	wstat_set(w, POISE_WIN_FIFO_RESYNCS, b[POISE_BRIDGE_RESYNCS]);
 	wstat_set(w, POISE_WIN_FIFO_DROPPED, b[POISE_BRIDGE_DROPPED]);
 	wstat_set(w, POISE_WIN_RATE_PPB, b[POISE_BRIDGE_RATE_PPB]);
+	wstat_set(w, POISE_WIN_FIFO_STALLS, b[POISE_BRIDGE_STALLS]);
+}
+
+/* Where the delay outside our buffers sits, once a second: what the
+ * speakers have yet to play (written minus their clock's position, at
+ * this moment) and how old capture packets are when read. */
+static void diagnose(poise_wasapi *w, double now)
+{
+	UINT64 pos, qpc;
+
+	if (w->ren.clock &&
+	    SUCCEEDED(IAudioClock_GetPosition(w->ren.clock, &pos, &qpc))) {
+		double played = (double)pos * POISE_RATE / (double)w->ren.clock_freq +
+			(now - (double)qpc * 1e-7) * POISE_RATE;
+		int64_t queue = (int64_t)w->written - (int64_t)llround(played);
+
+		if (queue < w->queue_min)
+			w->queue_min = queue;
+	}
+	if (now - w->t_diag < 1.0)
+		return;
+	if (w->queue_min != INT64_MAX)
+		wstat_set(w, POISE_WIN_RENDER_QUEUE, (uint64_t)w->queue_min);
+	if (w->age_min != INT64_MAX)
+		wstat_set(w, POISE_WIN_CAPTURE_AGE_US, (uint64_t)w->age_min);
+	w->queue_min = w->age_min = INT64_MAX;
+	w->t_diag = now;
 }
 
 /* Top the speakers' buffer up to render_fill, in cycles of at most one
@@ -718,6 +820,8 @@ static HRESULT render_cycle(poise_wasapi *w, int primed)
 	hr = IAudioClient_GetCurrentPadding(w->ren.client, &padding);
 	if (FAILED(hr))
 		return hr;
+	if (primed)
+		diagnose(w, now);
 	if (primed) {
 		uint64_t gap_us = 0;
 
@@ -760,6 +864,7 @@ static HRESULT render_cycle(poise_wasapi *w, int primed)
 	if (FAILED(hr))
 		return hr;
 	wstat_add(w, POISE_WIN_RENDER_FRAMES, avail);
+	w->written += avail;
 	publish_bridge_stats(w);
 	return S_OK;
 }
@@ -919,6 +1024,7 @@ poise_wasapi *poise_wasapi_new(const char *capture, const char *render,
 	w->dry_gain = dry_gain;
 	w->fifo_safety = fifo_safety;
 	w->render_fill = render_fill;
+	w->queue_min = w->age_min = INT64_MAX;
 	QueryPerformanceFrequency(&w->qpc_freq);
 	w->ready = CreateEventW(NULL, TRUE, FALSE, NULL);
 	w->stop = CreateEventW(NULL, TRUE, FALSE, NULL);

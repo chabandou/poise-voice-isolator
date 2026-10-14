@@ -45,12 +45,15 @@ def _simulate(x, seconds, ppm=0.0, jitter_ms=0.0, stall=None, pairs=None,
 
     Capture packets of PERIOD samples come from a clock `ppm` faster than
     the render clock (the reference), each up to `jitter_ms` late. During
-    `stall` (start, end) no packet arrives; they all come at the end.
+    `stall` (start, end), or a list of them, no packet arrives; they all
+    come at the end.
     During `pairs` (start, end) packets arrive two at a time. During
     `rough` (start, end, ms) they are up to that many ms late.
     Returns (output, bridge, {checkpoint: stats}).
     """
     rng = np.random.default_rng(seed)
+    stalls = [] if stall is None else (
+        [stall] if np.isscalar(stall[0]) else list(stall))
     cap_dt = PERIOD / (SR * (1.0 + ppm * 1e-6))
     ren_dt = PERIOD / SR
     events = []
@@ -63,8 +66,9 @@ def _simulate(x, seconds, ppm=0.0, jitter_ms=0.0, stall=None, pairs=None,
         if pairs is not None and pairs[0] <= t < pairs[1] and k % 2 == 0:
             late = cap_dt
         t += late
-        if stall is not None and stall[0] <= t < stall[1]:
-            t = stall[1] + k * 1e-9
+        for s0, s1 in stalls:
+            if s0 <= t < s1:
+                t = s1 + k * 1e-9
         events.append((t, 0, k))
         k += 1
     n_ren = int(seconds / ren_dt)
@@ -186,20 +190,36 @@ def test_rough_capture_costs_latency_for_a_while_then_gives_it_back():
 def test_capture_stall_costs_silence_not_delay():
     """Capture delivers nothing for 150 ms, then all of it at once: the
     output plays silence meanwhile, then drops the stale audio at once.
-    It keeps some extra headroom for a while (a stall may recur), then
-    the delay is what it was before."""
+    No headroom covers a stall, so it buys none: the delay is what it was
+    before right away (the stall crosses a rate-control window, which
+    used to raise the target twice: +20 ms for most of a minute)."""
     x = _noise(61, seed=4)
     out, b, _ = _simulate(x, 60, stall=(10.0, 10.15))
     st = b.stats()
     assert st["starved"] >= 1
+    assert st["stalls"] == 1
     assert st["resyncs"] == 1
     assert st["dropped"] > 0.1 * SR
     before = _delay_ms(out, x, 8 * SR)
-    assert _delay_ms(out, x, 15 * SR) < before + 15.0
+    assert _delay_ms(out, x, 12 * SR) == pytest.approx(before, abs=2.0)
     assert _delay_ms(out, x, 58 * SR) == pytest.approx(before, abs=2.0)
+    assert st["target"] == START
     # The silence is where the stall was.
     gap = out[int(10.06 * SR):int(10.12 * SR)]
     assert np.max(np.abs(gap)) < 1e-6
+
+
+def test_repeated_stalls_do_not_ratchet_the_delay():
+    """A 120 ms stall every 15 s (a driver hiccuping): each one is a gap,
+    none of them adds delay, however often they come."""
+    x = _noise(122, seed=8)
+    stalls = [(t, t + 0.12) for t in np.arange(10.0, 115.0, 15.0)]
+    out, b, _ = _simulate(x, 120, ppm=150, jitter_ms=1.0, stall=stalls)
+    st = b.stats()
+    assert st["stalls"] == len(stalls)
+    before = _delay_ms(out, x, 8 * SR, 150)
+    after = [_delay_ms(out, x, int((t + 3.0) * SR), 150) for t, _ in stalls[1:]]
+    assert max(after) < before + 3.0
 
 
 def test_resampling_is_clean_while_correcting():

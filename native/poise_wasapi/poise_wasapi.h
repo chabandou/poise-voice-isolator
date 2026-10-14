@@ -37,6 +37,11 @@ enum poise_win_stat {
 	POISE_WIN_RENDER_BUFFER,
 	POISE_WIN_RENDER_FILL,      /* audio kept queued for the speakers (samples) */
 	POISE_WIN_MMCSS,            /* 1 if the thread got MMCSS "Pro Audio" priority */
+	POISE_WIN_FIFO_STALLS,      /* capture stalled (short 50 ms in a row): no headroom bought */
+	POISE_WIN_RENDER_QUEUE,     /* written but not yet played by the speakers, by their clock
+	                             * (samples; least over the last second) */
+	POISE_WIN_CAPTURE_AGE_US,   /* age of capture packets when read, from their time stamps
+	                             * (us; least over the last second) */
 	POISE_WIN_STAT_COUNT
 };
 
@@ -51,6 +56,7 @@ enum poise_bridge_stat {
 	POISE_BRIDGE_RESYNCS,
 	POISE_BRIDGE_DROPPED,
 	POISE_BRIDGE_RATE_PPB,
+	POISE_BRIDGE_STALLS,
 	POISE_BRIDGE_STAT_COUNT
 };
 

@@ -33,12 +33,13 @@ IO_STAT_NAMES = (
     "fifo_level", "fifo_headroom", "fifo_starved", "fifo_inserted",
     "fifo_resyncs", "fifo_dropped", "rate_ppb", "capture_period",
     "capture_buffer", "render_period", "render_buffer", "render_fill",
-    "mmcss",
+    "mmcss", "fifo_stalls", "render_queue", "capture_age_us",
 )
 # Order of poise_bridge_get_stats() (enum poise_bridge_stat).
 BRIDGE_STAT_NAMES = ("safety", "target", "level", "headroom", "starved",
-                     "inserted", "resyncs", "dropped", "rate_ppb")
-_SIGNED = {"rate_ppb", "headroom", "fifo_headroom"}
+                     "inserted", "resyncs", "dropped", "rate_ppb", "stalls")
+_SIGNED = {"rate_ppb", "headroom", "fifo_headroom", "render_queue",
+           "capture_age_us"}
 
 
 class WasapiUnavailable(RuntimeError):
