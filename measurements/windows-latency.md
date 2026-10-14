@@ -130,21 +130,35 @@ vs ~89 ms PortAudio.
 
 ## 3. The glitch staircase
 
-About once every 10 minutes the speaker endpoint drops 133-334 samples
-and every later sample plays one period (~10.7 ms) later, for good. Each
-step matches a dropout in the speakers' audio. Poise's counters (FIFO,
-render events, `render_queue`, capture age) and the loopback time stamps
-do not move.
+Now and then the speaker endpoint drops 133-334 samples and every later
+sample plays one period (~10.7 ms) later, for good. Each step matches a
+dropout in the speakers' audio. Poise's counters (FIFO, render events,
+`render_queue`, capture age) and the loopback time stamps do not move;
+the bridge's rate and VB-Cable's share do not either, so it is not the
+two devices' clocks disagreeing (that would also slip both ways and at
+a steady interval). Steps are always +1 period.
 
-| Run | Time | Dropout (samples) | Step |
+| Run | Time after the measurement starts | Dropout (samples) | Step |
 |---|---|---|---|
-| A-wasapi | 27 s | 219 | +10.8 ms |
+| W1-wasapi-proc | 5.5 s | 203 | +10.3 ms |
 | M11-wasapi | 22 s | 176 | +9.3 ms |
-| M11-wasapi | 168 s | 334 | +11.3 ms |
-| X1-wasapi | 141 s | 133 | +10.6 ms |
-| M21-wasapi | 283 s | 229 | +11.7 ms |
-| D3-wasapi | 37.5 s | 134 | +9.9 ms |
+| A-wasapi | 27 s | 219 | +10.8 ms |
 | M5-wasapi | 37 s | - | +10.6 ms |
+| D3-wasapi | 37.5 s | 134 | +9.9 ms |
+| X1-wasapi | 141 s (cpugil) | 133 | +10.6 ms |
+| M11-wasapi | 168 s (gil) | 334 | +11.3 ms |
+| M21-wasapi | 283 s (cpugil) | 229 | +11.7 ms |
+
+5 of the 8 came in the first 40 s of a session (in ~16 native-path
+starts); after that, 3 in ~110 minutes, all under load.
+
+Without Poise (N1-direct, `tools/win_steps.py`): latmeter played its
+noise straight into the speakers for 60 minutes and recorded them: no
+step, no dropout, the offset constant to the sample (1609 samples, 23.8
+ms against the stream clock). That rules out a steady glitch rate of the
+laptop's audio, not the start-up steps (one start) nor the rare later
+ones (0 in 60 minutes is likely at 3 per 110). Not pursued further for
+now; the next test would be many short starts with and without Poise.
 
 ## 4. PortAudio in its own process vs the native path
 
@@ -193,7 +207,7 @@ MMCSS, one ONNX thread and the collector paused.
 | Run | Dropouts (all phases) | Dry frames (all phases) | A/V | VB-Cable | Poise |
 |---|---|---|---|---|---|
 | H1b-wasapi (UI process, 21 ms) | 0 | 279 gilblock, 2 cpugil | 227-228 ms | 58.6 ms | 169 ms |
-| W1-wasapi-proc | 1 (a staircase step 10 s in) | 0 | 208.5 ms | 61.3 ms | 147 ms |
+| W1-wasapi-proc | 1 (a staircase step 5.5 s in) | 0 | 208.5 ms | 61.3 ms | 147 ms |
 | W2-wasapi-proc | 0 | 0 | 203.4-203.7 ms | 56.2 ms | 147 ms |
 
 For comparison, Poise's share with PortAudio is 108-110 ms (B, H2b, S2):
@@ -202,9 +216,17 @@ and no clock fight.
 
 A/V held within ~1 ms (p99-p1) through every phase. Inside Poise: core
 delay 1344 vs 2112 samples; the FIFO stayed at its starting level (785
-samples) instead of growing to ~1140; the speakers' own queue settled
+samples) instead of growing to ~1140; the speakers' own queue read
 higher than in-process runs (`render_queue` 2113 in W1, 1938 in W2, vs
-~1600), a per-start difference Poise can see (unlike the staircase).
+~1600).
+
+That reading is not delay. Across 13 runs, Poise's share minus its core
+delay and FIFO stays at 98.5-104.6 ms whether `render_queue` reads 33 or
+44 ms (correlation 0.17): the speaker stream's clock reports a different
+position on some starts. What does vary per start is the FIFO, 15.9-25.6
+ms: a clean start keeps it at 16.4 ms, VB-Cable packets arriving bunched
+in the first second raise it, and it never comes back down on these
+devices (up to ~9 ms for the session).
 
 ## 7. VB-Cable's own delay
 
@@ -249,11 +271,32 @@ had VB-Cable's share at 177.5 ms (A/V 330.9 ms) for the whole run, with
 Poise's share normal (153.4 ms): a VB-Cable start outlier, not seen in
 ~40 other starts.
 
+## 9. A hiss on one video (not a regression)
+
+A "small hiss here and there" heard through the GUI on headphones
+turned out to come from one video, in every build including the
+installed 1.1.0. Checked on a recorded session (R1-session: what Poise
+received and what the headphones got, latmeter's record-only mode):
+
+- The headphones got what the processing makes of the same input
+  offline (same spectrum to 24 kHz within 0.5 dB); the clock bridge's
+  resampling changes nothing (input and output spectra within 0.2 dB up
+  to 22 kHz).
+- The processing on master and on the installed build's code (ca909a2)
+  give the same output (within 1.9 dB of high-frequency energy in any
+  50 ms window); so do onnxruntime 1.19.2 and 1.31.0 (within -135 dB);
+  the model files are byte-identical.
+- The dial's range changed (strongest -80 dB in 1.1.0, -50 dB now,
+  8bd9537): that lets through a faint leak, 95 % below 1 kHz, typically
+  70 dB under the output; not the hiss.
+- Silent stretches in the headphone loopback are 16-bit rounding of
+  near-silence after the volume, not dropouts.
+
 ## Open issues
 
 - The glitch staircase (section 3).
+- The FIFO's level after a bunched start, up to ~9 ms for the session
+  (section 6).
 - PortAudio's bad starts (section 4).
 - VB-Cable's share of the A/V offset: 45-68 ms depending on the start;
   its latency setting does not reduce it (section 7).
-- The speakers' queue settles 0-10.7 ms deeper on some starts
-  (`render_queue`, section 6).
