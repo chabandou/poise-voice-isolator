@@ -8,7 +8,8 @@ PipeWire node, it hands frames to an inference thread through
 releases the GIL while the thread waits.
 
 ``ClockBridge`` is the capture-to-speakers clock bridge alone, driven by
-hand; the tests use it to check drift handling exactly.
+hand; the tests use it to check drift handling exactly, and with a
+``HoleFilter`` the taking out of VB-Cable's holes.
 """
 import ctypes
 import os
@@ -34,8 +35,10 @@ IO_STAT_NAMES = (
     "fifo_resyncs", "fifo_dropped", "rate_ppb", "capture_period",
     "capture_buffer", "render_period", "render_buffer", "render_fill",
     "mmcss", "fifo_stalls", "render_queue", "capture_age_us",
-    "capture_restarts",
+    "capture_restarts", "holes", "holes_removed", "holes_left",
 )
+# Order of poise_holes_get_stats() (enum poise_hole_stat).
+HOLE_STAT_NAMES = ("seen", "removed", "left")
 # Order of poise_bridge_get_stats() (enum poise_bridge_stat).
 BRIDGE_STAT_NAMES = ("safety", "target", "level", "headroom", "starved",
                      "inserted", "resyncs", "dropped", "rate_ppb", "stalls")
@@ -87,6 +90,10 @@ def _bind(lib) -> None:
         "poise_bridge_read": ([vp, fp, u32], None),
         "poise_bridge_get_stats": ([vp, ctypes.POINTER(u64), u32], None),
         "poise_bridge_delay": ([], u32),
+        "poise_holes_new": ([], vp),
+        "poise_holes_free": ([vp], None),
+        "poise_holes_push": ([vp, vp, fp, u32, ctypes.c_double, u32], u32),
+        "poise_holes_get_stats": ([vp, ctypes.POINTER(u64), u32], None),
     })
 
 
@@ -219,6 +226,14 @@ class ClockBridge:
         self._lib.poise_bridge_push(self._b, x.ctypes.data, len(x),
                                     float(now))
 
+    def push_holes(self, holes: "HoleFilter", x: np.ndarray, now: float,
+                   room: int) -> int:
+        """push() through a hole filter: VB-Cable's holes taken back out
+        as far as `room` allows; returns how much was."""
+        x = np.ascontiguousarray(x, dtype=np.float32)
+        return int(self._lib.poise_holes_push(holes._h, self._b, x.ctypes.data,
+                                              len(x), float(now), int(room)))
+
     def update(self, now: float) -> None:
         self._lib.poise_bridge_update(self._b, float(now))
 
@@ -235,6 +250,32 @@ class ClockBridge:
         if self._b:
             self._lib.poise_bridge_free(self._b)
             self._b = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+class HoleFilter:
+    """The native path's filter for VB-Cable's holes (blocks of zeros it
+    inserts when it runs dry), for ClockBridge.push_holes()."""
+
+    def __init__(self):
+        self._lib = load_library()
+        self._h = self._lib.poise_holes_new()
+        if not self._h:
+            raise MemoryError("poise_holes_new")
+
+    def stats(self) -> Dict[str, int]:
+        return _stats(self._lib.poise_holes_get_stats, self._h,
+                      HOLE_STAT_NAMES)
+
+    def close(self) -> None:
+        if self._h:
+            self._lib.poise_holes_free(self._h)
+            self._h = None
 
     def __del__(self):
         try:

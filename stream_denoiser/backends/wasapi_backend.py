@@ -135,6 +135,10 @@ _IO_EVENTS = (
     ("fifo_starved", "capture fell short of a cycle; silence inserted"),
     ("fifo_stalls", "capture stalled (50 ms or more without audio)"),
     ("fifo_resyncs", "capture ran far ahead; excess dropped"),
+    ("holes", "VB-Cable ran dry inside (a block of zeros in CABLE Output)"),
+    ("holes_removed", "... taken out before it played (samples)"),
+    ("holes_left", "... kept: played already or no room to take out "
+                   "(samples; the delay grew as much)"),
 )
 
 

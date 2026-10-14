@@ -17,7 +17,7 @@ if sys.platform != "win32":
     pytest.skip("Windows only", allow_module_level=True)
 
 from stream_denoiser.backends.wasapi_node import (  # noqa: E402
-    ClockBridge, WasapiUnavailable, load_library)
+    ClockBridge, HoleFilter, WasapiUnavailable, load_library)
 
 try:
     load_library()
@@ -237,3 +237,98 @@ def test_resampling_is_clean_while_correcting():
     tone = spec[max(0, peak - 8):peak + 9].sum()
     rest = spec.sum() - tone
     assert 10 * np.log10(rest / tone) < -70
+
+
+def _with_hole(x, at, length, room, filt=True, seconds=3.0):
+    """VB-Cable running dry: capture delivers x with `length` zeros put in
+    at sample `at` (everything after comes that much later), packets on
+    time. Through the hole filter when `filt`, whose take-outs the render
+    buffer gives up (up to `room` in all): the next reads are that much
+    shorter. Returns (output, bridge, filter)."""
+    cap = np.concatenate([x[:at], np.zeros(length, np.float32), x[at:]])
+    b, h = ClockBridge(START, SAFETY), HoleFilter()
+    out, owe, taken = [], 0, 0
+    for k in range(int(seconds * SR / PERIOD)):
+        t = (k + 1) * PERIOD / SR
+        pkt = cap[k * PERIOD:(k + 1) * PERIOD]
+        if filt:
+            got = b.push_holes(h, pkt, t, room - taken)
+            taken += got
+            owe += got
+        else:
+            b.push(pkt, t)
+        b.update(t + 0.0037)
+        n = PERIOD - min(owe, PERIOD)
+        owe -= PERIOD - n
+        out.append(b.read(n))
+    return np.concatenate(out), b, h
+
+
+def _offset(out, x, o, n=2400):
+    """Output index minus the input index of its audio, at output o."""
+    return o - _source_pos(out, x, o, o - START, search=3000, n=n)
+
+
+def _hole_shift(x, length, room, filt=True):
+    """A hole at 1.5 s: how much later the audio plays at 2.5 s than with
+    no hole (samples), and (output, bridge, filter)."""
+    at, o = int(1.5 * SR), int(2.5 * SR)
+    ref, _, _ = _with_hole(x, at, 0, room, filt=False)
+    out, b, h = _with_hole(x, at, length, room, filt=filt)
+    return _offset(out, x, o) - _offset(ref, x, o), out, b, h
+
+
+def _zero_runs(y, lo=64):
+    z = np.abs(y) < 1e-6
+    e = np.diff(np.concatenate([[0], z.view(np.int8), [0]]))
+    a, b = np.where(e == 1)[0], np.where(e == -1)[0]
+    return [(int(i), int(j - i)) for i, j in zip(a, b) if j - i >= lo]
+
+
+def test_a_vb_cable_hole_is_heard_and_delays_everything_after():
+    """What the filter is for: without it the zeros play, and all audio
+    after them is late by their length for good."""
+    x = _noise(4)
+    shift, out, b, _ = _hole_shift(x, 480, room=550, filt=False)
+    assert [n for _, n in _zero_runs(out[SR // 2:])] == [pytest.approx(480, abs=70)]
+    assert shift == 480
+
+
+@pytest.mark.parametrize("length", [447, 480, 556])
+def test_a_vb_cable_hole_is_taken_out(length):
+    """With the filter the zeros never play and the audio after them
+    follows on without a jump: once the render buffer has given up as
+    much, the delay is what it would have been without the hole."""
+    x = _noise(4, seed=length)
+    shift, out, b, h = _hole_shift(x, length, room=600)
+    assert h.stats() == {"seen": 1, "removed": length, "left": 0}
+    assert b.stats()["starved"] == 0
+    assert _zero_runs(out[SR // 2:]) == []
+    # (the FIFO dips while the reads catch up: the rate control moves a
+    # couple of samples)
+    assert abs(shift) <= 3
+
+
+def test_a_hole_bigger_than_the_room_is_taken_out_as_far_as_it_fits():
+    x = _noise(4, seed=3)
+    shift, out, b, h = _hole_shift(x, 556, room=300)
+    assert h.stats() == {"seen": 1, "removed": 300, "left": 256}
+    assert b.stats()["starved"] == 0
+    assert shift == pytest.approx(256, abs=3)
+
+
+@pytest.mark.parametrize("length", [100, 2000])
+def test_short_zero_runs_and_real_silence_stay(length):
+    x = _noise(4, seed=4)
+    shift, out, b, h = _hole_shift(x, length, room=600)
+    assert h.stats()["seen"] == 0
+    assert shift == pytest.approx(length, abs=3)
+
+
+def test_zeros_before_any_audio_stay():
+    """Silence until the player starts is no hole: nothing came before."""
+    x = _noise(4, seed=5)
+    x[:SR // 2] = 0.0
+    x[SR // 2 - 1] = 0.0
+    out, b, h = _with_hole(x, 100, 480, room=550)
+    assert h.stats()["seen"] == 0

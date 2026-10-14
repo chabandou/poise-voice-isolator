@@ -469,6 +469,102 @@ void poise_bridge_get_stats(poise_bridge *b, uint64_t *out, uint32_t n)
 		out[i] = b->stats[i];
 }
 
+/* ==== VB-Cable's holes ================================================= */
+
+/*
+ * Now and then VB-Cable runs dry inside: CABLE Output then delivers a
+ * block of exact zeros (441-556 samples seen, about one of its 10 ms
+ * blocks) in the middle of the audio, and the audio after it comes that
+ * much later. Nothing is lost: the audio on either side of the zeros is
+ * continuous. Most come within a second of a player starting on CABLE
+ * Input, some later under load, with or without Poise; each adds its
+ * length to the delay while the player's stream lasts (the glitch
+ * staircase, measurements/windows-latency.md section 3).
+ *
+ * So a run of exact zeros HOLE_MIN..HOLE_MAX long with audio right
+ * before and after is taken back out of the bridge, as far as it is not
+ * read yet, and the render buffer gives up as much (`room`, about one
+ * period: one hole per session), so the bridge does not run short: the
+ * gap is not heard and the delay stays. What was played already or did
+ * not fit stays in. Real audio has no such runs (none in a recorded
+ * video session); taking one out of it would cost ~10 ms of silence.
+ */
+#define HOLE_MIN 240
+#define HOLE_MAX 1024
+
+struct poise_holes {
+	uint32_t run;        /* exact zeros in a row so far */
+	int after_audio;     /* audio came right before them */
+	int audio;           /* the last sample was audio */
+	uint64_t stats[POISE_HOLE_STAT_COUNT];
+};
+
+poise_holes *poise_holes_new(void)
+{
+	return calloc(1, sizeof(poise_holes));
+}
+
+void poise_holes_free(poise_holes *h)
+{
+	free(h);
+}
+
+/* Take back up to n of the newest samples, as far as no read has used
+ * them; returns how many. */
+static uint32_t bridge_unwrite(poise_bridge *b, uint32_t n)
+{
+	int64_t unread = b->started ?
+		b->wpos - (b->ipos + TAPS_HALF + 1) : b->wpos;
+
+	if (unread < 0)
+		unread = 0;
+	if ((int64_t)n > unread)
+		n = (uint32_t)unread;
+	b->wpos -= n;
+	return n;
+}
+
+uint32_t poise_holes_push(poise_holes *h, poise_bridge *b, const float *in,
+		uint32_t n, double now, uint32_t room)
+{
+	uint32_t i, from = 0, taken = 0;
+
+	for (i = 0; i < n; i++) {
+		if (in[i] == 0.0f) {
+			if (h->run == 0)
+				h->after_audio = h->audio;
+			if (h->run < UINT32_MAX)
+				h->run++;
+			h->audio = 0;
+			continue;
+		}
+		if (h->after_audio && h->run >= HOLE_MIN && h->run <= HOLE_MAX) {
+			/* A hole ends here: push up to it, then take it back. */
+			uint32_t cut;
+
+			poise_bridge_push(b, in + from, i - from, now);
+			from = i;
+			cut = bridge_unwrite(b, h->run < room - taken ? h->run : room - taken);
+			taken += cut;
+			h->stats[POISE_HOLE_SEEN]++;
+			h->stats[POISE_HOLE_REMOVED] += cut;
+			h->stats[POISE_HOLE_LEFT] += h->run - cut;
+		}
+		h->run = 0;
+		h->audio = 1;
+	}
+	poise_bridge_push(b, in + from, n - from, now);
+	return taken;
+}
+
+void poise_holes_get_stats(poise_holes *h, uint64_t *out, uint32_t n)
+{
+	uint32_t i;
+
+	for (i = 0; i < n && i < POISE_HOLE_STAT_COUNT; i++)
+		out[i] = h->stats[i];
+}
+
 /* ==== WASAPI =========================================================== */
 
 /*
@@ -502,6 +598,9 @@ void poise_bridge_get_stats(poise_bridge *b, uint64_t *out, uint32_t n)
 #define STEER_TRIES 12
 /* Packets this close together came in the same pass (s). */
 #define STEER_PAIR_GAP 0.003
+/* Render buffer kept above one period when giving some up for VB-Cable's
+ * holes (samples). */
+#define RENDER_MIN_SPARE 64
 
 typedef HANDLE (WINAPI *av_set_fn)(LPCWSTR, LPDWORD);
 typedef BOOL (WINAPI *av_revert_fn)(HANDLE);
@@ -549,6 +648,12 @@ struct poise_wasapi {
 	uint32_t steer_pairs;
 	double steer_last;        /* arrival of the previous packet (s) */
 	double steer_age[STEER_PACKETS];
+
+	/* VB-Cable's holes (see above): taken out of the bridge, the render
+	 * buffer then gives up hole_cut, down to render_fill_min. */
+	poise_holes *holes;
+	uint32_t hole_cut;
+	uint32_t render_fill_min;
 
 	_Atomic uint64_t stats[POISE_WIN_STAT_COUNT];
 	_Atomic int failed;
@@ -809,7 +914,7 @@ static HRESULT drain_capture(poise_wasapi *w)
 {
 	for (;;) {
 		BYTE *data;
-		UINT32 frames, next = 0, i, done;
+		UINT32 frames, next = 0, i, done, room;
 		DWORD flags;
 		UINT64 stamp = 0;
 		HRESULT hr;
@@ -852,7 +957,10 @@ static HRESULT drain_capture(poise_wasapi *w)
 				for (i = 0; i < n; i++)
 					w->cap_mono[i] = 0.5f * (src[2 * i] + src[2 * i + 1]);
 			}
-			poise_bridge_push(w->bridge, w->cap_mono, n, now);
+			room = w->render_fill > w->render_fill_min + w->hole_cut ?
+				w->render_fill - w->render_fill_min - w->hole_cut : 0;
+			w->hole_cut += poise_holes_push(w->holes, w->bridge, w->cap_mono,
+					n, now, room);
 			done += n;
 		}
 		hr = IAudioCaptureClient_ReleaseBuffer(w->cap.capture, frames);
@@ -885,6 +993,14 @@ static void publish_bridge_stats(poise_wasapi *w)
 	wstat_set(w, POISE_WIN_FIFO_DROPPED, b[POISE_BRIDGE_DROPPED]);
 	wstat_set(w, POISE_WIN_RATE_PPB, b[POISE_BRIDGE_RATE_PPB]);
 	wstat_set(w, POISE_WIN_FIFO_STALLS, b[POISE_BRIDGE_STALLS]);
+	if (w->holes) {
+		uint64_t h[POISE_HOLE_STAT_COUNT];
+
+		poise_holes_get_stats(w->holes, h, POISE_HOLE_STAT_COUNT);
+		wstat_set(w, POISE_WIN_HOLES, h[POISE_HOLE_SEEN]);
+		wstat_set(w, POISE_WIN_HOLES_REMOVED, h[POISE_HOLE_REMOVED]);
+		wstat_set(w, POISE_WIN_HOLES_LEFT, h[POISE_HOLE_LEFT]);
+	}
 }
 
 /* Where the delay outside our buffers sits, once a second: what the
@@ -945,6 +1061,13 @@ static HRESULT render_cycle(poise_wasapi *w, int primed)
 		if (padding == 0)
 			wstat_add(w, POISE_WIN_RENDER_UNDERRUNS, 1);
 		wstat_add(w, POISE_WIN_RENDER_EVENTS, 1);
+	}
+	if (w->hole_cut) {
+		/* Holes taken out of the bridge: as much less queued for the
+		 * speakers, so what follows plays that much sooner. */
+		w->render_fill -= w->hole_cut;
+		w->hole_cut = 0;
+		wstat_set(w, POISE_WIN_RENDER_FILL, w->render_fill);
 	}
 	if (padding >= w->render_fill)
 		return S_OK;
@@ -1032,7 +1155,12 @@ static DWORD WINAPI audio_thread(void *arg)
 	 * and the safety (see the rate control). */
 	w->bridge = poise_bridge_new(w->quantum + TAPS_HALF + 1 + w->fifo_safety,
 			w->fifo_safety);
-	if (!w->cap_mono || !w->mono_in || !w->mono_out || !w->core || !w->bridge) {
+	w->holes = poise_holes_new();
+	/* What the render buffer may give up for holes: down to a period
+	 * and RENDER_MIN_SPARE. */
+	w->render_fill_min = w->ren.period + RENDER_MIN_SPARE;
+	if (!w->cap_mono || !w->mono_in || !w->mono_out || !w->core || !w->bridge ||
+	    !w->holes) {
 		fail_msg(w, "out of memory or invalid frame/fade/safety");
 		goto out;
 	}
@@ -1177,6 +1305,7 @@ void poise_wasapi_destroy(poise_wasapi *w)
 		CloseHandle(w->stop);
 	poise_core_free(w->core);
 	poise_bridge_free(w->bridge);
+	poise_holes_free(w->holes);
 	free(w->cap_mono);
 	free(w->mono_in);
 	free(w->mono_out);
@@ -1212,5 +1341,7 @@ uint32_t poise_wasapi_stat_count(void)
 uint32_t poise_wasapi_io_latency(poise_wasapi *w)
 {
 	return (uint32_t)(atomic_load_explicit(&w->stats[POISE_WIN_FIFO_LEVEL],
-			memory_order_relaxed) + w->render_fill);
+			memory_order_relaxed) +
+		atomic_load_explicit(&w->stats[POISE_WIN_RENDER_FILL],
+			memory_order_relaxed));
 }

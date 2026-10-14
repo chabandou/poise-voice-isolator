@@ -44,7 +44,18 @@ enum poise_win_stat {
 	                             * (us; least over the last second) */
 	POISE_WIN_CAPTURE_RESTARTS, /* capture restarts at the start to get clear of the
 	                             * cable's timer (see "capture timing") */
+	POISE_WIN_HOLES,            /* VB-Cable's holes seen (see "VB-Cable's holes") */
+	POISE_WIN_HOLES_REMOVED,    /* samples of them taken out before they played */
+	POISE_WIN_HOLES_LEFT,       /* samples of them kept: played already, or no room */
 	POISE_WIN_STAT_COUNT
+};
+
+/* Hole filter counters (poise_holes_get_stats), as POISE_WIN_HOLES... */
+enum poise_hole_stat {
+	POISE_HOLE_SEEN,
+	POISE_HOLE_REMOVED,
+	POISE_HOLE_LEFT,
+	POISE_HOLE_STAT_COUNT
 };
 
 /* Bridge counters (poise_bridge_get_stats), a subset of the above. */
@@ -103,5 +114,15 @@ void poise_bridge_update(poise_bridge *b, double now);
 void poise_bridge_read(poise_bridge *b, float *out, uint32_t n);
 void poise_bridge_get_stats(poise_bridge *b, uint64_t *out, uint32_t n);
 uint32_t poise_bridge_delay(void);
+
+/* The hole filter alone (tests; see "VB-Cable's holes"): pushes capture
+ * audio into a bridge, taking holes out as far as `room` allows (samples
+ * the render buffer can give up). Returns what it took out. */
+typedef struct poise_holes poise_holes;
+poise_holes *poise_holes_new(void);
+void poise_holes_free(poise_holes *h);
+uint32_t poise_holes_push(poise_holes *h, poise_bridge *b, const float *in,
+		uint32_t n, double now, uint32_t room);
+void poise_holes_get_stats(poise_holes *h, uint64_t *out, uint32_t n);
 
 #endif
