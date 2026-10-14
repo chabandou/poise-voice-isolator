@@ -255,7 +255,7 @@ def cmd_run(args) -> Path:
     watch = NodeWatch(out / "node.jsonl")
     started = threading.Event()
     meta = {"backend": args.backend, "engine": args.engine,
-            "priority_class": not args.no_priority_class,
+            "atten_lim_db": args.atten_lim_db,
             "margin_env": os.environ.get("POISE_WIN_MARGIN_MS"),
             "speakers": args.speakers, "phases": phases, "log": log_path}
 
@@ -263,8 +263,6 @@ def cmd_run(args) -> Path:
         try:
             if args.backend == "wasapi":
                 from stream_denoiser.backends import wasapi_backend
-                if args.no_priority_class:
-                    wasapi_backend.ABOVE_NORMAL_PRIORITY_CLASS =                         wasapi_backend.NORMAL_PRIORITY_CLASS
                 real_node = wasapi_backend.WasapiNode
 
                 class Watched(real_node):
@@ -614,8 +612,6 @@ def main():
     r.add_argument("--settle", type=float, default=3.0,
                    help="seconds Poise runs before the measurement starts")
     r.add_argument("--out", default=None)
-    r.add_argument("--no-priority-class", action="store_true",
-                   help="leave the process at normal priority (A/B tests)")
     a = sub.add_parser("analyze")
     a.add_argument("dir")
     args = ap.parse_args()
