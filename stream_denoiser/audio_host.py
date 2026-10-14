@@ -200,14 +200,16 @@ class AudioHost:
     def start(self, config: dict) -> None:
         """Start a session.
 
-        config keys: model, backend ("pipewire", "pulse", "portaudio" or
-        "wasapi"),
+        config keys: model, backend ("pipewire", "pulse"; on Windows
+        "auto", "wasapi" or "portaudio"),
         output_device, aad_threshold_db, atten_lim_db (optional);
         pipewire only, optional: route_default, node_name, description;
         pulse only: routed (the UI set up the null sink), monitor_source,
-        fallback_sink; portaudio and wasapi (Windows), optional:
-        input_device and output_device (PortAudio IDs or names);
-        portaudio only: realtime (MMCSS, default on).
+        fallback_sink; Windows ("auto": the native path, PortAudio if it
+        cannot start), optional: input_device and output_device
+        (PortAudio IDs; names for "wasapi"), realtime (PortAudio loop
+        under MMCSS, default on). Optional everywhere: onnx_path (a custom
+        DF3 model), aad_enabled (default on).
         """
         if self.running:
             raise RuntimeError("audio session already running")
@@ -497,13 +499,17 @@ def _build_processor(config: dict):
     if config.get("atten_lim_db") is not None:
         kwargs["atten_lim_db"] = float(config["atten_lim_db"])
     # A fresh engine per session: engines hold streaming state.
-    engine = create_engine(config.get("model") or DEFAULT_MODEL, **kwargs)
+    engine_kwargs = dict(kwargs)
+    if config.get("onnx_path"):
+        engine_kwargs["onnx_path"] = config["onnx_path"]
+    engine = create_engine(config.get("model") or DEFAULT_MODEL,
+                           **engine_kwargs)
     try:
         return DenoiserAudioProcessor(
             engine,
             target_sr=PULSE_TARGET_SR,
             frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-            enable_aad=True,
+            enable_aad=bool(config.get("aad_enabled", True)),
             aad_threshold_db=float(config.get("aad_threshold_db",
                                               DEFAULT_AAD_THRESHOLD_DB)),
             **kwargs)
@@ -573,29 +579,50 @@ def _run_backend(processor, config: dict, ctl: _Control) -> dict:
             on_stats=ctl.on_stats, stats_interval_sec=STATS_INTERVAL_SEC,
             pause_gc=True)
         return {"empty_reads": empty_reads}
-    if backend == "portaudio":
-        from .backends.sounddevice_backend import run_portaudio_loop
-        ctl.channel.send({"event": "running", "backend": backend})
-        run_portaudio_loop(
-            processor, config.get("input_device"), config.get("output_device"),
-            should_stop=ctl.should_stop, on_stats=ctl.on_stats,
-            stats_interval_sec=STATS_INTERVAL_SEC, pause_gc=True,
-            realtime=bool(config.get("realtime", True)))
-        return {}
-    if backend == "wasapi":
-        from .backends.wasapi_backend import run_wasapi_loop
-        from .constants import WIN_PROCESS_MARGIN_SAMPLES
-        ctl.channel.send({"event": "running", "backend": backend})
-        # Nothing else holds this process's GIL: inference needs far less
-        # time per frame than in the UI's process (see constants).
-        run_wasapi_loop(
-            processor, _device_name(config.get("input_device"), "input"),
-            _device_name(config.get("output_device"), "output"),
-            should_stop=ctl.should_stop, on_stats=ctl.on_stats,
-            stats_interval_sec=STATS_INTERVAL_SEC,
-            margin=WIN_PROCESS_MARGIN_SAMPLES, pause_gc=True)
+    if backend in ("auto", "wasapi", "portaudio") and sys.platform == "win32":
+        _run_windows(processor, config, ctl, backend)
         return {}
     raise ValueError(f"unknown audio backend {backend!r}")
+
+
+def _run_windows(processor, config: dict, ctl: _Control, backend: str) -> None:
+    """The native path ("wasapi"), PortAudio ("portaudio"), or the native
+    path with PortAudio as the fallback when it cannot start ("auto", as
+    the CLI does). "running" goes out once audio flows."""
+    from .backends.wasapi_backend import (
+        WasapiStartError, run_wasapi_loop, select_windows_backend)
+    from .constants import WIN_PROCESS_MARGIN_SAMPLES
+
+    def running(name):
+        return lambda *_: ctl.channel.send({"event": "running",
+                                            "backend": name})
+
+    chosen, reason = select_windows_backend(backend)
+    _logger.info("Windows backend: %s (%s)", chosen, reason)
+    if chosen == "wasapi":
+        try:
+            # Nothing else holds this process's GIL: inference needs far
+            # less time per frame than in the UI's process (see constants).
+            run_wasapi_loop(
+                processor, _device_name(config.get("input_device"), "input"),
+                _device_name(config.get("output_device"), "output"),
+                should_stop=ctl.should_stop, on_stats=ctl.on_stats,
+                stats_interval_sec=STATS_INTERVAL_SEC,
+                on_started=running("wasapi"),
+                margin=WIN_PROCESS_MARGIN_SAMPLES, pause_gc=True)
+            return
+        except WasapiStartError as e:
+            if backend == "wasapi":
+                raise
+            _logger.warning(
+                "Native audio path did not start (%s); using PortAudio", e)
+    from .backends.sounddevice_backend import run_portaudio_loop
+    run_portaudio_loop(
+        processor, config.get("input_device"), config.get("output_device"),
+        should_stop=ctl.should_stop, on_stats=ctl.on_stats,
+        stats_interval_sec=STATS_INTERVAL_SEC,
+        on_started=running("portaudio"), pause_gc=True,
+        realtime=bool(config.get("realtime", True)))
 
 
 def _device_name(device, kind: str) -> Optional[str]:

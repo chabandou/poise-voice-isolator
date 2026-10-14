@@ -50,52 +50,43 @@ def test_legacy_attenuation_is_clamped_to_the_dial(window):
     assert window._saved_atten_db() == -50
 
 
-def test_dial_changes_reach_a_running_engine(window):
-    seen = []
+class _Host:
+    """Stands in for the audio process (AudioHost): records live changes."""
 
-    class Engine:
-        def set_atten_lim_db(self, db):
-            seen.append(db)
+    def __init__(self):
+        self.sent = []
 
-    window.worker._engine = Engine()
+    def set(self, **values):
+        self.sent.append(values)
+
+
+def test_dial_changes_reach_the_audio_process(window):
+    host = _Host()
+    window.worker._host = host
     try:
         window.power_btn._user_set_strength(-17)
     finally:
-        window.worker._engine = None
-    assert seen == [-17.0]
+        window.worker._host = None
+    assert host.sent == [{"atten_lim_db": -17.0}]
     assert window.worker.atten_lim_db == -17.0
 
 
-def test_threshold_changes_reach_a_running_detector(window):
-    seen = []
-
-    class Detector:
-        def set_threshold(self, db):
-            seen.append(db)
-
-    class Processor:
-        aad = Detector()
-
+def test_threshold_changes_reach_the_audio_process(window):
+    host = _Host()
     window.aad_switch.setChecked(True)
-    window.worker._processor = Processor()
+    window.worker._host = host
     try:
         window.thresh_slider.setValue(-52)
     finally:
-        window.worker._processor = None
-    assert seen == [-52.0]
+        window.worker._host = None
+    assert host.sent == [{"aad_threshold_db": -52.0}]
     assert window.worker.aad_threshold == -52.0
     assert float(window.settings.aad_threshold) == -52.0
 
 
-def test_threshold_without_a_detector_is_only_stored(window):
-    class Processor:
-        aad = None                     # run started with skipping off
-
-    window.worker._processor = Processor()
-    try:
-        window.worker.set_aad_threshold(-45.0)
-    finally:
-        window.worker._processor = None
+def test_threshold_without_an_audio_process_is_only_stored(window):
+    window.worker._host = None         # nothing started yet
+    window.worker.set_aad_threshold(-45.0)
     assert window.worker.aad_threshold == -45.0
 
 
