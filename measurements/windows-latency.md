@@ -130,13 +130,20 @@ vs ~89 ms PortAudio.
 
 ## 3. The glitch staircase
 
-Now and then the speaker endpoint drops 133-334 samples and every later
-sample plays one period (~10.7 ms) later, for good. Each step matches a
-dropout in the speakers' audio. Poise's counters (FIFO, render events,
-`render_queue`, capture age) and the loopback time stamps do not move;
-the bridge's rate and VB-Cable's share do not either, so it is not the
-two devices' clocks disagreeing (that would also slip both ways and at
-a steady interval). Steps are always +1 period.
+Now and then the speakers' audio drops 133-334 samples and everything
+after plays about 10 ms later, for good. Poise's counters (FIFO, render
+events, `render_queue`, capture age, the core's) do not move, nor does
+the bridge's rate.
+
+**Cause (found later, section 11): VB-Cable.** It runs dry inside and
+CABLE Output delivers a block of exact zeros (441-556 samples, about
+one of its 10 ms blocks) in the middle of the audio; the audio after it
+comes that much later, nothing lost. CABLE Output, recorded beside
+Poise, has the block 0.15 s before each speaker dropout (W1 513
+samples, F3 447, D3 472, M11 449 and 521), and the step equals its
+length; CABLE Input's own loopback has no gap. What follows was written
+before that was known: the step is not "one speaker period", and
+VB-Cable's share does move (the earlier analysis missed it).
 
 | Run | Time after the measurement starts | Dropout (samples) | Step |
 |---|---|---|---|
@@ -157,8 +164,8 @@ noise straight into the speakers for 60 minutes and recorded them: no
 step, no dropout, the offset constant to the sample (1609 samples, 23.8
 ms against the stream clock). That rules out a steady glitch rate of the
 laptop's audio, not the start-up steps (one start) nor the rare later
-ones (0 in 60 minutes is likely at 3 per 110). Not pursued further for
-now; the next test would be many short starts with and without Poise.
+ones (0 in 60 minutes is likely at 3 per 110). (That run had no
+VB-Cable in the path: consistent with section 11.)
 
 ## 4. PortAudio in its own process vs the native path
 
@@ -392,9 +399,54 @@ still varies with VB-Cable's own delay. The cost: 0.3-0.7 s of silence
 when a session starts (up to ~1.6 s if all 12 tries are needed); a
 session took ~1 s from start to sound before.
 
+## 11. The staircase is VB-Cable's holes
+
+**Not after Poise.** An output monitor in the native path (compares the
+speakers' loopback with what Poise wrote, every 0.25 s; not kept, the
+patch is in `build/output-monitor.patch`) locked on in 1-2 s with
+matches of 0.84-0.91 and found 20 of 20 simulated steps, 0 false ones
+in 10 simulated minutes. On the laptop it saw two real steps go by
+without moving: what Poise wrote lands where it did, so the delay is
+added before Poise writes.
+
+**In VB-Cable.** CABLE Output, recorded by latmeter beside Poise, holds
+a block of exact zeros 0.15 s before each speaker dropout, with full
+audio right before and after; CABLE Input's loopback (what the player
+sent) has none; the audio on either side of the zeros is continuous
+(nothing lost, checked against CABLE Input's loopback). The same blocks
+are in every earlier recording of CABLE Output, with or without Poise
+(the `cable-*` runs had no Poise): 441-556 samples, mostly within
+0.1 s of a player starting (VB-Cable priming), now and then later
+(3-283 s in, the staircase steps). No such zero runs in a recorded
+video session (R1, what Poise received from a real video).
+
+**Taken out.** The native path now takes such a block (exact zeros,
+240-1024 samples, audio right before and after) back out of the bridge
+as far as it is unread, and the render buffer gives up as much (down to
+a period + 64, about 550 samples: one block per session), so it is not
+heard and adds no delay. Poise started first, then latmeter playing
+into CABLE Input, 10 sessions of 15 s each way:
+
+| | VB-Cable blocks | Heard at the speakers | A/V, median of sessions |
+|---|---|---|---|
+| without (last commit's DLL) | 10, in 7 sessions | 10 | 223.5 ms (215.0-227.4) |
+| with | 13, in 6 sessions | 3 (blocks past the first ~550 samples) | 216.8 ms (211.4-224.6) |
+
+Poise saw every block CABLE Output had (per session 3, 0, 2, 1, 2, 0,
+1, 0, 1, 0). A single block at the start is taken out whole: no gap,
+and A/V 211-218 ms vs 221-225 ms in sessions without one (the render
+buffer gave up 10 ms). Blocks at a player's start do not seem to add
+delay over a start without them (sessions without the filter: 215-227
+ms either way), so there the filter mainly spends the render buffer's
+10 ms; blocks later in a stream are the staircase's +10 ms each, and
+the filter takes out the first if the room is still there.
+
 ## Open issues
 
-- The glitch staircase (section 3).
+- The glitch staircase (sections 3, 11): VB-Cable's holes. The native
+  path takes out ~one block per session; starts with 2-3 blocks, and
+  later blocks once the room is spent, still play and (later ones) add
+  ~10 ms each.
 - PortAudio's bad starts (section 4).
 - VB-Cable's share of the A/V offset: 45-68 ms depending on the start;
   neither its latency setting (section 7) nor restarting the capture
