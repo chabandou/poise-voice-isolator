@@ -431,19 +431,27 @@ def _best_lag(seg, ref, lo):
     return lo + i, float(c[i] / den)
 
 
-def _played_offset(ref, sig, start=SR, end=None):
-    """Recorded index minus played index, from the first clear match in
-    ref[start:end] (constant until the recording loses audio)."""
+def _played_offset(ref, sig, start=SR, end=None, points=12):
+    """Recorded index minus played index over ref[start:end] (constant
+    until the recording loses audio): the most common one among clear
+    matches spread across the stretch. Not just the first: an unflagged
+    glitch near a recording's start (another client opening the device)
+    would shift every later sample."""
     end = len(ref) - SR // 10 if end is None else min(end, len(ref) - SR // 10)
-    for L in range(start, end, SR // 2):
+    if end <= start:
+        return None
+    looped = np.concatenate([sig, sig])
+    found = {}
+    for L in np.linspace(start, end - 1, points).astype(int):
         seg = ref[L:L + SR // 10].astype(np.float64)
         if np.dot(seg, seg) < 1e-6 * len(seg):
             continue
-        i, corr = _best_lag(seg, np.concatenate([sig, sig]), 0)
+        i, corr = _best_lag(seg, looped, 0)
         if corr > 0.95:
             i %= len(sig)
-            return L - (i + len(sig) * round((L - i) / len(sig)))
-    return None
+            off = int(L - (i + len(sig) * round((L - i) / len(sig))))
+            found[off] = found.get(off, 0) + 1
+    return max(found, key=found.get) if found else None
 
 
 def _holes(pk):
@@ -641,6 +649,48 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
     return report
 
 
+def cmd_cable(args) -> None:
+    """VB-Cable's own delay: play into CABLE Input, capture CABLE Output,
+    no Poise; each of ``--starts`` fresh starts gets its own streams (the
+    delay differs per start). Times after CABLE Input's clock says the
+    sample played: the capture's time stamp, and when it was readable."""
+    base = ROOT / "build" / "latency" / f"cable-{args.label}"
+    base.mkdir(parents=True, exist_ok=True)
+    sig = make_signal(base / "signal.f32").astype(np.float64)
+    results = []
+    for i in range(args.starts):
+        prefix = base / f"s{i}" / "rec"
+        prefix.parent.mkdir(exist_ok=True)
+        subprocess.run([str(LATMETER), PLAY, DEFAULT_SPEAKERS,
+                        str(base / "signal.f32"), str(args.seconds),
+                        str(prefix), CAPTURE], check=True, capture_output=True)
+        tap, tpk = _load_stream(prefix.parent, "tap")
+        off = _played_offset(tap, sig)
+        clk = np.loadtxt(prefix.parent / "rec.clk.csv", delimiter=",",
+                         skiprows=1, ndmin=2)
+        dev, first = np.unique(clk[:, 1], return_index=True)
+        dev_t = clk[first, 2] / 1e7
+        stamp, readable = [], []
+        for p in range(2 * SR, int(dev[-1]) - SR, SR // 2):
+            j = np.searchsorted(tpk[:, 0], p + off, side="right") - 1
+            t_clock = np.interp(p, dev, dev_t)
+            stamp.append(tpk[j, 1] / 1e7 + (p + off - tpk[j, 0]) / SR - t_clock)
+            readable.append(tpk[j, 4] / 1e7 - t_clock)
+        results.append((np.median(stamp) * 1000, np.median(readable) * 1000))
+        print(f"start {i}: time stamp {results[-1][0]:6.1f} ms, readable "
+              f"{results[-1][1]:6.1f} ms after CABLE Input's clock", flush=True)
+    r = np.array(results)
+    summary = {"label": args.label, "starts": args.starts,
+               "stamp_ms": {"median": round(float(np.median(r[:, 0])), 1),
+                            "min": round(float(r[:, 0].min()), 1),
+                            "max": round(float(r[:, 0].max()), 1)},
+               "readable_ms": {"median": round(float(np.median(r[:, 1])), 1),
+                               "min": round(float(r[:, 1].min()), 1),
+                               "max": round(float(r[:, 1].max()), 1)}}
+    (base / "report.json").write_text(json.dumps(summary, indent=1))
+    print(json.dumps(summary, indent=1))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -665,10 +715,16 @@ def main():
                    help="ONNX Runtime intra-op threads (default: Poise's)")
     a = sub.add_parser("analyze")
     a.add_argument("dir")
+    c = sub.add_parser("cable", help="VB-Cable's own delay, without Poise")
+    c.add_argument("label", help="names build/latency/cable-<label>")
+    c.add_argument("--starts", type=int, default=6)
+    c.add_argument("--seconds", type=float, default=8.0)
     args = ap.parse_args()
     if args.cmd == "run":
         out = cmd_run(args)
         print(json.dumps(analyze(out), indent=1))
+    elif args.cmd == "cable":
+        cmd_cable(args)
     else:
         print(json.dumps(analyze(Path(args.dir)), indent=1))
 
