@@ -269,6 +269,17 @@ pip install samplerate
 make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
 ```
 
+4. Windows, to measure the delay on real devices (not in a VM: virtual
+   audio timing there is nothing like a sound card's): `native/latmeter`
+   plays noise into CABLE Input the way a video player does and records
+   the speakers; `tools/win_latency.py` runs Poise beside it under chosen
+   load and reports the A/V offset over time, split at CABLE Output.
+
+```bash
+make -C native/latmeter        # -> build/latmeter.exe
+python tools/win_latency.py run --backend portaudio --phases idle:60,cpu:60
+```
+
 #### Usage
 
 ##### CLI Mode
