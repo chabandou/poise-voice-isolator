@@ -213,14 +213,27 @@ Without Poise: latmeter plays into CABLE Input and captures CABLE Output,
 `build/latency/cable-<label>`). Times after CABLE Input's clock says the
 sample played:
 
-| Setting | Starts | Capture time stamp | Readable at CABLE Output |
+| Latency setting (control panel) | Run | Capture time stamp | Readable at CABLE Output |
 |---|---|---|---|
-| as installed | 6 | median 54.4 ms (43.0-61.8) | median 63.7 ms (51.8-71.5) |
+| 7168 samples (default) | cable-before | median 54.4 ms (43.0-61.8) | median 63.7 ms (51.8-71.5) |
+| 3x 2048 | cable-3x2048 | median 60.6 ms (51.7-72.3) | median 75.8 ms (69.7-90.3) |
+| 3x 512 | cable-3x512 | median 61.3 ms (54.7-62.4) | median 71.8 ms (63.8-80.9) |
+| 3x 128 | cable-3x128 | no audio: CABLE Output delivers silence | - |
+
+6 starts each. The setting does not shrink VB-Cable's share: coarser
+blocks (3x 2048) add delay, finer ones (3x 512) change nothing beyond
+the start-to-start spread, and 3x 128 (384 samples, less than one 10 ms
+WASAPI packet of 480) passes nothing at all. The default stays. The default adapts its block size to the
+clients (the panel's statistics show mostly 256-sample blocks). The
+driver's DMA buffer (4096 samples, both sides) is not among the settings.
+(One change before 3x 2048 left CABLE Output delivering pure silence
+until it was set again.)
 
 ## Open issues
 
 - The glitch staircase (section 3).
 - PortAudio's bad starts (section 4).
-- VB-Cable's share of the A/V offset: 45-68 ms depending on the start.
+- VB-Cable's share of the A/V offset: 45-68 ms depending on the start;
+  its latency setting does not reduce it (section 7).
 - The speakers' queue settles 0-10.7 ms deeper on some starts
   (`render_queue`, section 6).
