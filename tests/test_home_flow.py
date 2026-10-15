@@ -41,6 +41,12 @@ def test_dial_ring_persists_attenuation(window):
     assert float(window.settings.atten_lim_db) == -42.0
 
 
+def test_settings_are_isolated_from_the_users_config(window):
+    from conftest import _TEST_CONFIG_HOME
+    path = os.path.normcase(os.path.abspath(window.settings._settings.fileName()))
+    assert path.startswith(os.path.normcase(os.path.abspath(_TEST_CONFIG_HOME)))
+
+
 def test_dial_starts_at_the_saved_attenuation(window):
     assert window.power_btn.strength_db() == int(window.settings.atten_lim_db)
 

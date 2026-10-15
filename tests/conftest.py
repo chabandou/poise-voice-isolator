@@ -8,9 +8,8 @@ dies with "wrapped C/C++ object has been deleted" in later files.
 
 QSettings is also redirected to a per-run temp dir: tests must neither
 read the user's real config (geometry history makes sizes
-nondeterministic; on Windows that is the registry, which the tests
-used to read and write) nor pop the minimize-to-tray question or quit
-the shared app on window close. The close path is pre-seeded to plain
+nondeterministic) nor pop the minimize-to-tray question or quit the
+shared app on window close. The close path is pre-seeded to plain
 hide, so closes are side-effect free.
 
 Importing this module without PyQt6 installed is a no-op so the Qt-free
@@ -42,13 +41,13 @@ try:
     if _SESSION_APP is None:
         _SESSION_APP = QApplication([])
 
+    # INI, not native: on Windows the native format is the registry,
+    # which setPath() does not redirect (tests would read and write the
+    # user's real HKCU\Software\Poise settings).
     _TEST_CONFIG_HOME = tempfile.mkdtemp(prefix="poise-test-config-")
-    # On Windows the native format is the registry, which setPath cannot
-    # move: Settings opens QSettings in defaultFormat(), so make that INI
-    # files under the temp dir on every platform.
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    for _fmt in (QSettings.Format.NativeFormat, QSettings.Format.IniFormat):
-        QSettings.setPath(_fmt, QSettings.Scope.UserScope, _TEST_CONFIG_HOME)
+    QSettings.setPath(QSettings.Format.IniFormat,
+                      QSettings.Scope.UserScope, _TEST_CONFIG_HOME)
     # Pre-seed the close path: hide quietly, never ask, never quit.
     _seed = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                       "Poise", "VoiceIsolator")
