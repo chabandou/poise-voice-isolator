@@ -1058,7 +1058,13 @@ static HRESULT render_cycle(poise_wasapi *w, int primed)
 				wstat_add(w, POISE_WIN_RENDER_LATE, 1);
 		}
 		w->last_render_qpc = raw;
-		if (padding == 0)
+		/* Until the bridge starts, only silence is queued: running out
+		 * of it leaves no gap. That happens on a cold start of the
+		 * speakers: IAudioClient_Start waits ~250 ms while they come
+		 * up, and the engine reads two periods of the primed silence
+		 * (2.2 on the laptop), sometimes a third before the first event
+		 * (measurements/windows-latency.md, section 12). */
+		if (padding == 0 && w->bridge->started)
 			wstat_add(w, POISE_WIN_RENDER_UNDERRUNS, 1);
 		wstat_add(w, POISE_WIN_RENDER_EVENTS, 1);
 	}

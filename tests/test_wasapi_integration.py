@@ -84,6 +84,8 @@ def test_runs_in_real_time_and_feeds_the_worker():
     assert io["capture_glitches"] - settled["capture_glitches"] == 0
     assert st["frames_late"] - settled["frames_late"] == 0
     assert io["fifo_starved"] - settled["fifo_starved"] == 0
+    # The whole run: speakers starting cold can run through the start's
+    # silence, which the counter leaves out (render_cycle()).
     assert io["render_underruns"] == 0
 
 

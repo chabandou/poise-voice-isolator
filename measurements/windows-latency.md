@@ -230,10 +230,11 @@ higher than in-process runs (`render_queue` 2113 in W1, 1938 in W2, vs
 That reading is not delay. Across 13 runs, Poise's share minus its core
 delay and FIFO stays at 98.5-104.6 ms whether `render_queue` reads 33 or
 44 ms (correlation 0.17): the speaker stream's clock reports a different
-position on some starts. What does vary per start is the FIFO, 15.9-25.6
-ms: 16.4 ms when VB-Cable's packets arrive one by one, up to ~25 ms
-when some arrive in pairs, which lasts the whole session; the capture's
-timing is now steered clear of the pairs at the start (section 10).
+position on some starts (the speakers' cold starts, section 12). What
+does vary per start is the FIFO, 15.9-25.6 ms: 16.4 ms when VB-Cable's
+packets arrive one by one, up to ~25 ms when some arrive in pairs, which
+lasts the whole session; the capture's timing is now steered clear of
+the pairs at the start (section 10).
 
 ## 7. VB-Cable's own delay
 
@@ -440,6 +441,39 @@ delay over a start without them (sessions without the filter: 215-227
 ms either way), so there the filter mainly spends the render buffer's
 10 ms; blocks later in a stream are the staircase's +10 ms each, and
 the filter takes out the first if the room is still there.
+
+## 12. The speakers' cold starts
+
+`tests/test_wasapi_integration.py` failed in about half of the full
+suite's runs on the laptop with one `render_underruns`, not in 3 runs
+of the file alone. A trace build (every render event's padding and the time of each
+start-up step; a scratch patch, not in the shipped DLL), 32 starts with
+the test's settings (render buffer 1126 samples, period 512, primed with
+1126 samples of silence before `Start`), 2026-10-15:
+
+| Start | `IAudioClient_Start` on the speakers | Padding at the first render event | `render_queue` after |
+|---|---|---|---|
+| warm: 8 of 20 after >= 10 s idle, all 12 within 0.1 s of the last stream | 2.5-3.3 ms | 614 (one period read) | 1615-1625 |
+| cold: 12 of 20 after >= 10 s idle | 241-257 ms (one 413 ms) | 102 (9 starts) or 0 (3) | 2128-2135 (pad 102), 1730-1933 (pad 0) |
+
+- On a cold start `Start` blocks ~250 ms while the speakers come up, and
+  the engine reads two periods of the primed silence meanwhile; the first
+  event is already waiting when `Start` returns. If a third pass came
+  first, the buffer is empty: that was the test's underrun. In the full
+  suite the speakers sit idle ~110 s before the test, long enough to go
+  cold; runs of the file alone, back to back, start warm. Only silence
+  had been queued, so nothing is heard, and the next cycle fills the
+  buffer as usual. The counter now leaves out underruns before the
+  bridge starts.
+- Cold or warm does not follow the idle time alone: from 10:32 to 10:45
+  all 6 starts after 107-181 s idle were warm, from 10:48 on 10 of 12
+  after 10-241 s were cold. The codec and its HD Audio controller go to
+  D3 ~7 s after the last stream either way (a warm start woke both from
+  D3 as well), and PortAudio's device scan wakes them too. What takes the
+  250 ms was not found.
+- The speakers' clock then reads up to a period (10.7 ms) more queue for
+  the whole session, which fits the per-start `render_queue` of section
+  6 (2113 in W1, 1938 in W2, vs ~1600): not delay.
 
 ## Open issues
 
