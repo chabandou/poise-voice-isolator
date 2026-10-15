@@ -18,7 +18,7 @@ enum poise_win_stat {
 	POISE_WIN_CAPTURE_GLITCHES, /* packets WASAPI marked discontinuous (capture overflow) */
 	POISE_WIN_RENDER_FRAMES,    /* samples played */
 	POISE_WIN_RENDER_EVENTS,    /* render events served */
-	POISE_WIN_RENDER_UNDERRUNS, /* render buffer found empty: the speakers played a gap */
+	POISE_WIN_RENDER_UNDERRUNS, /* render buffer found empty with audio flowing: the speakers played a gap */
 	POISE_WIN_RENDER_LATE,      /* render events more than half a period late */
 	POISE_WIN_RENDER_GAP_MAX_US,/* longest time between render events (us) */
 	POISE_WIN_WAKE_TIMEOUTS,    /* waits that ended with no event from either device */
