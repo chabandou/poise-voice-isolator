@@ -51,6 +51,10 @@ if [ ! -f "stream_denoiser/models/denoiser_model_df3.onnx" ] || [ ! -f "stream_d
     echo "❌ Error: DeepFilterNet3 model files not found (stream_denoiser/models/denoiser_model_df3.onnx + denoiser_model_df3_states.npz)!"
     exit 1
 fi
+if [ ! -f "stream_denoiser/models/gtcrn.onnx" ]; then
+    echo "❌ Error: GTCRN model file not found (stream_denoiser/models/gtcrn.onnx)!"
+    exit 1
+fi
 echo "✓ ONNX models found"
 echo
 
@@ -137,6 +141,7 @@ python -m nuitka \
     --assume-yes-for-downloads \
     --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
     --include-data-files=stream_denoiser/models/denoiser_model_df3_states.npz=stream_denoiser/models/denoiser_model_df3_states.npz \
+    --include-data-files=stream_denoiser/models/gtcrn.onnx=stream_denoiser/models/gtcrn.onnx \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
     --include-data-files=pyproject.toml=pyproject.toml \
     "${PW_NODE_ARGS[@]}" \

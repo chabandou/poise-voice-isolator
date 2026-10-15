@@ -1,8 +1,9 @@
 """
 Denoising engines
 
-A DenoiseEngine wraps one model (DeepFilterNet via ONNX Runtime, RNNoise via
-librnnoise) behind a common frame-based interface used by DenoiserAudioProcessor.
+A DenoiseEngine wraps one model (DeepFilterNet3 and GTCRN via ONNX Runtime,
+RNNoise via librnnoise) behind a common frame-based interface used by
+DenoiserAudioProcessor.
 """
 from typing import List, Optional
 import sys
@@ -12,11 +13,13 @@ from .deepfilternet3 import (
     DeepFilterNet3Engine,
     DEFAULT_DF3_ONNX,
 )
+from .gtcrn import GTCRNEngine, GTCRN_ONNX
 from .rnnoise import RNNoiseEngine
 from ..constants import (
     ALL_MODELS,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
+    MODEL_GTCRN,
     MODEL_RNNOISE,
 )
 
@@ -26,6 +29,8 @@ def available_models() -> List[str]:
     models = []
     if DeepFilterNet3Engine.is_available():
         models.append(MODEL_DEEPFILTERNET3)
+    if GTCRNEngine.is_available():
+        models.append(MODEL_GTCRN)
     if RNNoiseEngine.is_available():
         models.append(MODEL_RNNOISE)
     return models
@@ -41,6 +46,8 @@ def model_unavailable_reason(name: str) -> Optional[str]:
     if key == MODEL_DEEPFILTERNET3 and not DeepFilterNet3Engine.is_available():
         return ("model files not found "
                 "(denoiser_model_df3.onnx + denoiser_model_df3_states.npz)")
+    if key == MODEL_GTCRN and not GTCRNEngine.is_available():
+        return f"model file not found ({GTCRN_ONNX})"
     if key == MODEL_RNNOISE and not RNNoiseEngine.is_available():
         if sys.platform == "win32":
             return "rnnoise.dll not found next to the app (reinstall Poise)"
@@ -55,11 +62,11 @@ def create_engine(name: str = DEFAULT_MODEL,
     Create a denoising engine by model name.
 
     Args:
-        name: "deepfilternet3" or "rnnoise"
+        name: "deepfilternet3", "gtcrn" or "rnnoise"
         onnx_path: Path to the ONNX model file (deepfilternet3 only).
             The default selects the vendored DF3 model; pass a custom DF3
             .onnx to use a <stem>_states.npz sibling next to it.
-            Ignored for rnnoise.
+            Ignored for gtcrn and rnnoise.
         atten_lim_db: Attenuation limit in dB
 
     Raises:
@@ -73,6 +80,8 @@ def create_engine(name: str = DEFAULT_MODEL,
             # Untouched default: use the vendored DF3 model files.
             return DeepFilterNet3Engine.from_path(atten_lim_db=atten_lim_db)
         return DeepFilterNet3Engine.from_path(onnx_path, atten_lim_db=atten_lim_db)
+    if key == MODEL_GTCRN:
+        return GTCRNEngine.from_path(atten_lim_db=atten_lim_db)
     if key == MODEL_RNNOISE:
         return RNNoiseEngine(atten_lim_db=atten_lim_db)
     raise ValueError(f"Unknown model '{name}'. Choose from: {', '.join(ALL_MODELS)}")
@@ -81,6 +90,7 @@ def create_engine(name: str = DEFAULT_MODEL,
 __all__ = [
     "DenoiseEngine",
     "DeepFilterNet3Engine",
+    "GTCRNEngine",
     "RNNoiseEngine",
     "create_engine",
     "available_models",

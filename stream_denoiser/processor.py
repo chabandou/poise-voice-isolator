@@ -2,8 +2,8 @@
 Denoiser Audio Processor
 
 Core audio processing pipeline: a pluggable denoising engine (DeepFilterNet3
-via ONNX Runtime, or RNNoise) plus AAD, resampling, and streaming state
-management.
+or GTCRN via ONNX Runtime, or RNNoise) plus AAD, resampling, and streaming
+state management.
 """
 import time
 import numpy as np

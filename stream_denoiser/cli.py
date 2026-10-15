@@ -22,6 +22,7 @@ from .constants import (
     ALL_MODELS,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
+    MODEL_GTCRN,
     LINUX_BACKENDS,
     PW_NODE_DESCRIPTION,
     PW_NODE_NAME,
@@ -190,7 +191,8 @@ def _run_session(engine: DenoiseEngine, config: dict,
     from .device_utils import print_stats, print_final_stats
     from .session import build_processor, run_session
 
-    # Frame size follows the engine: e.g. deepfilternet3=512, rnnoise=480.
+    # Frame size follows the engine: deepfilternet3=512, gtcrn=768,
+    # rnnoise=480.
     processor = build_processor(config, engine)
     try:
         if devices is not None:
@@ -263,6 +265,9 @@ Examples:
 
   # Use DeepFilterNet3 (faster, ~2x less CPU):
   python -m stream_denoiser --model deepfilternet3
+
+  # Use GTCRN (tiny speech-denoising model, lower delay; leaves music in):
+  python -m stream_denoiser --model gtcrn
 
   # Adjust AAD sensitivity (lower = more sensitive):
   python -m stream_denoiser --aad-threshold -50
@@ -394,7 +399,7 @@ Examples:
     # errors or native crashes. Bypass with --no-health-check.
     if not args.no_health_check and not os.environ.get("POISE_SKIP_HEALTH"):
         from .health import check_execstack, check_pulse_backend
-        if args.model == MODEL_DEEPFILTERNET3:
+        if args.model in (MODEL_DEEPFILTERNET3, MODEL_GTCRN):  # ONNX models
             exec_check = check_execstack()
             if not exec_check.ok:
                 _logger.error(exec_check.detail)

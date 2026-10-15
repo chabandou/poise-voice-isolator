@@ -308,7 +308,7 @@ python -m stream_denoiser.cli
 
 ### Available Options
 
-- `--model`: Denoising engine — `deepfilternet3` (default, music/voice isolation) or `rnnoise` (light noise suppression, same model as EasyEffects)
+- `--model`: Denoising engine — `deepfilternet3` (default, music/voice isolation), `gtcrn` (tiny speech-denoising model, lower delay) or `rnnoise` (light noise suppression, same model as EasyEffects)
 - `--onnx`: Path to ONNX model file (deepfilternet3 only, default: the vendored `stream_denoiser/models/denoiser_model_df3.onnx`)
 - `--input-device`: Input device ID for system audio capture
 - `--output-device`: Output device ID for audio playback
@@ -325,11 +325,15 @@ python -m stream_denoiser.cli
 ### Models
 
 - **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in `stream_denoiser/models/`). Removes music and keeps vocals/speech, ~2x less CPU (RTF ~0.11), 512-sample frames. No extra install.
+- **gtcrn**: [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) (`gtcrn.onnx`, 352 KB, vendored; the model Poise for Android uses), an ultra-lightweight speech-enhancement network. It runs at 16 kHz: each 768-sample frame (16 ms) is low-passed and decimated to 16 kHz, enhanced one STFT hop at a time, and interpolated back, so its output stops at ~7.6 kHz. Removes broadband noise about as well as DeepFilterNet3, but like RNNoise it does *not* remove music. Its model delay is 18 ms (DeepFilterNet3: 32 ms), so Poise's total delay is ~9 ms lower. CPU use is about DeepFilterNet3's or somewhat lower (RTF 0.10–0.21 vs 0.16–0.22 on a Ryzen 5 4500U laptop, depending on its power state): at this size ONNX Runtime's per-operator overhead, not the arithmetic, sets the cost. No extra install.
 - **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Much lower CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
 
 ```bash
 # DeepFilterNet3 mode (faster)
 python -m stream_denoiser --model deepfilternet3
+
+# Tiny speech-denoising model (lower delay, leaves music in)
+python -m stream_denoiser --model gtcrn
 
 # Light noise-suppression mode
 python -m stream_denoiser --model rnnoise
@@ -377,7 +381,7 @@ stream_denoiser/
 │   ├── styles.py
 │   ├── system_tray.py
 │   └── worker.py            # Audio processing thread
-├── models/                  # Vendored DeepFilterNet3 model (.onnx + states .npz)
+├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
 ├── backends/                # Audio interface backends
 │   ├── pipewire_backend.py  # Linux: Poise as a PipeWire node (default)
 │   ├── pipewire_node.py     # ctypes binding for libpoise_pw.so (native/poise_pw)
@@ -427,7 +431,7 @@ stream_denoiser/
          │
          ▼
 ┌─────────────────┐
-│ Frame Splitter  │◄─── Engine frame size (deepfilternet3: 512 @ 48kHz)
+│ Frame Splitter  │◄─── Engine frame size @ 48kHz (deepfilternet3: 512, gtcrn: 768, rnnoise: 480)
 └────────┬────────┘
          │
          ▼
@@ -492,7 +496,7 @@ filter-chain do:
 
 1. Adds a virtual sink, **Poise Voice Isolator** (`Poise_Isolator`), and makes it the default (apps send audio there)
 2. Processes each graph cycle's input and hands the output to your real speakers in the same cycle
-3. Keeps the delay between the two fixed (about 76 ms with DeepFilterNet3) and reports it to PipeWire, so video players can hold the picture back to match
+3. Keeps the delay between the two fixed (about 76 ms with DeepFilterNet3, 67 ms with GTCRN) and reports it to PipeWire, so video players can hold the picture back to match
 4. Restores the original default on exit; if Poise is killed, the sink disappears with it
 
 If a frame isn't processed in time, that moment plays unprocessed (and the
@@ -509,7 +513,7 @@ DeepFilterNet (Rikorose) for the [DeepFilterNet3 model](https://github.com/Rikor
 
 Mozilla/Xiph for [RNNoise](https://github.com/mozilla/rnnoise).
 
-GTCRN implementation [here](https://github.com/Xiaobin-Rong/gtcrn#).
+Xiaobin Rong for the [GTCRN model](https://github.com/Xiaobin-Rong/gtcrn) (MIT; `gtcrn.onnx` is its official streaming export).
 
 yuyun2000 for the speech enhancement [model](https://github.com/yuyun2000/SpeechDenoiser).
 
