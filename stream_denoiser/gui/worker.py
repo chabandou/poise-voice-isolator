@@ -3,6 +3,12 @@ Poise Voice Isolator - Audio Processing Worker
 
 QThread-based worker for non-blocking audio processing with signal-based
 communication to the GUI.
+
+The audio itself runs in the audio process (audio_host): its own GIL and
+garbage collector, so the GUI redrawing cannot hold up inference. This
+thread switches the default playback to VB-Cable (undone here, even if
+the audio process dies), checks the devices, runs the session and relays
+its status, errors and stats as signals.
 """
 import time
 import traceback
@@ -10,18 +16,21 @@ from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from ..processor import DenoiserAudioProcessor
-from ..engines import create_engine, DEFAULT_DF3_ONNX
+from ..audio_host import AudioHost
+from ..engines import DEFAULT_DF3_ONNX
 from ..vb_cable import VB_CableSwitcher
 from ..constants import (
-    DEFAULT_SAMPLE_RATE, DEFAULT_FRAME_SIZE, DEVICE_SWITCH_INIT_DELAY_SEC,
-    DEVICE_SWITCH_SUCCESS_HOLD_SEC,
+    DEFAULT_SAMPLE_RATE, DEVICE_SWITCH_INIT_DELAY_SEC,
+    DEVICE_SWITCH_SUCCESS_HOLD_SEC, STATS_UPDATE_INTERVAL_SEC,
     MSG_NO_BACKEND, DEFAULT_MODEL, MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHED
 )
 from ..backend_detection import USE_SOUNDDEVICE, sd
 from ..logging_config import get_logger
 
 _logger = get_logger(__name__)
+
+# How long stop() lets the audio process clean up before killing it.
+AUDIO_STOP_TIMEOUT_SEC = 5.0
 
 
 class AudioWorker(QThread):
@@ -58,9 +67,10 @@ class AudioWorker(QThread):
         
         # State
         self._running = False
-        self._processor: Optional[DenoiserAudioProcessor] = None
-        self._engine = None   # set as soon as it is built, for live changes
         self._vb_cable_switcher: Optional[VB_CableSwitcher] = None
+        # The audio process: started on the first run, kept between runs
+        # (its imports take about a second), ended by shutdown().
+        self._host: Optional[AudioHost] = None
     
     def configure(self, 
                   model: str = DEFAULT_MODEL,
@@ -100,25 +110,8 @@ class AudioWorker(QThread):
         """Main processing loop - runs in separate thread."""
         self._running = True
         self.status_changed.emit("Initializing...")
-        
+
         try:
-            # Build denoising engine (validates model availability)
-            self.status_changed.emit("Loading model...")
-            try:
-                engine = create_engine(self.model, onnx_path=self.onnx_path,
-                                       atten_lim_db=self.atten_lim_db)
-                self._engine = engine
-                # The dial may have moved while the model loaded.
-                engine.set_atten_lim_db(self.atten_lim_db)
-            except FileNotFoundError as e:
-                self.error_occurred.emit(f"Model file not found: {e}")
-                self.stopped_processing.emit()
-                return
-            except (RuntimeError, ValueError) as e:
-                self.error_occurred.emit(f"Error: {e}")
-                self.stopped_processing.emit()
-                return
-            
             # VB-Cable routing is mandatory: Poise captures from CABLE Output,
             # which only receives audio when default playback is CABLE Input.
             # If the automatic switch fails, do NOT start processing — the
@@ -137,7 +130,6 @@ class AudioWorker(QThread):
                         "VB-CABLE: PowerShell unavailable, could not switch "
                         "default playback to CABLE Input."
                     )
-                    self.stopped_processing.emit()
                     return
 
                 time.sleep(DEVICE_SWITCH_INIT_DELAY_SEC)
@@ -146,7 +138,6 @@ class AudioWorker(QThread):
                         "VB-CABLE: automatic switch to CABLE Input failed. "
                         "Is VB-Cable installed?"
                     )
-                    self.stopped_processing.emit()
                     return
 
                 try:
@@ -158,7 +149,6 @@ class AudioWorker(QThread):
                         "VB-CABLE: default playback is still "
                         f"'{current or 'unknown'}', not CABLE Input."
                     )
-                    self.stopped_processing.emit()
                     return
                 self.status_changed.emit(MSG_DEVICE_SWITCHED)
                 # Hold the confirmation so it stays readable before the
@@ -170,41 +160,21 @@ class AudioWorker(QThread):
                         return
                     time.sleep(0.1)
             
-            # Create processor (frame size follows the engine)
-            self._processor = DenoiserAudioProcessor(
-                engine,
-                target_sr=DEFAULT_SAMPLE_RATE,
-                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_aad=self.aad_enabled,
-                aad_threshold_db=self.aad_threshold,
-                atten_lim_db=self.atten_lim_db
-            )
-            
-            self.status_changed.emit("Starting audio streams...")
-            self.started_processing.emit()
-            
-            # sounddevice-only backend (CABLE Output is a regular WASAPI
-            # capture device; no PyAudioWPatch loopback extension)
-            if USE_SOUNDDEVICE:
-                self._run_processing_loop()
-            else:
-                self.error_occurred.emit(MSG_NO_BACKEND)
-            
+            devices = self._pick_devices()
+            if devices is None or not self._running:
+                return
+            self._run_session(*devices)
+
         except Exception as e:
             self.error_occurred.emit(f"Error: {str(e)}\n{traceback.format_exc()}")
         finally:
             self._cleanup()
             self.stopped_processing.emit()
-    
-    def _run_processing_loop(self) -> None:
-        """
-        Main processing loop using the sounddevice backend (blocking I/O).
 
-        Captures CABLE Output as a regular WASAPI input device, processes
-        through DenoiserAudioProcessor, and plays to the output device.
-        Runs in this QThread; stops when self._running is cleared.
-        """
-        import numpy as np
+    def _pick_devices(self):
+        """(input, output) PortAudio device IDs: CABLE Output and the
+        output device. None (with the error emitted) when either is
+        missing: VB-Cable is mandatory, a microphone is never captured."""
         from ..device_utils import (
             find_loopback_device,
             get_output_device_id,
@@ -212,23 +182,22 @@ class AudioWorker(QThread):
         )
 
         if not USE_SOUNDDEVICE or sd is None:
-            self.error_occurred.emit("sounddevice is required")
-            return
+            self.error_occurred.emit(MSG_NO_BACKEND)
+            return None
 
         try:
             input_dev_id = find_loopback_device(self.input_device)
         except (RuntimeError, ValueError) as e:
             self.error_occurred.emit(f"Input device error: {e}")
-            return
+            return None
 
         try:
             devices = sd.query_devices()
             input_device_info = sd.query_devices(input_dev_id)
         except Exception as e:
             self.error_occurred.emit(f"Failed to query audio devices: {e}")
-            return
+            return None
 
-        # VB-Cable is mandatory: refuse to capture a mic/default input.
         input_name = str(input_device_info.get('name', ''))
         if "CABLE OUTPUT" not in input_name.upper():
             self.error_occurred.emit(
@@ -236,13 +205,9 @@ class AudioWorker(QThread):
                 f"(found '{input_name or 'unknown'}' instead). "
                 "Is VB-Cable installed?"
             )
-            return
+            return None
 
-        input_sr = int(input_device_info.get('default_samplerate', 48000))
-        self._processor.setup_resampler(input_sr)
-        in_block_size = self._processor.input_block_size
-
-        # Find output device (match input host API for compatibility)
+        # Output on the same host API as the input.
         try:
             input_host_api = sd.query_hostapis(input_device_info['hostapi'])['name']
         except Exception:
@@ -251,158 +216,88 @@ class AudioWorker(QThread):
             output_dev_id = get_output_device_id(
                 self.output_device, devices, input_host_api=input_host_api)
             if not validate_output_device(
-                    output_dev_id, self._processor.target_sr, devices):
+                    output_dev_id, DEFAULT_SAMPLE_RATE, devices):
                 raise ValueError(
                     f"Output device {output_dev_id} does not support "
                     "required configuration")
         except (ValueError, RuntimeError) as e:
             self.error_occurred.emit(str(e))
+            return None
+        return input_dev_id, output_dev_id
+
+    def _run_session(self, input_dev_id: int, output_dev_id: int) -> None:
+        """One session in the audio process, until it ends or stop()."""
+        from ..backends.wasapi_backend import windows_backend_preference
+
+        try:
+            backend = windows_backend_preference()
+        except ValueError as e:
+            self.error_occurred.emit(f"Audio backend: {e}")
             return
+        config = {
+            "backend": backend,
+            "model": self.model,
+            "aad_enabled": self.aad_enabled,
+            "aad_threshold_db": self.aad_threshold,
+            "atten_lim_db": self.atten_lim_db,
+            "input_device": input_dev_id,
+            "output_device": output_dev_id,
+        }
+        if self.onnx_path and self.onnx_path != DEFAULT_DF3_ONNX:
+            config["onnx_path"] = self.onnx_path
 
-        output_sr = self._processor.target_sr
-        output_device_info = sd.query_devices(output_dev_id)
-
-        # Open input stream at its native rate, stereo (see note below),
-        # then downmix to mono in software like the old PyAudio path did.
-        # NOTE: never open a stereo WASAPI endpoint (e.g. VB-Cable Output)
-        # with channels=1: the capture comes back sample-doubled (every
-        # sample repeated twice = effective half rate in a full-rate
-        # container), which sounds dull/muffled/incomprehensible through
-        # the engine. Stereo capture is bit-clean.
+        if self._host is None:
+            self._host = AudioHost(self._on_host_event)
+        self.status_changed.emit("Loading model...")
         try:
-            try:
-                input_stream = sd.InputStream(
-                    device=input_dev_id,
-                    samplerate=input_sr,
-                    channels=2,
-                    dtype='float32',
-                    blocksize=in_block_size,
-                )
-                _input_channels = 2
-            except Exception:
-                # Genuinely mono device: fall back to a mono open.
-                input_stream = sd.InputStream(
-                    device=input_dev_id,
-                    samplerate=input_sr,
-                    channels=1,
-                    dtype='float32',
-                    blocksize=in_block_size,
-                )
-                _input_channels = 1
-        except Exception as e:
-            self.error_occurred.emit(
-                f"Failed to open input '{input_name}': {e}")
+            self._host.start(config)
+        except RuntimeError as e:
+            self.error_occurred.emit(f"Audio process: {e}")
             return
+        self.started_processing.emit()
 
-        # Open output stream, falling back to the device default rate.
-        try:
-            self._processor.setup_output_resampler(output_sr)
-            out_block_size = self._processor.output_resample_size
-            output_stream = sd.OutputStream(
-                device=output_dev_id,
-                channels=2,
-                samplerate=output_sr,
-                dtype='float32',
-                blocksize=out_block_size,
-            )
-        except Exception:
-            try:
-                device_default_sr = int(
-                    output_device_info.get('default_samplerate', 44100))
-                self.status_changed.emit(
-                    f"Switching to {device_default_sr}Hz output...")
-                self._processor.setup_output_resampler(device_default_sr)
-                out_block_size = self._processor.output_resample_size
-                output_stream = sd.OutputStream(
-                    device=output_dev_id,
-                    channels=2,
-                    samplerate=device_default_sr,
-                    dtype='float32',
-                    blocksize=out_block_size,
-                )
-            except Exception as e:
-                try:
-                    input_stream.close()
-                except Exception:
-                    pass
-                self.error_occurred.emit(f"Failed to open output: {e}")
-                return
+        last_stats = None
+        while self._host.running:
+            if not self._running:
+                self._host.stop(timeout=AUDIO_STOP_TIMEOUT_SEC)
+                break
+            stats = self._host.stats
+            if stats and stats is not last_stats:
+                self.stats_updated.emit(dict(stats))
+                last_stats = stats
+            self.msleep(int(STATS_UPDATE_INTERVAL_SEC * 1000))
 
-        self.status_changed.emit("Processing")
-        last_stats_time = time.time()
-        # Reused stereo buffer with one sample of headroom: output takes
-        # dither around out_block_size (mirrors sounddevice_backend).
-        stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
+    def _on_host_event(self, msg: dict) -> None:
+        """AudioHost events (its reader thread; signals are thread-safe)."""
+        kind = msg.get("event")
+        if kind == "running":
+            _logger.info("audio running (backend %s)", msg.get("backend"))
+            self.status_changed.emit("Processing")
+        elif kind == "error":
+            message = msg.get("message") or msg.get("notice") or "unknown"
+            self.error_occurred.emit(f"Audio device error: {message}")
 
-        try:
-            with input_stream, output_stream:
-                while self._running:
-                    try:
-                        audio_chunk, overflowed = input_stream.read(
-                            self._processor.next_input_block_size())
-                    except Exception as e:
-                        self.error_occurred.emit(f"Input read failed: {e}")
-                        return
-                    if overflowed:
-                        _logger.warning("Input buffer overflow")
-                    if audio_chunk is None or len(audio_chunk) == 0:
-                        continue
-                    # Downmix to mono in software (mean of L/R), matching
-                    # the old PyAudio path. Never rely on a mono device
-                    # open (see note at stream open).
-                    if _input_channels > 1:
-                        audio_chunk = audio_chunk.mean(axis=1).astype(np.float32)
-                    else:
-                        audio_chunk = audio_chunk.flatten()
-                    try:
-                        audio_output = self._processor.process_chunk(audio_chunk)
-                    except Exception as e:
-                        self.error_occurred.emit(f"Processing failed: {e}")
-                        return
-                    if audio_output is not None:
-                        # Write exactly what the pipeline produced: padding
-                        # with zeros would insert silence and shift A/V sync.
-                        n = min(len(audio_output), len(stereo_output))
-                        stereo_output[:n, 0] = audio_output[:n]
-                        stereo_output[:n, 1] = audio_output[:n]
-                        try:
-                            output_stream.write(stereo_output[:n])
-                        except Exception as e:
-                            self.error_occurred.emit(f"Output write failed: {e}")
-                            return
-
-                    current_time = time.time()
-                    if current_time - last_stats_time >= 0.1:  # Every 100ms
-                        stats = self._processor.get_stats()
-                        self.stats_updated.emit(stats)
-                        last_stats_time = current_time
-        finally:
-            try:
-                input_stream.close()
-            except Exception:
-                pass
-    
     def set_atten_lim_db(self, atten_lim_db: float) -> None:
         """Change the reduction strength; applies live while processing.
 
-        Called from the GUI thread. The engine picks the value up on its
-        next frame (a single attribute write, so no lock is needed).
+        Called from the GUI thread; the audio process applies it on the
+        engine's next frame.
         """
         self.atten_lim_db = atten_lim_db
-        engine = self._engine
-        if engine is not None:
-            engine.set_atten_lim_db(atten_lim_db)
+        host = self._host
+        if host is not None:
+            host.set(atten_lim_db=float(atten_lim_db))
 
     def set_aad_threshold(self, threshold_db: float) -> None:
         """Change the silence-skipping threshold; applies live while processing.
 
-        Before the processor exists, the stored value is what it is built
+        Before a session starts, the stored value is what it is built
         with. A run started with silence skipping off has no detector.
         """
         self.aad_threshold = threshold_db
-        processor = self._processor
-        if processor is not None and processor.aad is not None:
-            processor.aad.set_threshold(threshold_db)
+        host = self._host
+        if host is not None:
+            host.set(aad_threshold_db=float(threshold_db))
 
     def stop(self) -> None:
         """Stop processing gracefully."""
@@ -418,14 +313,16 @@ class AudioWorker(QThread):
                 pass
             self._vb_cable_switcher = None
 
-        if self._processor is not None:
-            try:
-                self._processor.close()
-            except Exception:
-                pass
-        self._processor = None
-        self._engine = None
         self.status_changed.emit("Stopped")
+
+    def shutdown(self) -> None:
+        """End the audio process (the app is quitting)."""
+        host, self._host = self._host, None
+        if host is not None:
+            try:
+                host.shutdown()
+            except Exception as e:
+                _logger.debug(f"audio process shutdown failed: {e!r}")
     
     @property
     def is_running(self) -> bool:

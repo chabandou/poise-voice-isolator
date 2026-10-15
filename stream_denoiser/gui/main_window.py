@@ -1336,10 +1336,12 @@ class MainWindow(QMainWindow):
         self.settings.save_window_geometry(self.saveGeometry())
         self.settings.sync()
 
-        # Stop worker
+        # Stop worker (it restores the default playback device), then the
+        # audio process. The worker gives the audio process up to 5 s.
         if self.worker.is_running:
             self.worker.stop()
-            self.worker.wait(2000)
+            self.worker.wait(7000)
+        self.worker.shutdown()
 
         # Clean up shared memory and local server
         try:

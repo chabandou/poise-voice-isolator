@@ -3,6 +3,8 @@ Stream Denoiser Constants
 
 Central location for all configuration constants used across the package.
 """
+import os
+import sys
 
 # Audio processing constants
 DEFAULT_SAMPLE_RATE = 48000
@@ -24,6 +26,28 @@ PW_FADE_SAMPLES = 64
 # Linux backend: "auto" (PipeWire node when available, else pulse-simple),
 # "pipewire" or "pulse". Override with POISE_BACKEND or --backend.
 LINUX_BACKENDS = ("auto", "pipewire", "pulse")
+
+# Windows native audio path (backends/wasapi_backend.py): CABLE Output to
+# the speakers through poise_wasapi.dll, the same fixed-delay core.
+# Time the inference thread gets per frame (samples); a frame later than
+# this plays unprocessed; it adds to the fixed delay. Override with
+# POISE_WIN_MARGIN_MS. In the UI's process inference waits for the GIL
+# behind the UI: 21 ms (an 11 ms margin let 69 frames in 2 minutes play
+# unprocessed with a busy UI under load). In the audio process
+# (audio_host) nothing else holds it, and inference under MMCSS takes
+# p99 4 ms even with every core busy: 5 ms played every frame processed
+# under full load and cut the A/V offset by 19 ms.
+WIN_MARGIN_SAMPLES = 1024
+WIN_PROCESS_MARGIN_SAMPLES = 256
+WIN_FADE_SAMPLES = PW_FADE_SAMPLES
+# Clock-bridge headroom for capture packets that arrive late (samples).
+WIN_FIFO_SAFETY_SAMPLES = 240
+# Audio kept queued for the speakers (samples); 0 = the whole WASAPI
+# buffer.
+WIN_RENDER_FILL_SAMPLES = 0
+# Windows backend: "auto" (native path when available, else PortAudio),
+# "wasapi" or "portaudio". Override with POISE_BACKEND or --backend.
+WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
 DEFAULT_FRAME_SIZE = 480
 FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 
@@ -72,8 +96,15 @@ AUDIO_CLIP_MAX = 1.0
 # the boosted signal still can't exceed [-1, 1].
 OUTPUT_GAIN_DB = 6.0
 
-# ONNX threading constants
-ONNX_INTRA_OP_THREADS = 2
+# ONNX threading constants. On Windows the thread running inference (the
+# native path's inference thread, the PortAudio loop) runs under MMCSS,
+# but ONNX Runtime's pool threads run at normal priority: with every core
+# busy they made DF3 frames take up to 37 ms (p99 23 ms) instead of ~2 ms.
+# One thread does all the work on the MMCSS thread itself (p99 4 ms under
+# the same load) and is no slower when idle: the model is small.
+# POISE_ONNX_THREADS overrides it (measurements).
+ONNX_INTRA_OP_THREADS = int(os.environ.get(
+    "POISE_ONNX_THREADS", 1 if sys.platform == "win32" else 2))
 ONNX_INTER_OP_THREADS = 1
 
 # Buffer and timing constants

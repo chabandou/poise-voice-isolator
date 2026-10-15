@@ -1,4 +1,5 @@
-"""Timing of the PipeWire node's fixed-delay core (libpoise_pw.so).
+"""Timing of the fixed-delay core (libpoise_pw.so; on Windows the same
+core inside poise_wasapi.dll).
 
 Cycles are driven by hand, so no PipeWire server is needed. The "engine"
 in most tests is a pure delay of ENGINE samples: its output then equals
@@ -6,6 +7,7 @@ the dry fallback exactly, so whatever mix of processed and unprocessed
 frames the core plays, the output must be the input delayed by exactly
 delay + ENGINE samples.
 """
+import sys
 import threading
 import time
 
@@ -16,10 +18,18 @@ from stream_denoiser.backends.pipewire_node import (
     WAIT_STOPPED, WAIT_TIMEOUT, DelayCore, PipeWireNodeUnavailable,
     load_library)
 
+
+def _core_library():
+    if sys.platform == "win32":
+        from stream_denoiser.backends import wasapi_node
+        return wasapi_node.load_library()
+    return load_library()
+
+
 try:
-    load_library()
-except PipeWireNodeUnavailable as e:  # not built here
-    pytest.skip(f"libpoise_pw.so unavailable: {e}", allow_module_level=True)
+    LIB = _core_library()
+except (PipeWireNodeUnavailable, RuntimeError) as e:  # not built here
+    pytest.skip(f"native core unavailable: {e}", allow_module_level=True)
 
 F = 512
 ENGINE = 1536
@@ -66,7 +76,7 @@ def _engine(x, gain=1.0):
 @pytest.fixture
 def core():
     c = DelayCore(F, engine_latency=ENGINE, quantum=QUANTUM, margin=MARGIN,
-                  fade=FADE)
+                  fade=FADE, lib=LIB)
     yield c
     c.close()
 

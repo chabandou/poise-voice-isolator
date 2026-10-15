@@ -1,6 +1,6 @@
 /*
- * Fixed-delay exchange between PipeWire's realtime thread and the
- * Python inference worker.
+ * Fixed-delay exchange between the realtime audio thread (PipeWire's on
+ * Linux, poise_wasapi's on Windows) and the Python inference worker.
  *
  * The realtime side writes every captured sample into a history buffer
  * and, in the same cycle, outputs the sample from exactly `delay`

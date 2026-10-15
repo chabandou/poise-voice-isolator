@@ -11,6 +11,8 @@ icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.
 model_path = os.path.join(project_dir, 'denoiser_model_df3.onnx')
 model_states_path = os.path.join(project_dir, 'denoiser_model_df3_states.npz')
 rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
+# Native audio path (make -C native/poise_wasapi).
+wasapi_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'poise_wasapi.dll')
 assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
 vbcable_dir = os.path.join(project_dir, 'installer', 'windows', 'vbcable')
 
@@ -18,6 +20,7 @@ datas = [
     (model_path, '.'),
     (model_states_path, '.'),
     (rnnoise_dll_path, '.'),
+    (wasapi_dll_path, '.'),
     (assets_path, 'stream_denoiser/gui/assets'),
 ]
 # Vendored VB-Cable setups (staged via installer/fetch_vbcable.py).
@@ -32,7 +35,10 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        # The audio process (spawned: it imports these on its own).
+        'stream_denoiser.audio_host',
         'stream_denoiser.backends.sounddevice_backend',
+        'stream_denoiser.backends.wasapi_backend',
         'sounddevice',
         'onnxruntime',
         'numpy',

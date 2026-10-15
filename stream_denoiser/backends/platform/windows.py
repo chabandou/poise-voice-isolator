@@ -7,8 +7,10 @@ Windows-specific audio functionality:
 
 This module is EXCLUDED from Linux builds via PyInstaller spec.
 """
+import ctypes
 import subprocess
 import time
+from contextlib import contextmanager
 from typing import Optional
 
 from ...constants import (
@@ -25,6 +27,35 @@ from ...constants import (
 from ...logging_config import get_logger
 
 _logger = get_logger(__name__)
+
+# MMCSS task the audio loop thread joins (as pro audio apps do).
+MMCSS_TASK = "Pro Audio"
+
+
+@contextmanager
+def mmcss_thread(task: str = MMCSS_TASK):
+    """Run the calling thread under MMCSS while the block lasts.
+
+    An ordinary thread, even at HIGHEST, loses the CPU to starved
+    normal threads Windows lifts to priority 15 for a quantum now and
+    then: with every core busy, DF3 frames took up to 46 ms instead of
+    ~2 ms. MMCSS puts the thread in the realtime range (p99 4 ms under
+    the same load). Yields True when it applied.
+    """
+    handle = None
+    try:
+        avrt = ctypes.WinDLL("avrt")
+        avrt.AvSetMmThreadCharacteristicsW.restype = ctypes.c_void_p
+        avrt.AvRevertMmThreadCharacteristics.argtypes = [ctypes.c_void_p]
+        index = ctypes.c_ulong(0)
+        handle = avrt.AvSetMmThreadCharacteristicsW(task, ctypes.byref(index))
+    except Exception as e:
+        _logger.debug(f"MMCSS unavailable: {e!r}")
+    try:
+        yield bool(handle)
+    finally:
+        if handle:
+            avrt.AvRevertMmThreadCharacteristics(handle)
 
 
 class VBCableSwitcher:

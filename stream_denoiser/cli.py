@@ -26,6 +26,7 @@ from .constants import (
     MODEL_DEEPFILTERNET3,
     PULSE_TARGET_SR,
     LINUX_BACKENDS,
+    WINDOWS_BACKENDS,
 )
 from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
@@ -92,7 +93,9 @@ def process_system_audio_realtime(engine: DenoiseEngine,
         source: Pulse source name for capture (Linux only)
         sink: Pulse sink name for playback (Linux only)
         backend: Linux backend: "auto" (default; PipeWire node when
-            available), "pipewire" or "pulse". None reads POISE_BACKEND.
+            available), "pipewire" or "pulse"; Windows: "auto" (native
+            WASAPI path when available), "wasapi" or "portaudio". None
+            reads POISE_BACKEND.
     """
     # Platform-specific audio routing
     vb_cable_switcher = None
@@ -230,7 +233,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
         if USE_SOUNDDEVICE:
             _logger.info("Using sounddevice backend")
             from .backends.sounddevice_backend import process_with_sounddevice
-            process_with_sounddevice(processor, input_device, output_device)
+            process_with_sounddevice(processor, input_device, output_device,
+                                     backend=backend)
         else:
             raise RuntimeError("No suitable audio backend available")
     finally:
@@ -307,10 +311,12 @@ Examples:
                         help='Pulse sink name for playback (Linux only, '
                              'default: original hardware sink)')
     parser.add_argument('--backend', type=str, default=None,
-                        choices=list(LINUX_BACKENDS),
-                        help='Linux audio backend: auto (default) runs Poise '
-                             'as a PipeWire node when available, else '
-                             'pulse-simple; also POISE_BACKEND')
+                        choices=list(dict.fromkeys(LINUX_BACKENDS
+                                                   + WINDOWS_BACKENDS)),
+                        help='Audio backend: auto (default) runs Poise as a '
+                             'PipeWire node (Linux) or on the native WASAPI '
+                             'path (Windows) when available, else '
+                             'pulse-simple / PortAudio; also POISE_BACKEND')
     parser.add_argument('--no-aad', action='store_true',
                         help='Disable Audio Activity detection')
     parser.add_argument('--aad-threshold', type=float, default=DEFAULT_AAD_THRESHOLD_DB,
