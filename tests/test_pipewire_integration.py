@@ -20,23 +20,38 @@ OUT_SINK = "poise-pw-test-out"
 NODE = "Poise_PW_Test"
 
 
-def _available():
+def _unavailable():
+    """Why the node cannot be tested here, or None."""
     try:
-        import pulsectl
-        if getattr(pulsectl, "_is_stub", False):
-            return False
         from stream_denoiser.backends.pipewire_backend import (
             pipewire_node_status)
         from stream_denoiser.backends.pulse_simple import _load_library
+        ok, detail = pipewire_node_status()
+        if not ok:
+            return detail
+        import pulsectl
+        if getattr(pulsectl, "_is_stub", False):
+            return "pulsectl not installed"
         _load_library()
-        return pipewire_node_status()[0] and shutil.which("pactl")
-    except Exception:
-        return False
+        if not shutil.which("pactl"):
+            return "pactl not found"
+        return None
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
 
 
-pytestmark = [pytest.mark.integration,
-              pytest.mark.skipif(not _available(),
-                                 reason="needs PipeWire + libpoise_pw.so")]
+_UNAVAILABLE = _unavailable()
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _needs_node():
+    # CI builds the node, so there a missing one is a failure.
+    if _UNAVAILABLE and os.environ.get("POISE_REQUIRE_PIPEWIRE_NODE"):
+        pytest.fail(f"PipeWire node required: {_UNAVAILABLE}")
+    if _UNAVAILABLE:
+        pytest.skip(f"needs PipeWire + libpoise_pw.so: {_UNAVAILABLE}")
 
 
 def _pactl(*args):
