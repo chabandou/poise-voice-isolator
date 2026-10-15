@@ -56,8 +56,8 @@ def test_original_sink_name_property():
     assert r.original_sink_name == "alsa_output.pci-0000_00_1f.3.analog-stereo"
 
 
-def test_wait_for_monitor_source_found(monkeypatch):
-    mod, r = _router()
+def test_wait_for_source_found(monkeypatch):
+    mod = _load_linux_module()
     calls = {"n": 0}
 
     class FakePulse:
@@ -80,18 +80,18 @@ def test_wait_for_monitor_source_found(monkeypatch):
     monkeypatch.setitem(sys.modules, "pulsectl", fake_pulsectl)
     monkeypatch.setattr(mod, "USE_PULSECTL", True)
     monkeypatch.setattr("time.sleep", lambda s: None)
-    assert r.wait_for_monitor_source(timeout_sec=3.0, poll_interval_sec=0.05) == \
-        "Poise_Capture.monitor"
+    assert mod.wait_for_source("Poise_Capture.monitor", timeout_sec=3.0,
+                               poll_interval_sec=0.05) == "Poise_Capture.monitor"
     assert calls["n"] >= 3
 
 
-def test_wait_for_monitor_source_timeout(monkeypatch):
+def test_wait_for_source_timeout(monkeypatch):
     # NOTE: asserted via mock, not caplog: our loggers use propagate=False,
     # and pytest only attaches its capture handler to non-propagating
     # loggers that already exist at test-setup time — but the module under
     # test is imported lazily inside the test itself, so caplog would
     # flakily miss the record depending on test order.
-    mod, r = _router()
+    mod = _load_linux_module()
 
     class FakePulse:
         def __init__(self, *a, **k):
@@ -114,15 +114,14 @@ def test_wait_for_monitor_source_timeout(monkeypatch):
         mod._logger, "warning",
         lambda msg, *args, **kwargs: warnings.append(msg % args if args else msg),
     )
-    assert r.wait_for_monitor_source(timeout_sec=0, poll_interval_sec=0.05) is None
+    assert mod.wait_for_source("Poise_Capture.monitor", timeout_sec=0,
+                               poll_interval_sec=0.05) is None
     text = "\n".join(warnings)
     assert "did not appear at the PulseAudio" in text
 
 
-def test_wait_for_monitor_source_no_name():
-    mod, r = _router()
-    r._monitor_source = None
-    assert r.wait_for_monitor_source(timeout_sec=0) is None
+# No monitor name at all is refused before wait_for_source runs:
+# session.pulse_endpoints (test_audio_host.py, test_pulse_endpoints_fail_fast).
 
 
 def test_cli_fails_fast_when_monitor_missing(monkeypatch):

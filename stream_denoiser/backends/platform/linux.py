@@ -409,14 +409,6 @@ class LinuxAudioRouter:
         """
         return self._original_default_sink
 
-    def wait_for_monitor_source(self, timeout_sec: float = 3.0,
-                                poll_interval_sec: float = 0.05) -> Optional[str]:
-        """Wait for the null sink's monitor source (see wait_for_source)."""
-        if not self._monitor_source:
-            return None
-        return wait_for_source(self._monitor_source, timeout_sec,
-                               poll_interval_sec)
-
     def restore_original_sink(self) -> bool:
         """Restore the original default sink and clean up null sink."""
         success = True
