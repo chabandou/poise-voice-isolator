@@ -61,7 +61,7 @@ _LAZY = {
     "AudioActivityDetector": ".aad",
     "StreamingResampler": ".resampler",
     "DenoiserAudioProcessor": ".processor",
-    "VB_CableSwitcher": ".vb_cable",
+    "VB_CableSwitcher": ".backends.platform.windows",
     "list_audio_devices": ".device_utils",
     "find_loopback_device": ".device_utils",
     "get_output_device_id": ".device_utils",

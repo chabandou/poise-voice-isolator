@@ -18,7 +18,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from ..audio_host import AudioHost
 from ..engines import DEFAULT_DF3_ONNX
-from ..vb_cable import VB_CableSwitcher
+from ..backends.platform.windows import VBCableSwitcher
 from ..constants import (
     DEFAULT_SAMPLE_RATE, DEVICE_SWITCH_INIT_DELAY_SEC,
     DEVICE_SWITCH_SUCCESS_HOLD_SEC, STATS_UPDATE_INTERVAL_SEC,
@@ -67,7 +67,7 @@ class AudioWorker(QThread):
         
         # State
         self._running = False
-        self._vb_cable_switcher: Optional[VB_CableSwitcher] = None
+        self._vb_cable_switcher: Optional[VBCableSwitcher] = None
         # The audio process: started on the first run, kept between runs
         # (its imports take about a second), ended by shutdown().
         self._host: Optional[AudioHost] = None
@@ -119,7 +119,7 @@ class AudioWorker(QThread):
             if self.vb_cable_enabled:
                 self.status_changed.emit(MSG_DEVICE_SWITCHING)
                 cable_name = self.vb_cable_name or "CABLE Input (VB-Audio Virtual Cable)"
-                self._vb_cable_switcher = VB_CableSwitcher(
+                self._vb_cable_switcher = VBCableSwitcher(
                     vb_cable_name=cable_name,
                     auto_switch=True,
                     status_cb=self.status_changed.emit,

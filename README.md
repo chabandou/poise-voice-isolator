@@ -381,17 +381,20 @@ stream_denoiser/
 │   ├── pulse_backend.py     # Linux fallback: pulse-simple loop
 │   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
 │   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
+│   ├── delay_core.py        # ctypes side of poise_core, shared by both native nodes
+│   ├── node_loop.py         # Inference thread for either native node
 │   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
 │   └── platform/            # Platform-specific code
 │       ├── linux.py         # PulseAudio integration
-│       └── windows.py       # WASAPI support
+│       └── windows.py       # WASAPI support, VB-Cable switching
 ├── processor.py             # Core ONNX model wrapper
 ├── aad.py                   # Audio Activity Detection
 ├── resampler.py             # Audio resampling
-├── vb_cable.py              # Virtual cable management (Windows)
 ├── device_utils.py          # Audio device utilities
 ├── platform_utils.py        # Platform detection
 ├── constants.py             # Global configurations
+├── session.py               # Builds the processor, runs the chosen loop
+├── audio_host.py            # The GUI/TUI's audio process
 ├── cli.py                   # Command-line interface
 ├── logging_config.py        # Logging configuration
 ├── backend_detection.py     # Backend availability checks

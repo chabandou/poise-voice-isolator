@@ -62,9 +62,6 @@ class VBCableSwitcher:
     """
     Manages switching Windows default playback device to VB Cable.
     Uses PowerShell AudioDeviceCmdlets module to change default audio device.
-    
-    This is the new location for VB Cable functionality.
-    The old vb_cable.py is kept for backwards compatibility during migration.
     """
     
     # PowerShell command templates
@@ -203,6 +200,12 @@ class VBCableSwitcher:
             )
             if result.returncode != 0:
                 _logger.warning(f"Could not install AudioDeviceCmdlets: {result.stderr}")
+                _logger.warning("You may need to install it manually, run in PowerShell: "
+                                "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 "
+                                "-Scope CurrentUser -Force; "
+                                "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; "
+                                "Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser "
+                                "-Force -AllowClobber -SkipPublisherCheck")
             else:
                 # Verify it actually landed (PSGallery hiccups return 0 with no module).
                 verify = self._run_powershell_command(
@@ -326,7 +329,9 @@ class VBCableSwitcher:
             if current_device == self.vb_cable_name:
                 _logger.info(f"VB Cable already set as default device: {current_device}")
                 return True
-        
+            elif 'CABLE' in current_device.upper():
+                _logger.info(f"Found CABLE device but not the target one. Current: {current_device}, Target: {self.vb_cable_name}")
+
         if self.get_device_index(self.vb_cable_name) is None:
             _logger.info(f"Device '{self.vb_cable_name}' not found, searching for alternatives...")
             found_device = self.find_vb_cable_device()
@@ -363,7 +368,7 @@ class VBCableSwitcher:
         return success
 
 
-# Alias for backwards compatibility
+# The package's public name (stream_denoiser.VB_CableSwitcher)
 VB_CableSwitcher = VBCableSwitcher
 
 

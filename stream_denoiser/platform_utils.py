@@ -28,12 +28,7 @@ def get_vb_cable_switcher() -> Optional[Type]:
         from .backends.platform.windows import VBCableSwitcher
         return VBCableSwitcher
     except ImportError:
-        # Fallback to old location during migration
-        try:
-            from .vb_cable import VB_CableSwitcher
-            return VB_CableSwitcher
-        except ImportError:
-            return None
+        return None
 
 
 def get_preferred_host_apis() -> list[str]:
