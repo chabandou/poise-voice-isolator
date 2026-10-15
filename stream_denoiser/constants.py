@@ -74,8 +74,8 @@ MODEL_INFO = {
     },
     MODEL_GTCRN: {
         "label": "GTCRN",
-        "picker_blurb": "Noise removal for speech · medium CPU load",
-        "card_blurb": "Removes noise from speech, not music. Medium CPU use.",
+        "picker_blurb": "Noise removal for speech · low CPU load",
+        "card_blurb": "Removes noise from speech, not music. Light CPU use.",
         "blurb": "Frequency domain (STFT, 16 kHz) · ONNX Runtime",
     },
     MODEL_RNNOISE: {

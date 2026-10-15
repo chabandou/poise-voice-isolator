@@ -266,7 +266,7 @@ Examples:
   # Use DeepFilterNet3 (faster, ~2x less CPU):
   python -m stream_denoiser --model deepfilternet3
 
-  # Use GTCRN (tiny speech-denoising model, lower delay; leaves music in):
+  # Use GTCRN (tiny speech-denoising model, light on CPU; leaves music in):
   python -m stream_denoiser --model gtcrn
 
   # Adjust AAD sensitivity (lower = more sensitive):
