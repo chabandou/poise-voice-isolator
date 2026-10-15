@@ -12,31 +12,51 @@ Features:
 - Streaming state management for continuous processing
 """
 
-from .constants import (
-    DEFAULT_SAMPLE_RATE,
-    DEFAULT_FRAME_SIZE,
-    DEFAULT_AAD_THRESHOLD_DB,
-)
-from .ring_buffer import RingBuffer
-from .aad import AudioActivityDetector
-from .resampler import StreamingResampler
-from .processor import DenoiserAudioProcessor
-from .vb_cable import VB_CableSwitcher
-from .device_utils import (
-    list_audio_devices,
-    find_loopback_device,
-    get_output_device_id,
-    validate_output_device,
-)
-from .cli import main, process_system_audio_realtime
-
-# GUI is optional - only import if PyQt6 is available
-try:
-    from .gui import run_gui
-except ImportError:
-    run_gui = None
+import importlib
 
 __version__ = "1.1.0"
+
+# Public names, resolved on first access. Importing the package must stay
+# cheap: the audio process (audio_host, started with spawn) re-imports it,
+# and eager imports here used to pull sounddevice, the CLI and the whole
+# PyQt6 GUI into that process.
+_LAZY = {
+    "DEFAULT_SAMPLE_RATE": ".constants",
+    "DEFAULT_FRAME_SIZE": ".constants",
+    "DEFAULT_AAD_THRESHOLD_DB": ".constants",
+    "RingBuffer": ".ring_buffer",
+    "AudioActivityDetector": ".aad",
+    "StreamingResampler": ".resampler",
+    "DenoiserAudioProcessor": ".processor",
+    "VB_CableSwitcher": ".vb_cable",
+    "list_audio_devices": ".device_utils",
+    "find_loopback_device": ".device_utils",
+    "get_output_device_id": ".device_utils",
+    "validate_output_device": ".device_utils",
+    "process_system_audio_realtime": ".cli",
+    "main": ".cli",
+    "run_gui": ".gui",
+}
+
+
+def __getattr__(name):
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        value = getattr(importlib.import_module(module, __name__), name)
+    except ImportError:
+        # GUI is optional - None when PyQt6 is not installed
+        if name != "run_gui":
+            raise
+        value = None
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
+
 
 __all__ = [
     # Constants
