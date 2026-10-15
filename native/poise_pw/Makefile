@@ -10,11 +10,13 @@ PKG_CONFIG ?= pkg-config
 PW_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpipewire-0.3)
 PW_LIBS := $(shell $(PKG_CONFIG) --libs libpipewire-0.3)
 
-SRC := poise_core.c poise_pw.c
-HDR := poise_core.h
+# The fixed-delay core, shared with the Windows path (native/poise_wasapi).
+CORE := ../core
+SRC := $(CORE)/poise_core.c poise_pw.c
+HDR := $(CORE)/poise_core.h
 
 $(OUT): $(SRC) $(HDR)
-	$(CC) $(CFLAGS) $(PW_CFLAGS) -shared -o $@ $(SRC) $(PW_LIBS) -lpthread $(LDFLAGS)
+	$(CC) $(CFLAGS) -I$(CORE) $(PW_CFLAGS) -shared -o $@ $(SRC) $(PW_LIBS) -lpthread $(LDFLAGS)
 
 clean:
 	rm -f $(OUT)

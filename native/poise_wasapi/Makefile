@@ -17,11 +17,13 @@ CFLAGS += -std=gnu11 -Wall -Wextra -Wno-unused-parameter
 # No libgcc DLL next to Poise.exe.
 STATIC ?= -static-libgcc
 
-SRC := poise_wasapi.c ../poise_pw/poise_core.c
-HDR := poise_wasapi.h ../poise_pw/poise_core.h
+# The fixed-delay core, shared with the PipeWire node (native/poise_pw).
+CORE := ../core
+SRC := poise_wasapi.c $(CORE)/poise_core.c
+HDR := poise_wasapi.h $(CORE)/poise_core.h
 
 $(OUT): $(SRC) $(HDR)
-	$(CC) $(CFLAGS) -shared -o $@ $(SRC) -lole32 $(STATIC) $(LDFLAGS)
+	$(CC) $(CFLAGS) -I$(CORE) -shared -o $@ $(SRC) -lole32 $(STATIC) $(LDFLAGS)
 
 clean:
 	rm -f $(OUT)

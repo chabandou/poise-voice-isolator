@@ -1,6 +1,6 @@
 """
 ctypes face of poise_core, the native fixed-delay exchange both native
-nodes run (native/poise_pw/poise_core.c): the PipeWire node on Linux
+nodes run (native/core/poise_core.c): the PipeWire node on Linux
 (libpoise_pw.so, pipewire_node) and the WASAPI node on Windows
 (poise_wasapi.dll, wasapi_node). Each library exports the same
 poise_core_* functions.
