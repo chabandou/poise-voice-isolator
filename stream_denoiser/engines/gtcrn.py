@@ -4,7 +4,9 @@ GTCRN Engine
 Runs GTCRN (Rong et al., ICASSP 2024), an ultra-lightweight speech
 enhancement model, through ONNX Runtime: the official streaming export
 (`gtcrn.onnx` from github.com/Xiaobin-Rong/gtcrn, MIT licensed; the
-model Poise for Android ships).
+model Poise for Android ships), rewritten by tools/optimize_gtcrn.py
+into an equivalent graph with the same inputs and outputs that runs
+about 2.4x faster (same output to within float rounding).
 
 GTCRN works at 16 kHz on one STFT frame at a time (512-point FFT,
 256-sample hop, sqrt-Hann window) and carries its streaming state in
