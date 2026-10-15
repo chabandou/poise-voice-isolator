@@ -4,6 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "poise-voice-isolator"
+# The one version source: stream_denoiser.__version__ reads it (and frozen
+# builds bundle this file for that). Release checklist - these copies
+# cannot read it, so bump them by hand:
+#   - setup.iss          #define MyAppVersion   (Windows installer)
+#   - aur-bin/PKGBUILD   pkgver (reset pkgrel to 1)
+#   - the git tag        vX.Y.Z (triggers build-linux.yml / build-windows.yml)
 version = "1.1.0"
 description = "Real-time system audio denoiser and voice isolator"
 readme = "README.md"
@@ -67,7 +73,7 @@ where = ["."]
 include = ["stream_denoiser*"]
 
 [tool.setuptools.package-data]
-stream_denoiser = ["*.onnx", "tui/*.tcss", "gui/assets/*", "gui/assets/fonts/*", "gui/assets/icons/*", "native/*.dll"]
+stream_denoiser = ["models/*.onnx", "models/*.npz", "tui/*.tcss", "gui/assets/*", "gui/assets/fonts/*", "gui/assets/icons/*", "native/*.dll", "native/*.so"]
 
 [tool.pytest.ini_options]
 markers = [

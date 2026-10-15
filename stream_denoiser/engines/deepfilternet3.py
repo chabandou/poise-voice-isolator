@@ -33,7 +33,9 @@ DEFAULT_DF3_STATES = 'denoiser_model_df3_states.npz'
 def _search_model_files(onnx_name: str, states_name: Optional[str] = None):
     """
     Locate the DF3 ONNX file (and its states .npz) in the usual locations:
-    next to the package, the repo root, the main script dir, or the cwd.
+    the package's models/ dir (where the vendored model lives, in source
+    checkouts, wheels and frozen builds alike), then next to the package,
+    the repo root, the main script dir, or the cwd.
 
     Returns (onnx_path, states_path); states_path is resolved as the
     `<onnx_stem>_states.npz` sibling unless states_name is given.
@@ -42,6 +44,7 @@ def _search_model_files(onnx_name: str, states_name: Optional[str] = None):
     search_paths = []
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    search_paths.append(os.path.join(os.path.dirname(script_dir), 'models', onnx_name))
     search_paths.append(os.path.join(script_dir, onnx_name))
     search_paths.append(os.path.join(script_dir, '..', onnx_name))
     # Grandparent: repo root in dev checkouts, payload root in Nuitka

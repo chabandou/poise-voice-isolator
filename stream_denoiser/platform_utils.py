@@ -16,10 +16,6 @@ def is_linux() -> bool:
     """Check if running on Linux."""
     return sys.platform.startswith('linux')
 
-def is_macos() -> bool:
-    """Check if running on macOS."""
-    return sys.platform == 'darwin'
-
 
 def get_vb_cable_switcher() -> Optional[Type]:
     """
@@ -40,20 +36,6 @@ def get_vb_cable_switcher() -> Optional[Type]:
             return None
 
 
-def get_linux_audio_router() -> Optional[Type]:
-    """
-    Safely import LinuxAudioRouter class.
-    Returns None on non-Linux platforms or if module unavailable.
-    """
-    if not is_linux():
-        return None
-    try:
-        from .backends.platform.linux import LinuxAudioRouter
-        return LinuxAudioRouter
-    except ImportError:
-        return None
-
-
 def get_preferred_host_apis() -> list[str]:
     """
     Get list of preferred host API names for the current platform.
@@ -63,8 +45,6 @@ def get_preferred_host_apis() -> list[str]:
         return ['WASAPI', 'Windows WASAPI']
     elif is_linux():
         return ['ALSA', 'PulseAudio', 'JACK Audio Connection Kit', 'PipeWire']
-    elif is_macos():
-        return ['Core Audio']
     else:
         return []  # Accept all
 

@@ -19,3 +19,16 @@ desktop.ini
 installer/windows/vbcable/
 # Built by native/poise_pw/Makefile (build-linux.sh runs it)
 stream_denoiser/native/libpoise_pw.so
+# Release binaries: CI builds and publishes these (build-linux.yml,
+# build-windows.yml); never commit them
+installer/linux/poise
+installer/windows/Poise_Setup.exe
+installer/Poise_Setup.exe
+# Leftover native libraries from abandoned experiments (nothing loads them)
+stream_denoiser/native/libpoise_native.so
+stream_denoiser/native/libopenvino*.so
+stream_denoiser/native/libtbb*.so
+stream_denoiser/native/libonnxruntime_providers_*.so
+# Tool droppings
+nuitka-crash-report.xml
+.playwright-cli/

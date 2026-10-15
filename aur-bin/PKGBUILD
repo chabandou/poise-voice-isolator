@@ -1,5 +1,6 @@
 # Maintainer: chabandou <chabandou@gmail.com>
 pkgname=poise-bin
+# Keep in step with version in pyproject.toml (release checklist there)
 pkgver=1.1.0
 pkgrel=11
 pkgdesc="Real-time system audio denoiser and voice isolator with TUI (prebuilt binary)"

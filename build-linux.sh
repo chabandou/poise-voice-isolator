@@ -47,8 +47,8 @@ if ! command -v patchelf &> /dev/null; then
 fi
 
 # Check for model files
-if [ ! -f "denoiser_model_df3.onnx" ] || [ ! -f "denoiser_model_df3_states.npz" ]; then
-    echo "❌ Error: DeepFilterNet3 model files not found (denoiser_model_df3.onnx + denoiser_model_df3_states.npz)!"
+if [ ! -f "stream_denoiser/models/denoiser_model_df3.onnx" ] || [ ! -f "stream_denoiser/models/denoiser_model_df3_states.npz" ]; then
+    echo "❌ Error: DeepFilterNet3 model files not found (stream_denoiser/models/denoiser_model_df3.onnx + denoiser_model_df3_states.npz)!"
     exit 1
 fi
 echo "✓ ONNX models found"
@@ -135,9 +135,10 @@ python -m nuitka \
     --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
     --remove-output \
     --assume-yes-for-downloads \
-    --include-data-files=denoiser_model_df3.onnx=denoiser_model_df3.onnx \
-    --include-data-files=denoiser_model_df3_states.npz=denoiser_model_df3_states.npz \
+    --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
+    --include-data-files=stream_denoiser/models/denoiser_model_df3_states.npz=stream_denoiser/models/denoiser_model_df3_states.npz \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
+    --include-data-files=pyproject.toml=pyproject.toml \
     "${PW_NODE_ARGS[@]}" \
     --output-filename=poise \
     --output-dir=dist \
