@@ -106,10 +106,11 @@ def test_processing_makes_no_reference_cycles(model):
 def test_pipewire_worker_loop_makes_no_reference_cycles(monkeypatch):
     """The loop around the processor: frame exchange, event and stats
     checks, and the stats callback, all on every frame here."""
+    from stream_denoiser.backends import node_loop
     from stream_denoiser.backends import pipewire_backend as pwb
-    from stream_denoiser.backends.pipewire_node import (
+    from stream_denoiser.backends.delay_core import (
         STAT_NAMES, WAIT_STOPPED, WAIT_TIMEOUT)
-    monkeypatch.setattr(pwb, "EVENT_CHECK_SEC", 0.0)
+    monkeypatch.setattr(node_loop, "EVENT_CHECK_SEC", 0.0)
 
     class Node:
         frame = 4
@@ -148,14 +149,16 @@ def test_pipewire_worker_loop_makes_no_reference_cycles(monkeypatch):
     script = [WAIT_TIMEOUT if i % 7 == 0 else i for i in range(3000)]
     node = Node(script)
     # Warm-up pass, then the measured one.
-    pwb._worker_loop(Node(list(script[:50])), Processor(), None,
-                     lambda s, e: sent.append(len(s)), 0.0, time.time())
+    node_loop.worker_loop(Node(list(script[:50])), Processor(), None,
+                          lambda s, e: sent.append(len(s)), 0.0, time.time(),
+                          log_sync=pwb._log_sync)
     gc.collect()
     gc.freeze()
     gc.disable()
     try:
-        pwb._worker_loop(node, Processor(), None,
-                         lambda s, e: sent.append(len(s)), 0.0, time.time())
+        node_loop.worker_loop(node, Processor(), None,
+                              lambda s, e: sent.append(len(s)), 0.0,
+                              time.time(), log_sync=pwb._log_sync)
         assert gc.collect() == 0
     finally:
         gc.unfreeze()

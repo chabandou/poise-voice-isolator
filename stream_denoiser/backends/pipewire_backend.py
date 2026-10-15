@@ -5,7 +5,7 @@ Poise runs inside PipeWire's processing graph, the way effects such as
 EasyEffects and PipeWire's own filter-chain do: a virtual sink ("Poise
 Voice Isolator") that apps play into, whose output reaches the sound card
 in the same graph cycle. The native part (libpoise_pw.so) keeps the delay
-between the two fixed; this module runs inference for it on a Python
+between the two fixed; node_loop runs inference for it on a Python
 thread.
 
 With two separate pulse-simple streams, any moment the Python loop fell
@@ -15,10 +15,7 @@ ready in time plays unprocessed for that moment and the delay stays put.
 import os
 import sys
 import time
-from contextlib import contextmanager
 from typing import Callable, Optional, Tuple
-
-import numpy as np
 
 from ..audio_gc import gc_paused
 from ..constants import (
@@ -32,8 +29,9 @@ from ..constants import (
     STATS_PRINT_INTERVAL_SEC,
 )
 from ..logging_config import get_logger, get_log_file_path
+from ._loop_util import margin_samples, ms
+from .node_loop import worker_loop
 from .pipewire_node import (
-    WAIT_STOPPED,
     PipeWireNode,
     PipeWireNodeError,
     PipeWireNodeUnavailable,
@@ -46,17 +44,8 @@ _logger = get_logger(__name__)
 BACKEND_ENV = "POISE_BACKEND"
 MARGIN_ENV = "POISE_PW_MARGIN_MS"
 
-# How long the worker waits for a frame before checking for stop/errors.
-WAIT_TIMEOUT_MS = 100
 # How long the new sink may take to show up at the Pulse level.
 SINK_APPEAR_TIMEOUT_SEC = 3.0
-# Cadence of the "sync:" file-log line.
-SYNC_LOG_INTERVAL_SEC = 30.0
-# How often counters are checked for events worth their own log line.
-EVENT_CHECK_SEC = 0.5
-# GIL switch interval while inference runs: a busy UI thread then hands
-# the GIL back within 0.5 ms instead of 5 ms, so frames make their slot.
-WORKER_SWITCH_INTERVAL_SEC = 0.0005
 
 
 # ---------------------------------------------------------------------------
@@ -111,17 +100,6 @@ def select_linux_backend(preference: str = "auto",
     if preference == "pipewire":
         raise RuntimeError(f"PipeWire node backend unavailable: {detail}")
     return "pulse", detail
-
-
-def margin_samples() -> int:
-    """Worker margin in samples (POISE_PW_MARGIN_MS overrides the default)."""
-    value = os.environ.get(MARGIN_ENV)
-    if value:
-        try:
-            return max(0, int(float(value) * PULSE_TARGET_SR / 1000.0))
-        except ValueError:
-            _logger.warning("Ignoring %s=%r (not a number)", MARGIN_ENV, value)
-    return PW_MARGIN_SAMPLES
 
 
 # ---------------------------------------------------------------------------
@@ -232,73 +210,17 @@ class DefaultSinkRouter:
 # Processing loop
 # ---------------------------------------------------------------------------
 
-def _should_stop(stop) -> bool:
-    if stop is None:
-        return False
-    if callable(stop):
-        try:
-            return bool(stop())
-        except Exception:
-            return False
-    is_set = getattr(stop, "is_set", None)
-    if callable(is_set):
-        try:
-            return bool(is_set())
-        except Exception:
-            return False
-    return False
-
-
-@contextmanager
-def _fast_gil_handoff():
-    previous = sys.getswitchinterval()
-    sys.setswitchinterval(WORKER_SWITCH_INTERVAL_SEC)
-    try:
-        yield
-    finally:
-        sys.setswitchinterval(previous)
-
-
-def _ms(samples: int) -> float:
-    return samples * 1000.0 / PULSE_TARGET_SR
-
-
 def _log_sync(node: PipeWireNode) -> None:
     st = node.stats()
     _logger.info(
         "sync: latency=%.1fms (delay=%d engine=%d samples) wet=%d dry=%d "
         "late=%d skipped=%d quantum=%d max_quantum=%d delay_changes=%d "
         "resyncs=%d input_gaps=%d trigger_fails=%d",
-        _ms(node.latency_samples), node.delay_samples,
+        ms(node.latency_samples), node.delay_samples,
         node.engine_latency, st["frames_wet"], st["frames_dry"],
         st["frames_late"], st["frames_skipped"], st["quantum"],
         st["quantum_max"], st["delay_changes"], st["resyncs"],
         st["input_gaps"], st["trigger_fails"])
-
-
-def _log_events(node: PipeWireNode, seen: dict, gap_max: float,
-                busy_max: float) -> dict:
-    """One log line per event since the last check, so it can be matched
-    to what else was happening. Returns the new counters."""
-    st = node.stats()
-    dry = st["frames_dry"] - seen["frames_dry"]
-    if dry > 0:
-        _logger.info(
-            "sync: %d frames (%.0f ms) played unprocessed; longest gap "
-            "between frames %.0f ms, longest frame %.0f ms",
-            dry, _ms(dry * node.frame), gap_max * 1000.0, busy_max * 1000.0)
-    if st["delay_changes"] > seen["delay_changes"]:
-        _logger.info(
-            "sync: delay raised to %d samples (latency %.1fms) for a "
-            "%d-sample cycle", node.delay_samples, _ms(node.latency_samples),
-            st["quantum_max"])
-    for key, what in (("resyncs", "input arrived in a burst; output jumped "
-                                  "ahead to keep the delay"),
-                      ("input_gaps", "input fell short; gap played as "
-                                     "silence")):
-        if st[key] > seen[key]:
-            _logger.info("sync: %s (%d)", what, st[key] - seen[key])
-    return st
 
 
 def run_pipewire_loop(processor,
@@ -332,7 +254,7 @@ def run_pipewire_loop(processor,
     engine = processor.engine
     engine_latency = int(getattr(engine, "latency_samples", 0) or 0)
     target = pick_output_sink(sink, node_name)
-    margin = margin_samples()
+    margin = margin_samples(MARGIN_ENV, PW_MARGIN_SAMPLES)
 
     node = PipeWireNode(
         frame=frame, engine_latency=engine_latency, quantum=PW_QUANTUM,
@@ -344,7 +266,7 @@ def run_pipewire_loop(processor,
         "backend=pipewire-node pipewire=%s latency=%.1fms (delay=%d "
         "engine=%d margin=%d quantum<=%d) log=%s",
         getattr(engine, "name", "?"), frame, PULSE_TARGET_SR, target,
-        node_name, pipewire_library_version(), _ms(node.latency_samples),
+        node_name, pipewire_library_version(), ms(node.latency_samples),
         node.delay_samples, engine_latency, margin, PW_QUANTUM,
         get_log_file_path())
 
@@ -359,8 +281,9 @@ def run_pipewire_loop(processor,
                     f"{SINK_APPEAR_TIMEOUT_SEC:.0f}s ({node.status()})")
             router.switch()
         with gc_paused(pause_gc):
-            _worker_loop(node, processor, should_stop, on_stats,
-                         stats_interval_sec, start_time)
+            worker_loop(node, processor, should_stop, on_stats,
+                        stats_interval_sec, start_time, log_sync=_log_sync,
+                        error=PipeWireNodeError)
     finally:
         if router is not None:
             router.restore()
@@ -373,56 +296,6 @@ def run_pipewire_loop(processor,
             pass
         node.close()
     return processor.get_stats()
-
-
-def _worker_loop(node: PipeWireNode, processor, should_stop, on_stats,
-                 stats_interval_sec: float, start_time: float,
-                 log_sync=_log_sync, log_events=_log_events) -> None:
-    """Inference for the node's fixed-delay core until stopped. Also runs
-    the Windows WASAPI node (same core), with its own log lines."""
-    buf = np.empty(node.frame, dtype=np.float32)
-    last_stats = last_sync = last_event = time.time()
-    seen = node.stats()
-    # Longest wait between frames and longest frame since the last event
-    # check: tells a stalled thread from slow inference when frames play
-    # unprocessed.
-    gap_max = busy_max = 0.0
-    last_frame = None
-    with _fast_gil_handoff():
-        while not _should_stop(should_stop):
-            k = node.wait_frame(buf, WAIT_TIMEOUT_MS)
-            if k == WAIT_STOPPED:
-                break
-            if k >= 0:
-                t_frame = time.perf_counter()
-                if last_frame is not None:
-                    gap_max = max(gap_max, t_frame - last_frame)
-                last_frame = t_frame
-                # A copy: engines may keep a reference to their input.
-                out = processor.process_chunk(buf.copy())
-                if out is not None:
-                    node.put_frame(k, out)
-                busy_max = max(busy_max, time.perf_counter() - t_frame)
-            now = time.time()
-            if now - last_event >= EVENT_CHECK_SEC:
-                seen = log_events(node, seen, gap_max, busy_max)
-                gap_max = busy_max = 0.0
-                last_event = now
-            due = now - last_stats >= stats_interval_sec
-            if k < 0 or due:
-                error = node.error()
-                if error:
-                    raise PipeWireNodeError(error)
-            if due:
-                if on_stats is not None:
-                    try:
-                        on_stats(processor.get_stats(), now - start_time)
-                    except Exception:
-                        pass
-                last_stats = now
-            if now - last_sync >= SYNC_LOG_INTERVAL_SEC:
-                log_sync(node)
-                last_sync = now
 
 
 def process_with_pipewire(processor, sink: Optional[str] = None,

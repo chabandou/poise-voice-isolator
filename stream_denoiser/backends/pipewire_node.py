@@ -1,49 +1,34 @@
 """
 ctypes binding for libpoise_pw.so, the in-graph PipeWire node (Linux).
 
-The native side (native/poise_pw/) runs in PipeWire's realtime cycle and
-never waits on Python. It hands frames to an inference thread through
-``wait_frame()`` and takes them back through ``put_frame()``; ctypes
-releases the GIL while the thread waits.
-
-``DelayCore`` is the same fixed-delay exchange without PipeWire, driven
-by hand; the tests use it to check timing exactly. The Windows audio
-path (wasapi_node) runs the same core.
+The native side (native/poise_pw/) runs poise_core's fixed-delay exchange
+(delay_core) in PipeWire's realtime cycle and never waits on Python;
+node_loop runs inference for it. The Windows audio path (wasapi_node)
+runs the same core.
 """
 import ctypes
 import os
 import sys
-from typing import Dict, Optional, Tuple
-
-import numpy as np
+from typing import Optional, Tuple
 
 from ..logging_config import get_logger
+from .delay_core import STAT_NAMES, CoreOps, bind, core_signatures
+from .node_loop import NodeError
 
 _logger = get_logger(__name__)
 
 LIB_NAME = "libpoise_pw.so"
 
-# Order of poise_core_get_stats() (enum poise_stat in poise_core.h).
-STAT_NAMES = (
-    "cycles", "in_pos", "out_pos", "delay", "quantum", "quantum_max",
-    "frames_wet", "frames_dry", "frames_skipped", "frames_late",
-    "delay_changes", "resyncs", "input_gaps", "trigger_fails",
-)
-
 # pw_stream_state values.
 STREAM_STATES = {-1: "error", 0: "unconnected", 1: "connecting",
                  2: "paused", 3: "streaming"}
-
-# wait_frame() results besides a frame index.
-WAIT_TIMEOUT = -1
-WAIT_STOPPED = -2
 
 
 class PipeWireNodeUnavailable(RuntimeError):
     """libpoise_pw.so (or libpipewire) could not be loaded."""
 
 
-class PipeWireNodeError(RuntimeError):
+class PipeWireNodeError(NodeError):
     """The node could not be created, or PipeWire reported an error."""
 
 
@@ -62,31 +47,6 @@ def _candidate_paths():
         except OSError:
             pass
     return [os.path.normpath(p) for p in paths]
-
-
-def core_signatures() -> dict:
-    """ctypes signatures of poise_core (also exported by poise_wasapi.dll)."""
-    u32, i64, u64 = ctypes.c_uint32, ctypes.c_int64, ctypes.c_uint64
-    vp, fp = ctypes.c_void_p, ctypes.c_void_p
-    return {
-        "poise_core_new": ([u32, u32, u32, u32, u32, ctypes.c_float], vp),
-        "poise_core_free": ([vp], None),
-        "poise_core_cycle_mono": ([vp, fp, u32, fp, u32], ctypes.c_int),
-        "poise_core_wait_frame": ([vp, fp, ctypes.c_int], i64),
-        "poise_core_put_frame": ([vp, i64, fp], None),
-        "poise_core_stop": ([vp], None),
-        "poise_core_get_stats": ([vp, ctypes.POINTER(u64), u32], None),
-        "poise_core_delay": ([vp], u64),
-        "poise_core_frame": ([vp], u32),
-        "poise_core_stat_count": ([], u32),
-    }
-
-
-def bind(lib, sigs: dict) -> None:
-    for name, (args, res) in sigs.items():
-        fn = getattr(lib, name)
-        fn.argtypes = args
-        fn.restype = res
 
 
 def _bind(lib) -> None:
@@ -141,94 +101,7 @@ def pipewire_library_version() -> Optional[str]:
         return None
 
 
-def _f32(a: np.ndarray, n: int) -> np.ndarray:
-    a = np.ascontiguousarray(a, dtype=np.float32)
-    if a.ndim != 1 or a.shape[0] != n:
-        raise ValueError(f"expected {n} float32 samples, got shape {a.shape}")
-    return a
-
-
-class _CoreOps:
-    """Worker-side calls shared by DelayCore and PipeWireNode."""
-
-    _lib = None
-    _core = None
-    frame = 0
-
-    def wait_frame(self, out: np.ndarray, timeout_ms: int) -> int:
-        """Copy the next frame to process into ``out`` (float32, C order).
-
-        Returns its index, WAIT_TIMEOUT, or WAIT_STOPPED.
-        """
-        if out.dtype != np.float32 or not out.flags.c_contiguous \
-                or out.shape != (self.frame,):
-            raise ValueError("out must be a C-contiguous float32 frame")
-        return int(self._lib.poise_core_wait_frame(
-            self._core, out.ctypes.data, int(timeout_ms)))
-
-    def put_frame(self, k: int, frame: np.ndarray) -> None:
-        """Hand back processed frame ``k``."""
-        data = _f32(frame, self.frame)
-        self._lib.poise_core_put_frame(self._core, int(k), data.ctypes.data)
-
-    def stats(self) -> Dict[str, int]:
-        buf = (ctypes.c_uint64 * len(STAT_NAMES))()
-        self._lib.poise_core_get_stats(self._core, buf, len(STAT_NAMES))
-        return dict(zip(STAT_NAMES, (int(v) for v in buf)))
-
-    @property
-    def delay_samples(self) -> int:
-        """Fixed delay between input and output, excluding the engine's."""
-        return int(self._lib.poise_core_delay(self._core))
-
-    def stop(self) -> None:
-        """Wake and stop a waiting worker (wait_frame returns WAIT_STOPPED)."""
-        self._lib.poise_core_stop(self._core)
-
-
-class DelayCore(_CoreOps):
-    """The fixed-delay exchange alone, cycles driven by the caller.
-
-    ``lib``: a loaded library exporting poise_core (default
-    libpoise_pw.so; on Windows, wasapi_node.load_library()).
-    """
-
-    def __init__(self, frame: int, engine_latency: int = 0,
-                 quantum: int = 512, margin: int = 1024, fade: int = 64,
-                 dry_gain: float = 1.0, lib=None):
-        self._lib = lib if lib is not None else load_library()
-        self.frame = int(frame)
-        self._core = self._lib.poise_core_new(
-            self.frame, int(engine_latency), int(quantum), int(margin),
-            int(fade), float(dry_gain))
-        if not self._core:
-            raise ValueError("invalid core parameters")
-
-    def cycle(self, inp: Optional[np.ndarray], n_out: int) -> np.ndarray:
-        """One cycle: append ``inp`` (mono, may be None), output n_out."""
-        out = np.zeros(int(n_out), dtype=np.float32)
-        if inp is None:
-            in_ptr, n_in = None, 0
-        else:
-            inp = np.ascontiguousarray(inp, dtype=np.float32)
-            in_ptr, n_in = inp.ctypes.data, len(inp)
-        self._lib.poise_core_cycle_mono(self._core, in_ptr, n_in,
-                                        out.ctypes.data, len(out))
-        return out
-
-    def close(self) -> None:
-        if self._core:
-            self._lib.poise_core_free(self._core)
-            self._core = None
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
-
-
-class PipeWireNode(_CoreOps):
+class PipeWireNode(CoreOps):
     """Poise's virtual sink and its output stream, live in PipeWire.
 
     Created streaming: the sink appears as ``node_name`` and plays to
