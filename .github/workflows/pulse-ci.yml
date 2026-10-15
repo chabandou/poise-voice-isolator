@@ -54,6 +54,13 @@ jobs:
             pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-scipy python3-pytest
           test -f /usr/lib/x86_64-linux-gnu/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)
+      - name: Compile the PipeWire node (check only)
+        # Ubuntu's libpipewire, another version than Fedora's. Built
+        # outside the tree: this job tests the pulse-simple backend.
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make pkg-config libpipewire-0.3-dev
+          make -C native/poise_pw OUT=/tmp/libpoise_pw.so
+          test -f /tmp/libpoise_pw.so
       - name: Start headless PulseAudio
         run: |
           pulseaudio --start --exit-idle-time=-1 --disallow-exit
@@ -68,29 +75,47 @@ jobs:
         run: python3 -m pytest tests/ -v -m "not integration or integration"
 
   pipewire:
+    # Poise's default Linux backend: the PipeWire node (libpoise_pw.so),
+    # built here from native/poise_pw and native/core.
     runs-on: ubuntu-latest
     container:
       image: fedora:41
     env:
       HOME: /root
       XDG_RUNTIME_DIR: /tmp/xdg-runtime
+      SERVER_LOGS: /tmp/server-logs
+      # tests/test_pipewire_integration.py fails instead of skipping.
+      POISE_REQUIRE_PIPEWIRE_NODE: '1'
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
-          dnf install -y pipewire pipewire-pulseaudio wireplumber dbus-daemon pulseaudio-utils pulseaudio-libs python3 python3-pip python3-numpy python3-scipy python3-pytest
+          dnf install -y pipewire pipewire-pulseaudio wireplumber dbus-daemon pulseaudio-utils pulseaudio-libs python3 python3-pip python3-numpy python3-scipy python3-pytest \
+            gcc make pkgconf-pkg-config pipewire-devel procps-ng
           test -f /usr/lib64/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)
+      - name: Build the PipeWire node
+        run: |
+          make -C native/poise_pw
+          test -f stream_denoiser/native/libpoise_pw.so || \
+            (echo "libpoise_pw.so was not built" && exit 1)
       - name: Start PipeWire with pipewire-pulse
         run: |
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          mkdir -p "$SERVER_LOGS"
           dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork
           export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          pipewire &
+          # Each daemon logs to its own file (not to this step's output,
+          # which is gone once the step ends), and the file's last line
+          # says how it ended: status 128+N is signal N (139: SIGSEGV).
+          (set +e; PIPEWIRE_DEBUG=3 pipewire; echo "pipewire exited with status $?") \
+            > "$SERVER_LOGS/pipewire.log" 2>&1 &
           sleep 1
-          wireplumber &
-          pipewire-pulse &
+          (set +e; wireplumber; echo "wireplumber exited with status $?") \
+            > "$SERVER_LOGS/wireplumber.log" 2>&1 &
+          (set +e; PIPEWIRE_DEBUG=3 pipewire-pulse; echo "pipewire-pulse exited with status $?") \
+            > "$SERVER_LOGS/pipewire-pulse.log" 2>&1 &
           sleep 3
           pactl info
       - name: Install python deps
@@ -98,7 +123,22 @@ jobs:
           grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
           pip3 install -r /tmp/requirements-ci.txt pulsectl pytest
       - name: Unit + integration tests
-        run: python3 -m pytest tests/ -v
+        run: python3 -m pytest tests/ -v -rs
+      - name: Server state after a failure
+        if: failure()
+        run: |
+          ps -eo pid,stat,etime,args | grep -E 'pipewire|wireplumber' | grep -v grep || true
+          for f in "$SERVER_LOGS"/*.log; do
+            echo "== $f (last 40 lines)"
+            tail -n 40 "$f"
+          done
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipewire-server-logs
+          path: /tmp/server-logs/
+          if-no-files-found: warn
 
   windows:
     # The GUI (Qt offscreen, see tests/conftest.py), the WASAPI bridge on the
