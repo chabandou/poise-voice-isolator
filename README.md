@@ -306,7 +306,7 @@ python -m stream_denoiser.cli
 ### Available Options
 
 - `--model`: Denoising engine — `deepfilternet3` (default, music/voice isolation) or `rnnoise` (light noise suppression, same model as EasyEffects)
-- `--onnx`: Path to ONNX model file (deepfilternet3 only, default: `denoiser_model_df3.onnx`)
+- `--onnx`: Path to ONNX model file (deepfilternet3 only, default: the vendored `stream_denoiser/models/denoiser_model_df3.onnx`)
 - `--input-device`: Input device ID for system audio capture
 - `--output-device`: Output device ID for audio playback
 - `--no-aad`: Disable Audio Activity detection
@@ -321,7 +321,7 @@ python -m stream_denoiser.cli
 
 ### Models
 
-- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in repo). Removes music and keeps vocals/speech, ~2x less CPU (RTF ~0.11), 512-sample frames. No extra install.
+- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in `stream_denoiser/models/`). Removes music and keeps vocals/speech, ~2x less CPU (RTF ~0.11), 512-sample frames. No extra install.
 - **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Much lower CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
 
 ```bash
@@ -374,6 +374,7 @@ stream_denoiser/
 │   ├── styles.py
 │   ├── system_tray.py
 │   └── worker.py            # Audio processing thread
+├── models/                  # Vendored DeepFilterNet3 model (.onnx + states .npz)
 ├── backends/                # Audio interface backends
 │   ├── pipewire_backend.py  # Linux: Poise as a PipeWire node (default)
 │   ├── pipewire_node.py     # ctypes binding for libpoise_pw.so (native/poise_pw)
@@ -462,7 +463,7 @@ The ONNX model should have the following interface:
 
 - `input_frame`: Float32 array of shape `[512]` (512 samples @ 48kHz)
 - 12 state tensors (norm states, STFT overlap buffers, GRU hidden states —
-  see `denoiser_model_df3_states.npz` for shapes)
+  see `stream_denoiser/models/denoiser_model_df3_states.npz` for shapes)
 
 ### Outputs
 

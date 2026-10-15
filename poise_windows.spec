@@ -8,8 +8,7 @@ block_cipher = None
 # Define paths
 project_dir = os.getcwd()
 icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.ico')
-model_path = os.path.join(project_dir, 'denoiser_model_df3.onnx')
-model_states_path = os.path.join(project_dir, 'denoiser_model_df3_states.npz')
+models_dir = os.path.join(project_dir, 'stream_denoiser', 'models')
 rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
 # Native audio path (make -C native/poise_wasapi).
 wasapi_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'poise_wasapi.dll')
@@ -17,8 +16,7 @@ assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
 vbcable_dir = os.path.join(project_dir, 'installer', 'windows', 'vbcable')
 
 datas = [
-    (model_path, '.'),
-    (model_states_path, '.'),
+    (models_dir, 'stream_denoiser/models'),
     (rnnoise_dll_path, '.'),
     (wasapi_dll_path, '.'),
     (assets_path, 'stream_denoiser/gui/assets'),

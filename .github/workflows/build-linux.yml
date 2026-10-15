@@ -48,8 +48,8 @@ jobs:
 
       - name: Check model files
         run: |
-          test -f denoiser_model_df3.onnx || { echo "Missing denoiser_model_df3.onnx"; exit 1; }
-          test -f denoiser_model_df3_states.npz || { echo "Missing denoiser_model_df3_states.npz"; exit 1; }
+          test -f stream_denoiser/models/denoiser_model_df3.onnx || { echo "Missing stream_denoiser/models/denoiser_model_df3.onnx"; exit 1; }
+          test -f stream_denoiser/models/denoiser_model_df3_states.npz || { echo "Missing stream_denoiser/models/denoiser_model_df3_states.npz"; exit 1; }
           echo "ONNX models found"
 
       - name: Clear ONNX Runtime executable-stack flag
@@ -85,8 +85,8 @@ jobs:
             --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
             --remove-output \
             --assume-yes-for-downloads \
-            --include-data-files=denoiser_model_df3.onnx=denoiser_model_df3.onnx \
-            --include-data-files=denoiser_model_df3_states.npz=denoiser_model_df3_states.npz \
+            --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
+            --include-data-files=stream_denoiser/models/denoiser_model_df3_states.npz=stream_denoiser/models/denoiser_model_df3_states.npz \
             --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
             --output-filename=poise \
             --output-dir=dist \
