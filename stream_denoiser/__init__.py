@@ -8,7 +8,6 @@ Features:
 - Direct time-domain processing (no STFT/ISTFT)
 - Engine-native frames at 48kHz (deepfilternet3: 512 samples / 10.67ms)
 - Audio Activity detection (AAD) for 2-3x performance boost
-- Lock-free ring buffers for reduced latency
 - Streaming state management for continuous processing
 """
 
@@ -59,7 +58,6 @@ _LAZY = {
     "DEFAULT_SAMPLE_RATE": ".constants",
     "DEFAULT_FRAME_SIZE": ".constants",
     "DEFAULT_AAD_THRESHOLD_DB": ".constants",
-    "RingBuffer": ".ring_buffer",
     "AudioActivityDetector": ".aad",
     "StreamingResampler": ".resampler",
     "DenoiserAudioProcessor": ".processor",
@@ -99,7 +97,6 @@ __all__ = [
     "DEFAULT_FRAME_SIZE",
     "DEFAULT_AAD_THRESHOLD_DB",
     # Classes
-    "RingBuffer",
     "AudioActivityDetector",
     "StreamingResampler",
     "DenoiserAudioProcessor",

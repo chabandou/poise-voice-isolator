@@ -49,7 +49,6 @@ WIN_RENDER_FILL_SAMPLES = 0
 # "wasapi" or "portaudio". Override with POISE_BACKEND or --backend.
 WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
 DEFAULT_FRAME_SIZE = 480
-FRAME_DURATION_MS = (DEFAULT_FRAME_SIZE / DEFAULT_SAMPLE_RATE) * 1000  # 10ms
 
 # Model / engine selection
 MODEL_DEEPFILTERNET3 = "deepfilternet3"
@@ -107,9 +106,7 @@ ONNX_INTRA_OP_THREADS = int(os.environ.get(
     "POISE_ONNX_THREADS", 1 if sys.platform == "win32" else 2))
 ONNX_INTER_OP_THREADS = 1
 
-# Buffer and timing constants
-BUFFER_CAPACITY_RATIO = 0.1  # 100ms of audio
-WORKER_SLEEP_TIME_SEC = 0.001  # 1ms
+# Stats timing constants
 STATS_UPDATE_INTERVAL_SEC = 0.1  # 100ms
 STATS_PRINT_INTERVAL_SEC = 1.0  # 1 second
 
@@ -125,7 +122,6 @@ DEVICE_SWITCH_SETTLE_TIME_SEC = 0.2
 DEVICE_SWITCH_INIT_DELAY_SEC = 0.8
 DEVICE_SWITCH_STREAM_DELAY_SEC = 0.3
 DEVICE_SWITCH_SUCCESS_HOLD_SEC = 3.0
-OUTPUT_STREAM_RETRY_COUNT = 3
 OUTPUT_STREAM_RETRY_DELAY_SEC = 0.5
 
 # Shared Messages

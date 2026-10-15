@@ -27,20 +27,3 @@ if _IS_WIN32:
 else:
     sd = None
     USE_SOUNDDEVICE = False
-
-
-def get_available_backends() -> list[str]:
-    """Return list of available audio backend names."""
-    backends = []
-    if USE_SOUNDDEVICE:
-        backends.append("sounddevice")
-    if sys.platform.startswith("linux"):
-        backends.append("pulse-simple")
-    return backends
-
-
-def has_any_backend() -> bool:
-    """Check if at least one audio backend is available."""
-    if sys.platform.startswith("linux"):
-        return True  # pulse-simple loads lazily via libpulse-simple
-    return USE_SOUNDDEVICE

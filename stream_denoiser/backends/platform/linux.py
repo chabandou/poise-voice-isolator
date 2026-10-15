@@ -466,31 +466,3 @@ class LinuxAudioRouter:
         """Context manager exit - restore original routing."""
         self.restore_original_sink()
         return False
-
-    @staticmethod
-    def get_routing_instructions() -> str:
-        """Get user-friendly instructions for manual audio routing."""
-        return """
-Linux Audio Routing (Automatic):
-================================
-
-The denoiser automatically creates a virtual audio sink and routes system audio
-through it. When you stop the denoiser, original routing is restored.
-
-If automatic routing doesn't work, you can set it up manually:
-
-Option 1: Use PipeWire/PulseAudio GUI tools
-  - Install 'pavucontrol' or 'helvum'
-  - Redirect application audio to "Poise Audio Capture"
-  - The denoiser captures from this sink's monitor
-
-Option 2: Manual command line setup
-  # Create null sink
-  pactl load-module module-null-sink sink_name=Poise_Capture sink_properties=device.description="Poise_Capture"
-
-  # Set as default (apps will use it automatically)
-  pactl set-default-sink Poise_Capture
-
-  # Run denoiser - it will capture from the null sink's monitor
-  python -m stream_denoiser
-"""

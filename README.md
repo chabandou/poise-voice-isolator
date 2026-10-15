@@ -149,7 +149,7 @@ poise
 
 #### High latency
 
-- Reduce `BUFFER_CAPACITY_RATIO` in the code (currently 0.1 = 100ms)
+- Lower `POISE_PW_MARGIN_MS` (Linux) or `POISE_WIN_MARGIN_MS` (Windows): the margin adds directly to the fixed delay, but frames that miss it play unprocessed
 - Ensure AAD is enabled to reduce processing load
 - Check that your system can process frames faster than real-time (RTF < 1.0)
 
@@ -388,7 +388,6 @@ stream_denoiser/
 ├── processor.py             # Core ONNX model wrapper
 ├── aad.py                   # Audio Activity Detection
 ├── resampler.py             # Audio resampling
-├── ring_buffer.py           # Thread-safe audio buffering
 ├── vb_cable.py              # Virtual cable management (Windows)
 ├── device_utils.py          # Audio device utilities
 ├── platform_utils.py        # Platform detection
