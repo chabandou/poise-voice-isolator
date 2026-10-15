@@ -17,7 +17,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .base import DelayLine, DenoiseEngine, mix_dry
+from .base import DelayLine, DenoiseEngine, dry_mix_fraction, mix_dry
 from ..constants import (
     MODEL_RNNOISE,
     RNNOISE_SCALE,
@@ -104,13 +104,6 @@ def _load_library() -> ctypes.CDLL:
     return _lib
 
 
-def _dry_mix_for(atten_lim_db: Optional[float]) -> float:
-    """Dry-mix fraction for an attenuation limit (None = no dry mix)."""
-    if atten_lim_db is None:
-        return 0.0
-    return float(10.0 ** (-abs(atten_lim_db) / 20.0))
-
-
 class RNNoiseEngine(DenoiseEngine):
     """RNNoise denoiser (built-in model) via librnnoise."""
 
@@ -133,7 +126,7 @@ class RNNoiseEngine(DenoiseEngine):
         # Applied mix and the one set_atten_lim_db() asks for; the next
         # frame ramps from the first to the second. The dry signal is
         # delayed to line up with the model output (else the mix combs).
-        self._dry_mix = self._dry_mix_target = _dry_mix_for(atten_lim_db)
+        self._dry_mix = self._dry_mix_target = dry_mix_fraction(atten_lim_db)
         self._dry_delay = DelayLine(self.latency_samples)
         self.speech_prob = 0.0
 
@@ -187,7 +180,7 @@ class RNNoiseEngine(DenoiseEngine):
 
     def set_atten_lim_db(self, atten_lim_db: Optional[float]) -> None:
         self.atten_lim_db = atten_lim_db
-        self._dry_mix_target = _dry_mix_for(atten_lim_db)
+        self._dry_mix_target = dry_mix_fraction(atten_lim_db)
 
     def reset(self) -> None:
         self._destroy_state()
