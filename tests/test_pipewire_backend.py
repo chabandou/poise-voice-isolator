@@ -7,9 +7,11 @@ import types
 import numpy as np
 import pytest
 
+from stream_denoiser.backends import node_loop
 from stream_denoiser.backends import pipewire_backend as pwb
-from stream_denoiser.backends.pipewire_node import (
-    WAIT_STOPPED, WAIT_TIMEOUT, PipeWireNodeError)
+from stream_denoiser.backends._loop_util import margin_samples
+from stream_denoiser.backends.delay_core import WAIT_STOPPED, WAIT_TIMEOUT
+from stream_denoiser.backends.pipewire_node import PipeWireNodeError
 from stream_denoiser.constants import PW_NODE_NAME
 
 
@@ -44,12 +46,15 @@ def test_select_falls_back_or_fails_when_unavailable(monkeypatch):
 
 
 def test_margin_env_override(monkeypatch):
+    def margin():
+        return margin_samples(pwb.MARGIN_ENV, pwb.PW_MARGIN_SAMPLES)
+
     monkeypatch.delenv(pwb.MARGIN_ENV, raising=False)
-    assert pwb.margin_samples() == pwb.PW_MARGIN_SAMPLES
+    assert margin() == pwb.PW_MARGIN_SAMPLES
     monkeypatch.setenv(pwb.MARGIN_ENV, "10")
-    assert pwb.margin_samples() == 480
+    assert margin() == 480
     monkeypatch.setenv(pwb.MARGIN_ENV, "lots")
-    assert pwb.margin_samples() == pwb.PW_MARGIN_SAMPLES
+    assert margin() == pwb.PW_MARGIN_SAMPLES
 
 
 # --- routing ---------------------------------------------------------------
@@ -179,6 +184,13 @@ class _FakeNode:
         return self._error
 
 
+def _worker_loop(node, should_stop=None):
+    """The PipeWire node's worker loop, as run_pipewire_loop runs it."""
+    node_loop.worker_loop(node, _Doubler(), should_stop, None, 1.0,
+                          time.time(), log_sync=pwb._log_sync,
+                          error=PipeWireNodeError)
+
+
 class _Doubler:
     def process_chunk(self, x):
         assert x.dtype == np.float32 and x.shape == (4,)
@@ -190,26 +202,26 @@ class _Doubler:
 
 def test_worker_processes_each_frame_and_returns_it():
     node = _FakeNode([0, 1, WAIT_TIMEOUT, 2])
-    pwb._worker_loop(node, _Doubler(), None, None, 1.0, time.time())
+    _worker_loop(node)
     assert sorted(node.put) == [0, 1, 2]
     np.testing.assert_allclose(node.put[2], 4.0)
 
 
 def test_worker_stops_on_request():
     node = _FakeNode([0, 1, 2])
-    pwb._worker_loop(node, _Doubler(), lambda: True, None, 1.0, time.time())
+    _worker_loop(node, lambda: True)
     assert node.put == {}
 
 
 def test_worker_raises_node_errors():
     node = _FakeNode([WAIT_TIMEOUT], error="Poise output: target gone")
     with pytest.raises(PipeWireNodeError, match="target gone"):
-        pwb._worker_loop(node, _Doubler(), None, None, 1.0, time.time())
+        _worker_loop(node)
 
 
 def test_worker_logs_each_event(monkeypatch):
     import logging
-    monkeypatch.setattr(pwb, "EVENT_CHECK_SEC", 0.0)
+    monkeypatch.setattr(node_loop, "EVENT_CHECK_SEC", 0.0)
     node = _FakeNode([0, 1, 2],
                      stats=[{}, {"frames_dry": 3},
                             {"frames_dry": 3, "delay_changes": 1,
@@ -217,11 +229,11 @@ def test_worker_logs_each_event(monkeypatch):
     lines = []
     handler = logging.Handler(logging.INFO)
     handler.emit = lambda record: lines.append(record.getMessage())
-    pwb._logger.addHandler(handler)
+    node_loop._logger.addHandler(handler)
     try:
-        pwb._worker_loop(node, _Doubler(), None, None, 1.0, time.time())
+        _worker_loop(node)
     finally:
-        pwb._logger.removeHandler(handler)
+        node_loop._logger.removeHandler(handler)
     text = "\n".join(lines)
     assert "3 frames (0 ms) played unprocessed" in text
     assert "delay raised to 2112 samples" in text and "1024-sample" in text
@@ -230,7 +242,7 @@ def test_worker_logs_each_event(monkeypatch):
 
 def test_worker_restores_gil_switch_interval():
     before = sys.getswitchinterval()
-    pwb._worker_loop(_FakeNode([0]), _Doubler(), None, None, 1.0, time.time())
+    _worker_loop(_FakeNode([0]))
     assert sys.getswitchinterval() == before
 
 
@@ -258,27 +270,33 @@ def test_cli_runs_the_pipewire_node_when_selected(monkeypatch):
     monkeypatch.setattr(pwb, "pipewire_node_status", lambda: (True, "ok"))
     seen = {}
 
-    def fake_run(processor, sink=None, route_default=True):
+    def fake_run(processor, sink=None, route_default=True, pause_gc=False,
+                 **_):
         seen.update(frame=processor.frame_size, sink=sink,
-                    route=route_default)
+                    route=route_default, pause_gc=pause_gc)
+        return processor.get_stats()
 
-    monkeypatch.setattr(pwb, "process_with_pipewire", fake_run)
+    monkeypatch.setattr(pwb, "run_pipewire_loop", fake_run)
     cli_mod.process_system_audio_realtime(_engine(), sink="alsa_out",
                                           use_vb_cable=False)
-    assert seen == {"frame": 480, "sink": "alsa_out", "route": False}
+    assert seen == {"frame": 480, "sink": "alsa_out", "route": False,
+                    "pause_gc": True}
 
 
 def test_cli_keeps_pulse_path_when_forced(monkeypatch):
     from stream_denoiser import cli as cli_mod
     monkeypatch.setattr(cli_mod, "is_linux", lambda: True)
     monkeypatch.setattr(pwb, "pipewire_node_status", lambda: (True, "ok"))
-    monkeypatch.setattr(pwb, "process_with_pipewire",
+    monkeypatch.setattr(pwb, "run_pipewire_loop",
                         lambda *a, **k: pytest.fail("PipeWire path taken"))
     seen = {}
     import stream_denoiser.backends.pulse_backend as pulse_backend
-    monkeypatch.setattr(pulse_backend, "process_with_pulse",
-                        lambda processor, source, sink: seen.update(
-                            source=source, sink=sink))
+
+    def fake_run(processor, source, sink, **_):
+        seen.update(source=source, sink=sink)
+        return processor.get_stats(), 0
+
+    monkeypatch.setattr(pulse_backend, "run_pulse_loop", fake_run)
     cli_mod.process_system_audio_realtime(
         _engine(), source="x.monitor", sink="alsa_out", use_vb_cable=False,
         backend="pulse")

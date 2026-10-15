@@ -16,19 +16,17 @@ from .engines import create_engine, available_models, DEFAULT_DF3_ONNX
 from .engines.base import DenoiseEngine
 
 from .constants import (
-    DEFAULT_SAMPLE_RATE,
-    DEFAULT_FRAME_SIZE,
     DEFAULT_AAD_THRESHOLD_DB,
     DEVICE_SWITCH_INIT_DELAY_SEC,
     MSG_POWERSHELL_UNAVAILABLE,
     ALL_MODELS,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
-    PULSE_TARGET_SR,
     LINUX_BACKENDS,
+    PW_NODE_DESCRIPTION,
+    PW_NODE_NAME,
     WINDOWS_BACKENDS,
 )
-from .processor import DenoiserAudioProcessor
 from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import (
@@ -77,12 +75,11 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                                  sink: Optional[str] = None,
                                  backend: Optional[str] = None) -> None:
     """
-    Main entry point for real-time audio processing.
-    Selects appropriate backend and uses unified DenoiserAudioProcessor.
+    Main entry point for real-time audio processing: sets up the audio
+    routing, then runs one session (stream_denoiser.session) until Ctrl+C.
 
     Args:
-        engine: Denoising engine (created via create_engine(); a raw ONNX
-            InferenceSession is also accepted for backward compatibility)
+        engine: Denoising engine (a DenoiseEngine, from create_engine())
         input_device: Input device ID (Windows only; errors on Linux)
         output_device: Output device ID (Windows only; errors on Linux)
         enable_aad: Enable Audio Activity detection
@@ -97,9 +94,8 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             WASAPI path when available), "wasapi" or "portaudio". None
             reads POISE_BACKEND.
     """
-    # Platform-specific audio routing
-    vb_cable_switcher = None
-    linux_router = None
+    config = {"aad_enabled": enable_aad, "aad_threshold_db": aad_threshold_db,
+              "atten_lim_db": atten_lim_db}
 
     if is_linux():
         # Linux: pulse-simple path (names, never indices).
@@ -121,20 +117,13 @@ def process_system_audio_realtime(engine: DenoiseEngine,
         chosen, reason = select_linux_backend(
             linux_backend_preference(backend), source=source)
         _logger.info("Linux backend: %s (%s)", chosen, reason)
+        config.update(backend=chosen, input_device=source, output_device=sink)
         if chosen == "pipewire":
-            processor = DenoiserAudioProcessor(
-                engine,
-                target_sr=PULSE_TARGET_SR,
-                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_aad=enable_aad,
-                aad_threshold_db=aad_threshold_db,
-                atten_lim_db=atten_lim_db
-            )
-            from .backends.pipewire_backend import process_with_pipewire
-            process_with_pipewire(processor, sink=sink,
-                                  route_default=use_vb_cable)
+            config["route_default"] = use_vb_cable
+            _run_session(engine, config)
             return
 
+        linux_router = None
         if use_vb_cable:
             # Linux: Use null sink routing
             try:
@@ -149,58 +138,18 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                 _logger.info("Linux routing not available - using default capture")
 
         try:
-            # Resolve capture source by name (fail fast at Pulse level).
-            if source is None:
-                if linux_router and linux_router.get_monitor_source_name():
-                    source = linux_router.wait_for_monitor_source()
-                    if source is None:
-                        monitor = linux_router.get_monitor_source_name()
-                        linux_router.restore_original_sink()
-                        linux_router = None
-                        raise RuntimeError(
-                            f"Null sink monitor '{monitor}' not visible at the "
-                            "PulseAudio level. Not starting: capturing the "
-                            "default input instead would record silence. "
-                            "Fixes: run with --list-devices, check "
-                            "pavucontrol/PipeWire Pulse backend, or use "
-                            "--no-vb-cable to keep default capture."
-                        )
-                    _logger.info(f"Using null sink monitor as source: {source}")
-                else:
-                    from .backends.platform.linux import find_monitor_source_pulsectl
-                    found = find_monitor_source_pulsectl()
-                    if found is None:
-                        raise RuntimeError(
-                            "No PulseAudio monitor source found. "
-                            "Fixes: check pavucontrol/PipeWire Pulse backend.")
-                    source = found.name
-                    _logger.info(f"Using monitor source: {source}")
-            # Resolve playback sink by name (real hardware, not the null sink).
-            if sink is None:
-                if linux_router and linux_router.original_sink_name:
-                    sink = linux_router.original_sink_name
-                else:
-                    from .backends.platform.linux import get_default_sink_name
-                    sink = get_default_sink_name()
-                _logger.info(f"Using output sink: {sink}")
-            if not sink:
-                raise RuntimeError("No PulseAudio sink found for playback.")
-
-            processor = DenoiserAudioProcessor(
-                engine,
-                target_sr=PULSE_TARGET_SR,
-                frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-                enable_aad=enable_aad,
-                aad_threshold_db=aad_threshold_db,
-                atten_lim_db=atten_lim_db
-            )
-            from .backends.pulse_backend import process_with_pulse
-            process_with_pulse(processor, source, sink)
+            if linux_router is not None:
+                config.update(
+                    routed=True,
+                    monitor_source=linux_router.get_monitor_source_name(),
+                    fallback_sink=linux_router.original_sink_name)
+            _run_session(engine, config)
         finally:
             if linux_router is not None:
                 linux_router.restore_original_sink()
         return
 
+    vb_cable_switcher = None
     if use_vb_cable:
         if is_windows():
             # Windows: Use VB Cable
@@ -217,32 +166,82 @@ def process_system_audio_realtime(engine: DenoiseEngine,
                     vb_cable_switcher = None
 
     try:
-        # Create unified audio processor (frame size follows the engine:
-        # e.g. deepfilternet3=512, rnnoise=480)
-        processor = DenoiserAudioProcessor(
-            engine,
-            target_sr=DEFAULT_SAMPLE_RATE,
-            frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-            enable_aad=enable_aad,
-            aad_threshold_db=aad_threshold_db,
-            atten_lim_db=atten_lim_db
-        )
-
-        # Select backend (sounddevice-only; CABLE Output is a regular
-        # WASAPI capture device, no loopback extension needed)
-        if USE_SOUNDDEVICE:
-            _logger.info("Using sounddevice backend")
-            from .backends.sounddevice_backend import process_with_sounddevice
-            process_with_sounddevice(processor, input_device, output_device,
-                                     backend=backend)
-        else:
+        # CABLE Output is a regular WASAPI capture device; devices are
+        # found through sounddevice on both paths.
+        if not USE_SOUNDDEVICE:
             raise RuntimeError("No suitable audio backend available")
+        from .backends.wasapi_backend import windows_backend_preference
+        config["backend"] = windows_backend_preference(backend)
+        _run_session(engine, config, devices=(input_device, output_device))
     finally:
         # Restore original audio device
         if vb_cable_switcher is not None:
             vb_cable_switcher.restore_original_device()
-        if linux_router is not None:
-            linux_router.restore_original_sink()
+
+
+def _run_session(engine: DenoiseEngine, config: dict,
+                 devices: Optional[tuple] = None) -> None:
+    """One session until Ctrl+C, its stats printed as it runs.
+
+    ``devices``: the (input, output) PortAudio IDs asked for (Windows),
+    resolved the way the PortAudio loop resolves them: CABLE Output and
+    an output on its host API.
+    """
+    from .device_utils import print_stats, print_final_stats
+    from .session import build_processor, run_session
+
+    # Frame size follows the engine: e.g. deepfilternet3=512, rnnoise=480.
+    processor = build_processor(config, engine)
+    try:
+        if devices is not None:
+            from .backends.sounddevice_backend import select_devices
+            config["input_device"], config["output_device"] = \
+                select_devices(processor, *devices)
+        run_session(processor, config, on_stats=print_stats,
+                    on_started=_print_started(config, processor))
+    except KeyboardInterrupt:
+        print("\n\nStopping...")
+    except ValueError as e:
+        if devices is None:
+            raise
+        print(f"Error selecting output device: {e}")
+        print("\nAvailable output devices:")
+        for i, device in enumerate(sd.query_devices()):
+            if device['max_output_channels'] > 0:
+                host_api = sd.query_hostapis(device['hostapi'])['name']
+                print(f"  ID {i}: {device['name']} (API: {host_api})")
+        raise
+    print_final_stats(processor.get_stats())
+
+
+def _print_started(config: dict, processor):
+    """The session's on_started: what runs where, and how to stop it."""
+    paths = {"pipewire": " (PipeWire node)", "wasapi": " (native WASAPI)"}
+
+    def started(backend: str, source, sink) -> None:
+        _logger.info("Using %s backend", backend)
+        print("\nStarting real-time system audio processing"
+              f"{paths.get(backend, '')}...")
+        if backend == "pipewire":
+            from .backends.pipewire_backend import pick_output_sink
+            print(f"Sink: {PW_NODE_DESCRIPTION} ({PW_NODE_NAME})"
+                  + ("" if config.get("route_default", True)
+                     else " - route apps to it manually"))
+            print(f"Output: {pick_output_sink(sink) or 'default'}")
+        elif backend == "pulse":
+            print(f"Source: {source}")
+            print(f"Sink: {sink}")
+        elif backend == "wasapi":
+            print(f"Input device: {source or 'default'}")
+            print(f"Output device: {sink or 'default'}")
+        else:
+            for kind, device in (("Input", source), ("Output", sink)):
+                print(f"{kind} device: {sd.query_devices(device)['name']} "
+                      f"(ID: {device})")
+            print(f"Output sample rate: {processor.target_sr}Hz")
+        print("Press Ctrl+C to stop...\n")
+
+    return started
 
 
 def main():

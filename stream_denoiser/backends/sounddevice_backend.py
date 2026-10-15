@@ -5,12 +5,12 @@ Audio processing using sounddevice for both input and output.
 
 :func:`run_portaudio_loop` is the loop itself, stoppable and with a
 stats callback, so it can run in the audio process (audio_host) as well
-as from the CLI (:func:`process_with_sounddevice`).
+as from the CLI (both through session.py).
 """
 import sys
 import time
-from contextlib import contextmanager, nullcontext
-from typing import Callable, Optional, Tuple, Union
+from contextlib import nullcontext
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -29,51 +29,11 @@ from ..device_utils import (
     find_loopback_device,
     get_output_device_id,
     validate_output_device,
-    print_stats,
-    print_final_stats
 )
+from ._loop_util import SYNC_LOG_INTERVAL_SEC, StopLike, fast_gil_handoff, \
+    stop_requested
 
 _logger = get_logger(__name__)
-
-# Cadence of the "sync:" file-log line.
-SYNC_LOG_INTERVAL_SEC = 30.0
-
-# How soon a waiting thread gets the GIL (Python's default is 5 ms).
-AUDIO_SWITCH_INTERVAL_SEC = 0.0005
-
-# should_stop may be a threading.Event, a zero-arg callable, or None (run
-# until KeyboardInterrupt).
-StopLike = Union[object, Callable[[], bool], None]
-
-
-def _should_stop(stop) -> bool:
-    if stop is None:
-        return False
-    if callable(stop):
-        try:
-            return bool(stop())
-        except Exception:
-            return False
-    is_set = getattr(stop, "is_set", None)
-    if callable(is_set):
-        try:
-            return bool(is_set())
-        except Exception:
-            return False
-    return False
-
-
-@contextmanager
-def _fast_gil_handoff():
-    """Shorten the GIL switch interval while the loop runs: it reacquires
-    the GIL after every read, inference and write, and at the default
-    5 ms each reacquire can wait that long behind another thread."""
-    previous = sys.getswitchinterval()
-    sys.setswitchinterval(AUDIO_SWITCH_INTERVAL_SEC)
-    try:
-        yield
-    finally:
-        sys.setswitchinterval(previous)
 
 
 def _realtime_thread(enabled: bool):
@@ -276,7 +236,7 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
 
     # The collection before the loop runs before the streams start: once
     # capture runs, time spent stays behind as backlog.
-    with gc_paused(pause_gc), _fast_gil_handoff(), \
+    with gc_paused(pause_gc), fast_gil_handoff(), \
             _realtime_thread(realtime) as rt, input_stream, output_stream:
         _logger.info(
             "run start: model=%s frame_size=%s backend=portaudio "
@@ -291,7 +251,7 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
         # Reused stereo buffer with one sample of headroom: output takes
         # dither around out_block_size (e.g. 470/471 averaging 470.4).
         stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
-        while not _should_stop(should_stop):
+        while not stop_requested(should_stop):
             # Read audio chunk. The size is dithered around the
             # rate-scaled block so it resamples to ~one frame on average.
             audio_chunk, overflowed = input_stream.read(
@@ -363,72 +323,3 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
         "lost=%.0fms overflows=%d", time.time() - start_time, stalls.count,
         stalls.max_ms, stalls.lost_ms, overflows)
     return processor.get_stats()
-
-
-def process_with_sounddevice(processor: DenoiserAudioProcessor,
-                             input_device: Optional[int] = None,
-                             output_device: Optional[int] = None,
-                             backend: Optional[str] = None) -> None:
-    """
-    Process system audio from CABLE Output to the output device.
-
-    Runs on the native WASAPI path when available (see wasapi_backend),
-    else on PortAudio blocking streams.
-
-    Args:
-        processor: DenoiserAudioProcessor instance
-        input_device: Input device ID (optional)
-        output_device: Output device ID (optional)
-        backend: "auto", "wasapi" or "portaudio"; None reads POISE_BACKEND
-    """
-    if not USE_SOUNDDEVICE:
-        raise RuntimeError("This mode requires sounddevice library")
-
-    # Native path first: fixed delay, clocks bridged, no Python in the
-    # audio thread. PortAudio stays as the fallback.
-    from .wasapi_backend import (
-        WasapiStartError, process_with_wasapi, select_windows_backend,
-        windows_backend_preference)
-    preference = windows_backend_preference(backend)
-    chosen, reason = select_windows_backend(preference)
-    _logger.info("Windows backend: %s (%s)", chosen, reason)
-    if chosen == "wasapi":
-        input_id, output_id = select_devices(processor, input_device,
-                                             output_device)
-        try:
-            process_with_wasapi(processor, sd.query_devices(input_id)['name'],
-                                sd.query_devices(output_id)['name'])
-            return
-        except WasapiStartError as e:
-            if preference == "wasapi":
-                raise
-            _logger.warning(
-                "Native audio path did not start (%s); using PortAudio", e)
-            print(f"Warning: native audio path did not start ({e}); "
-                  "using PortAudio")
-
-    def started(input_id: int, output_id: int) -> None:
-        print(f"\nStarting real-time system audio processing...")
-        print(f"Input device: {sd.query_devices(input_id)['name']} (ID: {input_id})")
-        print(f"Output device: {sd.query_devices(output_id)['name']} (ID: {output_id})")
-        print(f"Output sample rate: {processor.target_sr}Hz")
-        print("Press Ctrl+C to stop...\n")
-
-    try:
-        run_portaudio_loop(
-            processor, input_device, output_device,
-            on_stats=lambda stats, elapsed: print_stats(stats, elapsed),
-            on_started=started, pause_gc=True)
-    except ValueError as e:
-        print(f"Error selecting output device: {e}")
-        print("\nAvailable output devices:")
-        for i, device in enumerate(sd.query_devices()):
-            if device['max_output_channels'] > 0:
-                host_api = sd.query_hostapis(device['hostapi'])['name']
-                print(f"  ID {i}: {device['name']} (API: {host_api})")
-        raise
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-
-    stats = processor.get_stats()
-    print_final_stats(stats)

@@ -38,6 +38,7 @@ a = Analysis(
     hiddenimports=[
         # The audio process (spawned: it imports these on its own).
         'stream_denoiser.audio_host',
+        'stream_denoiser.session',
         'stream_denoiser.backends.sounddevice_backend',
         'stream_denoiser.backends.wasapi_backend',
         'sounddevice',

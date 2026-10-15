@@ -3,8 +3,8 @@ Native WASAPI backend (Windows).
 
 Poise captures CABLE Output and plays to the speakers from a native
 thread with MMCSS priority (poise_wasapi.dll) that never waits on
-Python; this module runs inference for it on a Python thread, the way
-the PipeWire node does on Linux.
+Python; node_loop runs inference for it on a Python thread, as for the
+PipeWire node on Linux.
 
 The PortAudio loop (sounddevice_backend) read, processed and wrote on one
 Python thread with ~20 ms of buffering on each side. Every time it fell
@@ -32,9 +32,9 @@ from ..constants import (
     WINDOWS_BACKENDS,
 )
 from ..logging_config import get_logger, get_log_file_path
-from . import pipewire_backend
-from .pipewire_backend import BACKEND_ENV, _worker_loop
-from .pipewire_node import PipeWireNodeError
+from ._loop_util import margin_samples, ms
+from .node_loop import log_core_events, worker_loop
+from .pipewire_backend import BACKEND_ENV
 from .wasapi_node import WasapiError, WasapiNode, WasapiUnavailable, load_library
 
 _logger = get_logger(__name__)
@@ -90,24 +90,9 @@ def select_windows_backend(preference: str = "auto") -> Tuple[str, str]:
     return "portaudio", detail
 
 
-def margin_samples(default: int = WIN_MARGIN_SAMPLES) -> int:
-    """Worker margin in samples (POISE_WIN_MARGIN_MS overrides ``default``)."""
-    value = os.environ.get(MARGIN_ENV)
-    if value:
-        try:
-            return max(0, int(float(value) * RATE / 1000.0))
-        except ValueError:
-            _logger.warning("Ignoring %s=%r (not a number)", MARGIN_ENV, value)
-    return int(default)
-
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-
-def _ms(samples: int) -> float:
-    return samples * 1000.0 / RATE
-
 
 def _log_sync(node: WasapiNode) -> None:
     st, io = node.stats(), node.io_stats()
@@ -117,11 +102,11 @@ def _log_sync(node: WasapiNode) -> None:
         "rate=%+.0fppm starved=%d resyncs=%d capture_glitches=%d "
         "capture_age=%.1fms capture_restarts=%d "
         "render_underruns=%d render_late=%d max_render_gap=%.1fms",
-        _ms(node.latency_samples), node.io_latency_samples,
+        ms(node.latency_samples), node.io_latency_samples,
         node.delay_samples, node.engine_latency, st["frames_wet"],
         st["frames_dry"], st["frames_late"], st["frames_skipped"],
-        _ms(io["fifo_level"]), _ms(io["fifo_target"]),
-        _ms(io["fifo_headroom"]),
+        ms(io["fifo_level"]), ms(io["fifo_target"]),
+        ms(io["fifo_headroom"]),
         io["rate_ppb"] / 1000.0, io["fifo_starved"], io["fifo_resyncs"],
         io["capture_glitches"], io["capture_age_us"] / 1000.0,
         io["capture_restarts"], io["render_underruns"], io["render_late"],
@@ -145,7 +130,7 @@ _IO_EVENTS = (
 def _log_events(node: WasapiNode, seen: dict, gap_max: float,
                 busy_max: float) -> dict:
     """The core's events (as on PipeWire) plus the device side's."""
-    st = pipewire_backend._log_events(node, seen, gap_max, busy_max)
+    st = log_core_events(node, seen, gap_max, busy_max)
     io = node.io_stats()
     for key, what in _IO_EVENTS:
         if io[key] > seen.get(key, 0):
@@ -230,7 +215,8 @@ def run_wasapi_loop(processor,
     frame = processor.frame_size
     engine = processor.engine
     engine_latency = int(getattr(engine, "latency_samples", 0) or 0)
-    margin = margin_samples(WIN_MARGIN_SAMPLES if margin is None else margin)
+    margin = margin_samples(
+        MARGIN_ENV, WIN_MARGIN_SAMPLES if margin is None else margin, RATE)
     with gc_paused(pause_gc):
         return _run_node(processor, capture, render, should_stop, on_stats,
                          stats_interval_sec, on_started, frame,
@@ -258,7 +244,7 @@ def _run_node(processor, capture, render, should_stop, on_stats,
         "capture period/buffer=%d/%d output period/buffer/fill=%d/%d/%d "
         "mmcss=%d) log=%s",
         getattr(engine, "name", "?"), frame, capture, render,
-        _ms(node.latency_samples), node.io_latency_samples,
+        ms(node.latency_samples), node.io_latency_samples,
         node.delay_samples, engine_latency, margin, io["capture_period"],
         io["capture_buffer"], io["render_period"], io["render_buffer"],
         io["render_fill"], io["mmcss"], get_log_file_path())
@@ -273,12 +259,9 @@ def _run_node(processor, capture, render, should_stop, on_stats,
     start_time = time.time()
     try:
         with _raised_thread_priority():
-            try:
-                _worker_loop(node, processor, should_stop, on_stats,
-                             stats_interval_sec, start_time,
-                             log_sync=_log_sync, log_events=_log_events)
-            except PipeWireNodeError as e:   # the shared loop's error type
-                raise WasapiError(str(e)) from e
+            worker_loop(node, processor, should_stop, on_stats,
+                        stats_interval_sec, start_time, log_sync=_log_sync,
+                        log_events=_log_events, error=WasapiError)
         error = node.error()
         if error:
             raise WasapiError(error)
@@ -292,26 +275,3 @@ def _run_node(processor, capture, render, should_stop, on_stats,
             pass
         node.close()
     return processor.get_stats()
-
-
-def process_with_wasapi(processor, capture: Optional[str],
-                        render: Optional[str]) -> None:
-    """Blocking CLI entry point: run on the native path until Ctrl+C.
-
-    Raises WasapiStartError if the devices could not be opened.
-    """
-    from ..device_utils import print_stats, print_final_stats
-
-    _logger.info("Using native WASAPI backend")
-    print("\nStarting real-time system audio processing (native WASAPI)...")
-    print(f"Input device: {capture or 'default'}")
-    print(f"Output device: {render or 'default'}")
-    print("Press Ctrl+C to stop...\n")
-    try:
-        final_stats = run_wasapi_loop(
-            processor, capture, render,
-            on_stats=lambda stats, elapsed: print_stats(stats, elapsed))
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-        final_stats = processor.get_stats()
-    print_final_stats(final_stats)

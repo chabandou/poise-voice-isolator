@@ -2,10 +2,9 @@
 ctypes binding for poise_wasapi.dll, Poise's native audio path (Windows).
 
 The native side (native/poise_wasapi/) captures CABLE Output and plays to
-the speakers from one MMCSS thread and never waits on Python. As with the
-PipeWire node, it hands frames to an inference thread through
-``wait_frame()`` and takes them back through ``put_frame()``; ctypes
-releases the GIL while the thread waits.
+the speakers from one MMCSS thread and never waits on Python. It runs
+the PipeWire node's fixed-delay exchange (delay_core), and node_loop
+runs inference for it.
 
 ``ClockBridge`` is the capture-to-speakers clock bridge alone, driven by
 hand; the tests use it to check drift handling exactly, and with a
@@ -19,8 +18,9 @@ from typing import Dict, Optional
 import numpy as np
 
 from ..logging_config import get_logger
-from .pipewire_node import (  # noqa: F401 (wait results re-exported)
-    WAIT_STOPPED, WAIT_TIMEOUT, _CoreOps, bind, core_signatures)
+from .delay_core import (  # noqa: F401 (wait results re-exported)
+    WAIT_STOPPED, WAIT_TIMEOUT, CoreOps, bind, core_signatures)
+from .node_loop import NodeError
 
 _logger = get_logger(__name__)
 
@@ -50,7 +50,7 @@ class WasapiUnavailable(RuntimeError):
     """poise_wasapi.dll could not be loaded."""
 
 
-class WasapiError(RuntimeError):
+class WasapiError(NodeError):
     """The devices could not be opened, or the audio thread failed."""
 
 
@@ -134,7 +134,7 @@ def _stats(fn, handle, names) -> Dict[str, int]:
     return out
 
 
-class WasapiNode(_CoreOps):
+class WasapiNode(CoreOps):
     """CABLE Output -> poise_core -> speakers, live in WASAPI.
 
     Created running: until a worker calls ``wait_frame`` the output is

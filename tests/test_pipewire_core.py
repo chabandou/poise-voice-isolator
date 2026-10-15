@@ -14,9 +14,10 @@ import time
 import numpy as np
 import pytest
 
+from stream_denoiser.backends.delay_core import (
+    WAIT_STOPPED, WAIT_TIMEOUT, DelayCore)
 from stream_denoiser.backends.pipewire_node import (
-    WAIT_STOPPED, WAIT_TIMEOUT, DelayCore, PipeWireNodeUnavailable,
-    load_library)
+    PipeWireNodeUnavailable, load_library)
 
 
 def _core_library():
