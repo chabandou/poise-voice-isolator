@@ -99,7 +99,13 @@ class Settings:
     
     def __init__(self):
         """Initialize settings manager."""
-        self._settings = QSettings(self.ORGANIZATION, self.APPLICATION)
+        # defaultFormat() (native unless changed) rather than the
+        # (organization, application) constructor, which always uses the
+        # native format — on Windows the registry, which setPath() cannot
+        # redirect. Tests switch the default to INI under a temp dir.
+        self._settings = QSettings(QSettings.defaultFormat(),
+                                   QSettings.Scope.UserScope,
+                                   self.ORGANIZATION, self.APPLICATION)
     
     def get(self, key: str, default: Any = None) -> Any:
         """

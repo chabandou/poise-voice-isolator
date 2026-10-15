@@ -41,11 +41,16 @@ try:
     if _SESSION_APP is None:
         _SESSION_APP = QApplication([])
 
+    # INI, not native: on Windows the native format is the registry,
+    # which setPath() does not redirect (tests would read and write the
+    # user's real HKCU\Software\Poise settings).
     _TEST_CONFIG_HOME = tempfile.mkdtemp(prefix="poise-test-config-")
-    QSettings.setPath(QSettings.Format.NativeFormat,
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat,
                       QSettings.Scope.UserScope, _TEST_CONFIG_HOME)
     # Pre-seed the close path: hide quietly, never ask, never quit.
-    _seed = QSettings("Poise", "VoiceIsolator")
+    _seed = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+                      "Poise", "VoiceIsolator")
     _seed.setValue("behavior/minimize_to_tray_asked", True)
     _seed.setValue("behavior/minimize_to_tray", True)
     _seed.sync()
