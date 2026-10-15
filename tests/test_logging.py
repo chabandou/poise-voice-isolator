@@ -74,6 +74,15 @@ def test_default_log_dir_is_fixed_share_path():
     assert default_log_dir().as_posix().endswith(".local/share/poise/logs")
 
 
+# Without an explicit path, file logging is Linux-only: elsewhere
+# ensure_file_logging() returns None and the default/XDG//tmp chain
+# is never walked.
+_linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="default log locations are Linux-only")
+
+
+@_linux_only
 def test_empty_home_still_produces_writable_log(monkeypatch, tmp_path):
     """HOME='' (desktop-file/sudo quirks) must not log under '/.local'."""
     monkeypatch.setenv("HOME", "")
@@ -93,6 +102,7 @@ _skip_as_root = pytest.mark.skipif(
     reason="root ignores directory permissions (e.g. CI containers)")
 
 
+@_linux_only
 @_skip_as_root
 def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     """Read-only home with no XDG set -> per-user /tmp dir, never None."""
@@ -112,6 +122,7 @@ def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     assert "/tmp/poise-" in path, path
 
 
+@_linux_only
 @_skip_as_root
 def test_readonly_home_prefers_xdg_state_home(monkeypatch, tmp_path):
     ro_home = tmp_path / "ro-home"
@@ -143,6 +154,7 @@ def test_unwritable_explicit_path_falls_back_on_linux(tmp_path):
     assert path and not path.startswith(str(bad)), path
 
 
+@_linux_only
 def test_candidate_dirs_cover_xdg_and_tmp(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     dirs = [str(d) for d in candidate_log_dirs()]
@@ -206,49 +218,54 @@ def test_processor_diagnostics_exposes_resampler():
 
 
 def _import_status_line_without_textual():
-    """Import the status_line module with minimal textual stubs."""
-    import types
-    if "stream_denoiser.tui.widgets.status_line" in sys.modules:
-        return sys.modules["stream_denoiser.tui.widgets.status_line"]
-    if "textual.widgets" not in sys.modules:
-        textual = types.ModuleType("textual")
-        widgets = types.ModuleType("textual.widgets")
+    """Import the status_line module with minimal textual stubs.
 
-        class Static:
-            def __init__(self, *args, **kwargs):
-                pass
-
-        widgets.Static = Static
-        reactive_mod = types.ModuleType("textual.reactive")
-
-        class _Reactive:
-            def __new__(cls, default=None):
-                return default
-
-            def __class_getitem__(cls, item):
-                return cls
-
-        reactive_mod.reactive = _Reactive
-        textual.widgets = widgets
-        sys.modules["textual"] = textual
-        sys.modules["textual.widgets"] = widgets
-        sys.modules["textual.reactive"] = reactive_mod
-    # Load status_line.py directly by path: the real
-    # stream_denoiser.tui/__init__ imports the Textual app (not installed
-    # here), which we don't need.
+    Loaded by path: the widgets package pulls in the whole Textual UI.
+    Neither the stubs nor the module stay in sys.modules: a stub textual
+    left behind would shadow the real one in later tests, or let
+    importorskip("textual") pass where Textual is not installed.
+    """
     import importlib.util
+    import types
     from pathlib import Path
-    name = "stream_denoiser.tui.widgets.status_line"
-    if name in sys.modules:
-        return sys.modules[name]
+    textual = types.ModuleType("textual")
+    widgets = types.ModuleType("textual.widgets")
+
+    class Static:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    widgets.Static = Static
+    reactive_mod = types.ModuleType("textual.reactive")
+
+    class _Reactive:
+        def __new__(cls, default=None):
+            return default
+
+        def __class_getitem__(cls, item):
+            return cls
+
+    reactive_mod.reactive = _Reactive
+    textual.widgets = widgets
+    stubs = {"textual": textual, "textual.widgets": widgets,
+             "textual.reactive": reactive_mod}
     path = (
         Path(__file__).resolve().parent.parent
         / "stream_denoiser" / "tui" / "widgets" / "status_line.py"
     )
-    spec = importlib.util.spec_from_file_location(name, path)
+    spec = importlib.util.spec_from_file_location(
+        "_status_line_with_stub_textual", path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
+    saved = {name: sys.modules.get(name) for name in stubs}
+    sys.modules.update(stubs)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        for name, prev in saved.items():
+            if prev is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
     return mod
 
 
