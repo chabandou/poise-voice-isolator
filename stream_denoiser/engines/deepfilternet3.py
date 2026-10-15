@@ -9,6 +9,9 @@ between frames.
 
 512-sample frames at 48 kHz (10.67 ms), explicit state inputs/outputs,
 155-node graph — ~2x faster per frame on CPU than the previous model.
+The vendored file is that export rewritten by tools/optimize_df3.py (its
+inverse FFT done as small MatMuls instead of a 4.2 MB matrix): same inputs,
+outputs and states, same output to within float rounding.
 """
 import os
 from typing import Dict, Optional
