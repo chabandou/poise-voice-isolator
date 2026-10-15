@@ -278,6 +278,9 @@ make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
 make -C native/poise_wasapi    # -> stream_denoiser/native/poise_wasapi.dll
 ```
 
+   Both native paths compile the same fixed-delay core,
+   `native/core/poise_core.c`, into their library.
+
    To measure the delay on real devices (not in a VM: virtual audio
    timing there is nothing like a sound card's), `native/latmeter` plays
    noise into CABLE Input the way a video player does and records the
@@ -381,7 +384,7 @@ stream_denoiser/
 │   ├── pulse_backend.py     # Linux fallback: pulse-simple loop
 │   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
 │   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
-│   ├── delay_core.py        # ctypes side of poise_core, shared by both native nodes
+│   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by both native nodes
 │   ├── node_loop.py         # Inference thread for either native node
 │   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
 │   └── platform/            # Platform-specific code

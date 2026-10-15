@@ -3,8 +3,8 @@ ctypes binding for poise_wasapi.dll, Poise's native audio path (Windows).
 
 The native side (native/poise_wasapi/) captures CABLE Output and plays to
 the speakers from one MMCSS thread and never waits on Python. It runs
-the PipeWire node's fixed-delay exchange (delay_core), and node_loop
-runs inference for it.
+the fixed-delay exchange the PipeWire node runs too (delay_core,
+native/core/), and node_loop runs inference for it.
 
 ``ClockBridge`` is the capture-to-speakers clock bridge alone, driven by
 hand; the tests use it to check drift handling exactly, and with a

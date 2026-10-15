@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../poise_pw/poise_core.h"
+#include "poise_core.h"
 
 /* Counters, read with poise_wasapi_get_stats() in this order. Signed
  * values are stored as two's complement. */
