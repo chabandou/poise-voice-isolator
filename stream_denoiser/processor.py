@@ -28,6 +28,34 @@ from .logging_config import get_logger
 _logger = get_logger(__name__)
 
 
+class FractionalBlock:
+    """A rate-scaled block size, e.g. 470.4 samples for a 512-sample frame
+    at 44100 Hz. ``next()`` dithers around ``size`` (the rounded value) so
+    the long-term average is exact: a fixed rounded size over/under-feeds
+    a resampler by the rounding error (470 vs 470.4 starves one frame
+    every ~100 reads: a periodic ~10 ms gap, seen as A/V sync wobble).
+    """
+
+    def __init__(self, exact: float):
+        self.exact = float(exact)
+        self.size = max(1, int(round(self.exact)))
+        self._err = 0.0
+
+    def next(self) -> int:
+        self._err += self.exact - self.size
+        n = self.size
+        if self._err >= 1.0:
+            n += 1
+            self._err -= 1.0
+        elif self._err <= -1.0:
+            n -= 1
+            self._err += 1.0
+        return max(1, n)
+
+    def reset(self) -> None:
+        self._err = 0.0
+
+
 class DenoiserAudioProcessor:
     """
     Audio processor for denoiser models.
@@ -79,26 +107,17 @@ class DenoiserAudioProcessor:
         # Resampler (created on demand)
         self.resampler: Optional[StreamingResampler] = None
         self.output_resampler: Optional[StreamingResampler] = None
-        self.output_resample_size: int = frame_size
-        # Exact (fractional) output take size, e.g. 470.4 for a 512-sample
-        # frame at a 44100Hz output device. next_output_block_size()
-        # dithers around output_resample_size so takes average exact;
-        # a fixed take would let the output backlog grow ~0.4 samples/frame
-        # until the safety cap starts dropping (periodic output gaps).
-        self._output_block_exact: float = float(frame_size)
-        self._output_block_err: float = 0.0
-        # Number of input-device samples to read per loop iteration so that,
-        # after input resampling, each read yields ~one engine frame on
-        # average. Reading a fixed `frame_size` regardless of the input rate
+        # Output take size at the output device's rate (a fixed take
+        # would let the output backlog grow ~0.4 samples/frame until the
+        # safety cap starts dropping: periodic output gaps).
+        self._output_block = FractionalBlock(frame_size)
+        # Input-device samples to read per loop iteration so that, after
+        # input resampling, each read yields ~one engine frame on average.
+        # Reading a fixed `frame_size` regardless of the input rate
         # over/under-feeds the resampler and its backlog grows unbounded
-        # (minutes-long A/V desync). Equals frame_size when no resampling.
+        # (minutes-long A/V desync). frame_size when no resampling.
+        self._input_block = FractionalBlock(frame_size)
         self.input_sr: int = target_sr
-        self.input_block_size: int = frame_size
-        # Exact (fractional) rate-scaled read size, e.g. 470.4 for a
-        # 512-sample frame at 44100Hz. next_input_block_size() dithers
-        # around input_block_size so the long-term average is exact.
-        self._input_block_exact: float = float(frame_size)
-        self._input_block_err: float = 0.0
         self.output_sr: int = target_sr
         
         # AAD
@@ -143,41 +162,26 @@ class DenoiserAudioProcessor:
             input_sr: Input sample rate
         """
         self.input_sr = int(input_sr)
+        # Scale the read size so each input block resamples to ~one
+        # engine frame; otherwise the resampler backlog grows linearly.
+        self._input_block = FractionalBlock(
+            self.frame_size * input_sr / self.target_sr)
         if input_sr != self.target_sr:
             self.resampler = StreamingResampler(input_sr, self.target_sr, channels=1)
-            # Scale the read size so each input block resamples to ~one
-            # engine frame; otherwise the resampler backlog grows linearly.
-            self._input_block_exact = self.frame_size * input_sr / self.target_sr
-            self.input_block_size = max(
-                1, int(round(self._input_block_exact)))
-            self._input_block_err = 0.0
         else:
             self.resampler = None
-            self.input_block_size = self.frame_size
-            self._input_block_exact = float(self.frame_size)
-            self._input_block_err = 0.0
+
+    @property
+    def input_block_size(self) -> int:
+        """Rate-scaled input read size, rounded (input-device samples)."""
+        return self._input_block.size
 
     def next_input_block_size(self) -> int:
-        """
-        Per-iteration input read size (in input-device samples).
-
-        Dithers around `input_block_size` so the long-term average equals
-        the exact fractional rate-scaled size. A fixed rounded size would
-        systematically over/under-feed the resampler by the rounding error
-        (e.g. 470 vs 470.4 starves one frame every ~100 reads -> a periodic
-        ~10ms output gap), which again shows up as A/V sync wobble.
-        """
+        """This iteration's input read size: input_block_size, dithered
+        so the long-term average is exact (see FractionalBlock)."""
         if self.resampler is None:
             return self.frame_size
-        self._input_block_err += self._input_block_exact - self.input_block_size
-        n = self.input_block_size
-        if self._input_block_err >= 1.0:
-            n += 1
-            self._input_block_err -= 1.0
-        elif self._input_block_err <= -1.0:
-            n -= 1
-            self._input_block_err += 1.0
-        return max(1, n)
+        return self._input_block.next()
 
     def setup_output_resampler(self, output_sr: int) -> None:
         """
@@ -187,37 +191,25 @@ class DenoiserAudioProcessor:
             output_sr: Output sample rate
         """
         self.output_sr = int(output_sr)
+        self._output_block = FractionalBlock(
+            self.frame_size * output_sr / self.target_sr)
         if output_sr != self.target_sr:
             self.output_resampler = StreamingResampler(self.target_sr, output_sr, channels=1)
-            self._output_block_exact = self.frame_size * output_sr / self.target_sr
-            self.output_resample_size = max(
-                1, int(round(self._output_block_exact)))
-            self._output_block_err = 0.0
             _logger.info(f"Output resampling enabled: {self.target_sr}Hz -> {output_sr}Hz (frame size: {self.output_resample_size})")
         else:
             self.output_resampler = None
-            self.output_resample_size = self.frame_size
-            self._output_block_exact = float(self.frame_size)
-            self._output_block_err = 0.0
+
+    @property
+    def output_resample_size(self) -> int:
+        """Rate-scaled output take size, rounded (output-device samples)."""
+        return self._output_block.size
 
     def next_output_block_size(self) -> int:
-        """
-        Per-iteration output take size (in output-device samples).
-
-        Dithers around `output_resample_size` so the long-term average
-        equals the exact fractional size (mirror of next_input_block_size).
-        """
+        """This iteration's output take size: output_resample_size,
+        dithered so the long-term average is exact (see FractionalBlock)."""
         if self.output_resampler is None:
             return self.frame_size
-        self._output_block_err += self._output_block_exact - self.output_resample_size
-        n = self.output_resample_size
-        if self._output_block_err >= 1.0:
-            n += 1
-            self._output_block_err -= 1.0
-        elif self._output_block_err <= -1.0:
-            n -= 1
-            self._output_block_err += 1.0
-        return max(1, n)
+        return self._output_block.next()
     
     def _resample_audio(self, audio_chunk: np.ndarray) -> Optional[np.ndarray]:
         """
@@ -507,8 +499,8 @@ class DenoiserAudioProcessor:
         self._last_wet = False
         self.frame_count = 0
         self.total_processing_time = 0.0
-        self._input_block_err = 0.0
-        self._output_block_err = 0.0
+        self._input_block.reset()
+        self._output_block.reset()
     
     def close(self):
         """Release engine resources."""
