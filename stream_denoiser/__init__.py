@@ -13,8 +13,43 @@ Features:
 """
 
 import importlib
+import os
+import re
 
-__version__ = "1.1.0"
+_DIST_NAME = "poise-voice-isolator"
+
+
+def _read_version() -> str:
+    """The version from pyproject.toml, the only place it is written.
+
+    A pyproject.toml next to the package (source checkout; frozen builds
+    bundle it at the payload root) wins over installed metadata, which
+    goes stale in editable installs until they are reinstalled. Wheels
+    carry no pyproject.toml, so they fall through to their metadata.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "pyproject.toml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = ""
+    # The [project] table only, and only if it is ours
+    project = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if project:
+        body = project.group(1)
+        name = re.search(r'^name\s*=\s*"([^"]+)"', body, re.M)
+        ver = re.search(r'^version\s*=\s*"([^"]+)"', body, re.M)
+        if name and ver and name.group(1) == _DIST_NAME:
+            return ver.group(1)
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        return version(_DIST_NAME)
+    except PackageNotFoundError:
+        return "0+unknown"
+
+
+__version__ = _read_version()
 
 # Public names, resolved on first access. Importing the package must stay
 # cheap: the audio process (audio_host, started with spawn) re-imports it,

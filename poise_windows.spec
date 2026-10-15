@@ -13,6 +13,8 @@ rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoi
 # Native audio path (make -C native/poise_wasapi).
 wasapi_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'poise_wasapi.dll')
 assets_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets')
+# stream_denoiser.__version__ reads it (the single version source).
+pyproject_path = os.path.join(project_dir, 'pyproject.toml')
 vbcable_dir = os.path.join(project_dir, 'installer', 'windows', 'vbcable')
 
 datas = [
@@ -20,6 +22,7 @@ datas = [
     (rnnoise_dll_path, '.'),
     (wasapi_dll_path, '.'),
     (assets_path, 'stream_denoiser/gui/assets'),
+    (pyproject_path, '.'),
 ]
 # Vendored VB-Cable setups (staged via installer/fetch_vbcable.py).
 # Optional: a build without the stage dir still works, the in-app

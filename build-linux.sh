@@ -138,6 +138,7 @@ python -m nuitka \
     --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
     --include-data-files=stream_denoiser/models/denoiser_model_df3_states.npz=stream_denoiser/models/denoiser_model_df3_states.npz \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
+    --include-data-files=pyproject.toml=pyproject.toml \
     "${PW_NODE_ARGS[@]}" \
     --output-filename=poise \
     --output-dir=dist \
