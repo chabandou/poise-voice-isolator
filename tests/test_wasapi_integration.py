@@ -56,29 +56,23 @@ def test_runs_in_real_time_and_feeds_the_worker():
     """Steady state, after a settling time: VB-Cable's first packets can
     come bunched (a few short reads in the first second on real hardware,
     which the bridge answers by raising its level), and the worker here
-    is a plain thread, so a frame can be late while things start.
-
-    The collector is off for the run, as in the audio process: late in
-    the full suite a pass takes 20-80 ms in this process, and whether one
-    landed inside the 3 s changed with unrelated edits to other tests."""
-    from stream_denoiser.audio_gc import gc_paused
-    with gc_paused():
-        node = _node()
-        try:
-            buf = np.empty(512, np.float32)
-            got = 0
-            settled = None
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < 3.0:
-                k = node.wait_frame(buf, 100)
-                if k >= 0:
-                    node.put_frame(k, buf)
-                    got += 1
-                if settled is None and time.monotonic() - t0 >= 1.5:
-                    settled = {**node.stats(), **node.io_stats()}
-            io, st, error = node.io_stats(), node.stats(), node.error()
-        finally:
-            node.close()
+    is a plain thread, so a frame can be late while things start."""
+    node = _node()
+    try:
+        buf = np.empty(512, np.float32)
+        got = 0
+        settled = None
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 3.0:
+            k = node.wait_frame(buf, 100)
+            if k >= 0:
+                node.put_frame(k, buf)
+                got += 1
+            if settled is None and time.monotonic() - t0 >= 1.5:
+                settled = {**node.stats(), **node.io_stats()}
+        io, st, error = node.io_stats(), node.stats(), node.error()
+    finally:
+        node.close()
     assert error is None
     assert io["capture_frames"] == pytest.approx(3 * SR, rel=0.1)
     assert io["render_frames"] == pytest.approx(3 * SR, rel=0.1)
