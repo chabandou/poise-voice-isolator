@@ -77,5 +77,5 @@ stream_denoiser = ["models/*.onnx", "models/*.npz", "tui/*.tcss", "gui/assets/*"
 
 [tool.pytest.ini_options]
 markers = [
-    "integration: needs a live Pulse-compatible server + libpulse-simple",
+    "integration: needs live audio (a Pulse-compatible server, PipeWire, or VB-Cable on Windows)",
 ]

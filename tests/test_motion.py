@@ -43,11 +43,11 @@ def test_blend_glides_then_lands(app):
     blend = Blend(owner, lambda: steps.append(blend.value), 120)
     blend.set_target(1.0)
     assert blend.running and blend.target == 1.0 and blend.value < 1.0
-    _pump(app, 0.05)
-    assert 0.0 < blend.value < 1.0
-    _pump(app, 0.3)
+    _pump(app, 0.35)
     assert blend.value == pytest.approx(1.0) and not blend.running
-    assert len(steps) > 2
+    # Glided: values in between, read from the steps rather than at a set
+    # time (a 50 ms window missed every tick when a GC pass landed in it).
+    assert len(steps) > 2 and any(0.0 < v < 1.0 for v in steps)
     blend.set_target(1.0)                # same target: no restart
     assert not blend.running
 

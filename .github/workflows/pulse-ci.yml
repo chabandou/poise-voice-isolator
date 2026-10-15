@@ -5,7 +5,9 @@ on:
     branches: [master]
     paths:
       - 'stream_denoiser/**'
+      - 'native/**'
       - 'tests/**'
+      - 'tools/check_dll_exports.py'
       - 'requirements.txt'
       - 'pyproject.toml'
       - 'build-linux.sh'
@@ -97,3 +99,34 @@ jobs:
           pip3 install -r /tmp/requirements-ci.txt pulsectl pytest
       - name: Unit + integration tests
         run: python3 -m pytest tests/ -v
+
+  windows:
+    # The GUI (Qt offscreen, see tests/conftest.py), the WASAPI bridge on the
+    # committed poise_wasapi.dll and the engines, on the platform they ship
+    # on. The runner has no audio devices: the hardware tests skip.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        run: pip install -r requirements.txt pytest
+      - name: Run tests
+        run: python -m pytest tests -v
+
+  native-dll:
+    # stream_denoiser/native/poise_wasapi.dll is built by hand and committed.
+    # Rebuild it from the sources (the Makefile's default mingw-w64) and fail
+    # when the C API has moved on without it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+      - name: Build poise_wasapi.dll from the sources
+        run: make -C native/poise_wasapi OUT="$RUNNER_TEMP/poise_wasapi.dll"
+      - name: Compare its exports with the committed DLL
+        run: |
+          python3 tools/check_dll_exports.py \
+            "$RUNNER_TEMP/poise_wasapi.dll" stream_denoiser/native/poise_wasapi.dll

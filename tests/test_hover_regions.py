@@ -46,9 +46,14 @@ def _styled_root(app, *widgets):
     return root
 
 
-def _pixel(root, widget, pt):
+def _patch(root, widget, pt, r=2):
+    """Pixels within r of pt: a lone pixel may sit on an opaque glyph
+    (where it lands depends on the platform's font rasterizer), but the
+    wash still shows between the strokes around it."""
     img = root.grab().toImage()
-    return img.pixelColor(widget.mapTo(root, pt)).getRgb()
+    c = widget.mapTo(root, pt)
+    return [img.pixelColor(c.x() + dx, c.y() + dy).getRgb()
+            for dy in range(-r, r + 1) for dx in range(-r, r + 1)]
 
 
 def _hover_changes_pixel(app, root, widget, pt):
@@ -56,10 +61,10 @@ def _hover_changes_pixel(app, root, widget, pt):
     from PyQt6.QtTest import QTest
     QTest.mouseMove(root, QPoint(1, 1))
     _pump(app, 0.2)
-    base = _pixel(root, widget, pt)
+    base = _patch(root, widget, pt)
     QTest.mouseMove(root, widget.mapTo(root, pt))
     _pump(app, 0.3)
-    hovered = _pixel(root, widget, pt)
+    hovered = _patch(root, widget, pt)
     QTest.mouseMove(root, QPoint(1, 1))
     _pump(app, 0.2)
     return hovered != base
@@ -72,10 +77,12 @@ def test_nav_hover_paints_over_icon_and_label(app):
     root = _styled_root(app, nav)
     h = nav.height() // 2
     # The wash fades out toward the right, so probe where it is visible.
-    for where, pt in (("icon", QPoint(24, h)),
-                      ("label", QPoint(90, h))):
-        assert _hover_changes_pixel(app, root, nav, pt), where
-    root.close()
+    try:
+        for where, pt in (("icon", QPoint(24, h)),
+                          ("label", QPoint(90, h))):
+            assert _hover_changes_pixel(app, root, nav, pt), where
+    finally:
+        root.close()  # a window left open takes the next test's hover
 
 
 def test_output_rescan_button_hovers_over_its_icon(app):
@@ -85,8 +92,10 @@ def test_output_rescan_button_hovers_over_its_icon(app):
     root = _styled_root(app, sel)
     btn = sel._refresh_btn
     centre = QPoint(btn.width() // 2, btn.height() // 2)
-    assert _hover_changes_pixel(app, root, btn, centre)
-    root.close()
+    try:
+        assert _hover_changes_pixel(app, root, btn, centre)
+    finally:
+        root.close()
 
 
 def test_buttons_with_child_widgets_never_take_mouse_events(app):

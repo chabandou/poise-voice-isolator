@@ -8,8 +8,12 @@ import json
 
 import pytest
 
-from stream_denoiser.constants import DEFAULT_MODEL, MODEL_RNNOISE
-from stream_denoiser.tui.settings import TuiSettings, settings_path
+# The TUI is Linux-only and so is Textual (requirements.txt); importing
+# stream_denoiser.tui loads the Textual app.
+pytest.importorskip("textual.app")
+
+from stream_denoiser.constants import DEFAULT_MODEL, MODEL_RNNOISE  # noqa: E402
+from stream_denoiser.tui.settings import TuiSettings, settings_path  # noqa: E402
 
 
 @pytest.fixture
@@ -84,8 +88,6 @@ def test_unwritable_location_does_not_raise(tmp_path, monkeypatch):
 
 
 # --- the app ---------------------------------------------------------------
-
-textual = pytest.importorskip("textual")
 
 SINKS = [("alsa_output.speakers", "Speakers"),
          ("alsa_output.usb-headset", "USB Headset")]
