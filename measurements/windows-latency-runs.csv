@@ -99,3 +99,79 @@ F1-steer,2026-10-14 21:17,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture
 F2-steer,2026-10-14 21:18,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture timing steered,idle,0.0,237,0,1,5.5,198.58,198.19,198.76,1.22,52.41,146.17,0.661,0
 F3-steer,2026-10-14 21:19,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),capture timing steered; staircase step at 11 s,idle,0.0,237,0,2,10.5,206.09,196.9,206.0,9.63,62.45,143.63,7.046,0
 F4-steer,2026-10-14 22:15,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),"capture timing steered, 10-packet tries",idle,0.0,236,0,0,0.0,193.23,193.01,193.36,1.33,48.49,144.76,0.473,0
+C1-cli1024,2026-10-15 15:22,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,idle,0.0,236,0,1,1.8,199.96,200.27,199.68,0.9,50.09,149.88,-0.425,0
+C1-cli1024,2026-10-15 15:22,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpu,60.0,237,0,0,0.0,199.89,199.89,199.85,0.97,50.07,149.83,0.005,0
+C1-cli1024,2026-10-15 15:22,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,gil,120.2,236,0,0,0.0,199.8,199.79,199.92,0.98,50.06,149.79,-0.024,0
+C1-cli1024,2026-10-15 15:22,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpugil,180.4,237,0,0,0.0,199.89,199.63,199.81,0.92,50.08,149.84,0.055,0
+C2-cli1024,2026-10-15 15:45,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file; another session installing packages,idle,0.0,237,0,0,0.0,207.47,207.67,207.36,1.39,46.52,160.97,-0.263,0
+C2-cli1024,2026-10-15 15:45,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file; another session installing packages,cpu,60.1,237,0,0,0.0,207.48,207.49,207.33,1.38,46.51,160.97,0.029,0
+C2-cli1024,2026-10-15 15:45,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file; another session installing packages,gil,120.4,236,1,0,0.0,208.27,207.65,208.1,1.33,46.54,161.75,0.067,0
+C2-cli1024,2026-10-15 15:45,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file; another session installing packages,cpugil,180.5,236,0,0,0.0,208.31,208.02,208.23,1.25,46.53,161.8,0.098,0
+C3-cli1024,2026-10-15 15:55,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,idle,0.0,237,0,1,6.6,207.15,194.14,207.06,14.16,57.03,150.12,12.798,0
+C3-cli1024,2026-10-15 15:55,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpu,60.1,236,0,0,0.0,207.21,207.06,207.07,1.27,57.05,150.16,0.055,0
+C3-cli1024,2026-10-15 15:55,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,gil,120.2,237,0,0,0.0,207.2,207.02,207.1,1.18,57.03,150.16,-0.037,0
+C3-cli1024,2026-10-15 15:55,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpugil,180.4,236,0,0,0.0,207.18,207.03,207.06,1.23,57.05,150.11,-0.038,0
+C4-cli1024,2026-10-15 16:04,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,idle,0.0,237,0,0,0.0,203.53,203.2,203.73,1.08,53.83,149.72,0.513,0
+C4-cli1024,2026-10-15 16:04,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpu,60.1,236,0,0,0.0,203.85,203.61,203.75,1.15,53.83,150.05,0.03,0
+C4-cli1024,2026-10-15 16:04,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,gil,120.3,236,0,0,0.0,203.78,203.64,203.65,0.97,53.82,149.98,-0.047,0
+C4-cli1024,2026-10-15 16:04,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),collector on; prints to a file,cpugil,180.3,237,0,0,0.0,203.82,203.75,203.83,1.2,53.82,150.02,-0.145,0
+C1-cli256,2026-10-15 15:27,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,idle,0.0,236,0,0,0.0,182.89,182.52,182.95,0.93,49.55,133.35,0.199,0
+C1-cli256,2026-10-15 15:27,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpu,60.0,237,0,0,0.0,183.16,183.02,183.07,1.25,49.57,133.6,-0.086,0
+C1-cli256,2026-10-15 15:27,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,gil,120.3,237,0,0,0.0,183.02,183.06,183.05,1.15,49.54,133.48,-0.055,0
+C1-cli256,2026-10-15 15:27,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpugil,180.4,236,0,0,0.0,183.13,182.99,183.06,1.1,49.56,133.58,-0.103,0
+C2-cli256,2026-10-15 15:36,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,idle,0.0,237,0,1,4.7,179.98,179.84,192.55,13.47,59.26,120.7,19.253,0
+C2-cli256,2026-10-15 15:36,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpu,60.2,237,0,0,0.0,192.74,192.57,192.67,1.1,59.26,133.51,0.015,0
+C2-cli256,2026-10-15 15:36,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,gil,120.4,236,0,0,0.0,192.59,192.71,192.54,1.14,59.25,133.37,-0.073,0
+C2-cli256,2026-10-15 15:36,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpugil,180.6,236,0,0,0.0,192.72,192.56,192.71,1.52,59.24,133.51,0.107,0
+C3-cli256,2026-10-15 15:59,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,idle,0.0,236,0,0,0.0,194.71,193.75,194.54,3.49,61.62,133.15,0.057,0
+C3-cli256,2026-10-15 15:59,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpu,60.1,237,0,0,0.0,195.03,194.73,194.93,2.56,61.68,133.37,0.049,0
+C3-cli256,2026-10-15 15:59,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,gil,120.2,236,0,0,0.0,194.75,194.84,194.59,0.98,61.63,133.16,-0.091,0
+C3-cli256,2026-10-15 15:59,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpugil,180.2,237,0,0,0.0,194.96,194.64,194.74,1.17,61.67,133.33,0.097,0
+C4-cli256,2026-10-15 16:09,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,idle,0.0,237,0,0,0.0,200.06,200.12,199.99,1.25,54.44,145.64,0.185,0
+C4-cli256,2026-10-15 16:09,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpu,60.1,236,0,0,0.0,200.29,200.06,200.21,1.17,54.45,145.9,-0.026,0
+C4-cli256,2026-10-15 16:09,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,gil,120.3,237,2,0,0.0,201.96,200.21,201.87,3.82,54.45,147.54,0.459,0
+C4-cli256,2026-10-15 16:09,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a file,cpugil,180.4,236,0,0,0.0,201.62,201.73,201.15,1.53,54.47,147.38,-0.71,0
+C1-proc,2026-10-15 15:31,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,idle,0.0,236,0,0,0.0,187.09,187.24,187.0,1.3,63.11,124.01,-0.348,0
+C1-proc,2026-10-15 15:31,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpu,60.0,237,0,1,3.5,196.57,186.89,196.43,10.37,63.11,133.48,9.457,0
+C1-proc,2026-10-15 15:31,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,gil,120.2,236,0,0,0.0,196.43,196.54,196.42,1.2,63.11,133.35,-0.052,0
+C1-proc,2026-10-15 15:31,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpugil,180.3,237,0,0,0.0,196.59,196.28,196.52,1.2,63.12,133.49,0.039,0
+C2-proc,2026-10-15 15:41,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,idle,0.0,236,0,0,0.0,192.17,191.97,192.22,0.97,57.16,135.05,0.218,0
+C2-proc,2026-10-15 15:41,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpu,60.2,237,0,0,0.0,192.23,192.17,192.28,1.06,57.15,135.09,-0.045,0
+C2-proc,2026-10-15 15:41,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,gil,120.4,237,0,0,0.0,192.17,192.29,192.1,0.96,57.14,135.06,-0.054,0
+C2-proc,2026-10-15 15:41,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpugil,180.5,236,0,0,0.0,192.24,192.07,192.15,1.23,57.16,135.1,0.031,0
+C3-proc,2026-10-15 15:50,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,idle,0.0,236,0,0,0.0,184.14,184.37,184.0,0.96,50.21,133.93,-0.329,0
+C3-proc,2026-10-15 15:50,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpu,60.0,237,0,0,0.0,184.16,184.07,184.12,1.13,50.21,133.94,-0.029,0
+C3-proc,2026-10-15 15:50,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,gil,120.2,237,0,0,0.0,184.09,184.02,184.03,1.12,50.21,133.89,0.061,0
+C3-proc,2026-10-15 15:50,native,audio process,5.3,MMCSS,1,df3 (-1.0 dB),reference for the CLI runs,cpugil,180.4,236,0,0,0.0,184.1,183.97,184.13,1.17,50.21,133.9,0.033,0
+C5-console,2026-10-15 16:17,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,idle,0.0,237,0,0,0.0,187.77,187.52,188.0,1.59,55.34,132.38,0.382,0
+C5-console,2026-10-15 16:17,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,cpu,60.1,236,0,0,0.0,188.04,187.71,187.96,0.94,55.55,132.49,0.047,3
+C5-console,2026-10-15 16:17,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,gil,120.3,237,18,0,0.0,188.1,187.95,192.86,8.37,55.48,132.99,8.518,0
+C5-console,2026-10-15 16:17,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,cpugil,180.5,236,1,0,0.0,189.08,191.42,189.17,3.25,55.55,133.5,-0.656,1
+C6-console,2026-10-15 16:21,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,idle,0.0,236,0,0,0.0,192.49,181.98,194.61,14.27,59.37,133.12,18.413,0
+C6-console,2026-10-15 16:21,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,cpu,60.1,237,0,0,0.0,194.05,194.03,194.0,1.39,59.37,134.68,-0.212,3
+C6-console,2026-10-15 16:21,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,gil,120.2,237,0,0,0.0,193.91,193.84,193.79,1.22,59.37,134.54,-0.041,0
+C6-console,2026-10-15 16:21,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),collector paused; prints to a console,cpugil,180.5,236,0,0,0.0,193.89,193.75,193.79,1.36,59.35,134.53,-0.328,8
+D1-con1024,2026-10-15 16:28,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",idle,0.0,237,0,0,0.0,197.99,198.38,197.77,1.66,48.62,149.37,-0.497,0
+D1-con1024,2026-10-15 16:28,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpu,60.1,236,0,0,0.0,198.04,197.68,198.11,1.33,48.64,149.41,0.049,0
+D1-con1024,2026-10-15 16:28,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",gil,120.3,237,0,0,0.0,197.97,197.87,197.85,1.21,48.63,149.36,0.01,0
+D1-con1024,2026-10-15 16:28,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpugil,180.4,236,0,0,0.0,198.01,197.88,197.54,1.52,48.65,149.37,-0.119,0
+D2-con1024,2026-10-15 16:42,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",idle,0.0,237,0,0,0.0,205.54,205.38,205.57,1.29,53.42,152.13,0.278,0
+D2-con1024,2026-10-15 16:42,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpu,60.1,236,0,0,0.0,205.84,205.49,205.71,1.19,53.43,152.42,0.055,0
+D2-con1024,2026-10-15 16:42,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",gil,120.2,236,0,0,0.0,205.75,205.72,205.71,1.35,53.43,152.32,-0.059,0
+D2-con1024,2026-10-15 16:42,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpugil,180.3,237,0,0,0.0,205.78,205.37,205.63,1.25,53.43,152.36,0.003,0
+D3-con1024,2026-10-15 16:47,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",idle,0.0,237,0,0,0.0,202.94,202.82,202.9,1.18,53.85,149.09,0.087,0
+D3-con1024,2026-10-15 16:47,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpu,60.1,237,0,0,0.0,203.21,203.02,203.06,1.17,53.85,149.38,0.091,0
+D3-con1024,2026-10-15 16:47,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",gil,120.3,236,0,0,0.0,203.09,203.17,202.99,1.17,53.85,149.25,-0.102,0
+D3-con1024,2026-10-15 16:47,native,cli,21.3,MMCSS,1,df3 (-1.0 dB),"collector on; prints to a console, writes timed",cpugil,180.6,236,0,0,0.0,203.16,203.17,203.09,1.34,53.85,149.32,-0.101,0
+D1-con256,2026-10-15 16:33,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",idle,0.0,237,0,0,0.0,188.54,188.71,188.33,1.06,53.62,134.93,-0.377,0
+D1-con256,2026-10-15 16:33,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpu,60.1,236,0,0,0.0,188.58,188.4,188.53,1.2,53.64,134.98,0.032,5
+D1-con256,2026-10-15 16:33,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",gil,120.3,237,0,0,0.0,188.53,188.53,188.59,1.09,53.63,134.91,-0.001,0
+D1-con256,2026-10-15 16:33,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpugil,180.4,236,0,0,0.0,188.56,188.51,188.52,1.4,53.64,134.94,-0.062,2
+D2-con256,2026-10-15 16:38,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",idle,0.0,237,0,0,0.0,193.44,193.13,193.4,0.91,49.06,144.39,0.173,0
+D2-con256,2026-10-15 16:38,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpu,60.1,237,0,0,0.0,193.69,193.47,193.71,1.04,49.05,144.64,0.061,9
+D2-con256,2026-10-15 16:38,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",gil,120.4,236,0,0,0.0,193.63,193.63,193.6,1.07,49.05,144.59,0.013,0
+D2-con256,2026-10-15 16:38,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpugil,180.4,236,0,0,0.0,193.66,193.36,193.58,1.1,49.05,144.62,-0.076,3
+D3-con256,2026-10-15 16:52,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",idle,0.0,237,0,0,0.0,198.03,198.12,198.05,0.82,52.43,145.6,-0.208,0
+D3-con256,2026-10-15 16:52,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpu,60.1,236,0,0,0.0,198.17,197.86,198.06,1.43,52.47,145.71,0.132,4
+D3-con256,2026-10-15 16:52,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",gil,120.2,236,0,0,0.0,198.02,198.08,197.83,1.19,52.43,145.61,0.0,0
+D3-con256,2026-10-15 16:52,native,cli,5.3,MMCSS,1,df3 (-1.0 dB),"collector paused; prints to a console, writes timed",cpugil,180.3,237,0,0,0.0,198.12,197.88,197.83,1.22,52.45,145.69,0.082,3

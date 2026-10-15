@@ -101,7 +101,8 @@ def run_session(processor, config: dict, should_stop=None,
             PortAudio device IDs.
         wasapi_margin, wasapi_pause_gc: run_wasapi_loop's margin and
             pause_gc. The audio process passes the ones measured for it;
-            the CLI keeps the defaults. The other loops always run with
+            the CLI keeps the defaults (it prints on its inference
+            thread: see constants). The other loops always run with
             the collector off: both callers do nothing else.
 
     Returns:
