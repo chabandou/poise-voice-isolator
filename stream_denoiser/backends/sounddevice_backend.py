@@ -9,8 +9,8 @@ as from the CLI (:func:`process_with_sounddevice`).
 """
 import sys
 import time
-from contextlib import contextmanager, nullcontext
-from typing import Callable, Optional, Tuple, Union
+from contextlib import nullcontext
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
@@ -32,48 +32,10 @@ from ..device_utils import (
     print_stats,
     print_final_stats
 )
+from ._loop_util import SYNC_LOG_INTERVAL_SEC, StopLike, fast_gil_handoff, \
+    stop_requested
 
 _logger = get_logger(__name__)
-
-# Cadence of the "sync:" file-log line.
-SYNC_LOG_INTERVAL_SEC = 30.0
-
-# How soon a waiting thread gets the GIL (Python's default is 5 ms).
-AUDIO_SWITCH_INTERVAL_SEC = 0.0005
-
-# should_stop may be a threading.Event, a zero-arg callable, or None (run
-# until KeyboardInterrupt).
-StopLike = Union[object, Callable[[], bool], None]
-
-
-def _should_stop(stop) -> bool:
-    if stop is None:
-        return False
-    if callable(stop):
-        try:
-            return bool(stop())
-        except Exception:
-            return False
-    is_set = getattr(stop, "is_set", None)
-    if callable(is_set):
-        try:
-            return bool(is_set())
-        except Exception:
-            return False
-    return False
-
-
-@contextmanager
-def _fast_gil_handoff():
-    """Shorten the GIL switch interval while the loop runs: it reacquires
-    the GIL after every read, inference and write, and at the default
-    5 ms each reacquire can wait that long behind another thread."""
-    previous = sys.getswitchinterval()
-    sys.setswitchinterval(AUDIO_SWITCH_INTERVAL_SEC)
-    try:
-        yield
-    finally:
-        sys.setswitchinterval(previous)
 
 
 def _realtime_thread(enabled: bool):
@@ -276,7 +238,7 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
 
     # The collection before the loop runs before the streams start: once
     # capture runs, time spent stays behind as backlog.
-    with gc_paused(pause_gc), _fast_gil_handoff(), \
+    with gc_paused(pause_gc), fast_gil_handoff(), \
             _realtime_thread(realtime) as rt, input_stream, output_stream:
         _logger.info(
             "run start: model=%s frame_size=%s backend=portaudio "
@@ -291,7 +253,7 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
         # Reused stereo buffer with one sample of headroom: output takes
         # dither around out_block_size (e.g. 470/471 averaging 470.4).
         stereo_output = np.empty((out_block_size + 1, 2), dtype=np.float32)
-        while not _should_stop(should_stop):
+        while not stop_requested(should_stop):
             # Read audio chunk. The size is dithered around the
             # rate-scaled block so it resamples to ~one frame on average.
             audio_chunk, overflowed = input_stream.read(

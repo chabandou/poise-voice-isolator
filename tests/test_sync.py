@@ -319,6 +319,7 @@ def test_audio_loop_runs_with_fast_gil_handoff(monkeypatch):
     import numpy as np
 
     from stream_denoiser.backends import pulse_backend as pb
+    from stream_denoiser.backends._loop_util import SWITCH_INTERVAL_SEC
     from stream_denoiser.backends.platform import linux
 
     seen = []
@@ -364,5 +365,5 @@ def test_audio_loop_runs_with_fast_gil_handoff(monkeypatch):
     before = sys.getswitchinterval()
     pb.run_pulse_loop(FakeProcessor(), "src.monitor", "sink",
                       should_stop=lambda: len(seen) >= 5)
-    assert seen and all(v == pb.AUDIO_SWITCH_INTERVAL_SEC for v in seen)
+    assert seen and all(v == SWITCH_INTERVAL_SEC for v in seen)
     assert sys.getswitchinterval() == before
