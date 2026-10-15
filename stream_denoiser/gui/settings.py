@@ -99,7 +99,11 @@ class Settings:
     
     def __init__(self):
         """Initialize settings manager."""
-        self._settings = QSettings(self.ORGANIZATION, self.APPLICATION)
+        # defaultFormat() is NativeFormat (the registry on Windows) unless
+        # the test harness switches it to throwaway INI files.
+        self._settings = QSettings(QSettings.defaultFormat(),
+                                   QSettings.Scope.UserScope,
+                                   self.ORGANIZATION, self.APPLICATION)
     
     def get(self, key: str, default: Any = None) -> Any:
         """
