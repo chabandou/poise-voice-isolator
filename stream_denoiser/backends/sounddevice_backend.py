@@ -5,7 +5,7 @@ Audio processing using sounddevice for both input and output.
 
 :func:`run_portaudio_loop` is the loop itself, stoppable and with a
 stats callback, so it can run in the audio process (audio_host) as well
-as from the CLI (:func:`process_with_sounddevice`).
+as from the CLI (both through session.py).
 """
 import sys
 import time
@@ -29,8 +29,6 @@ from ..device_utils import (
     find_loopback_device,
     get_output_device_id,
     validate_output_device,
-    print_stats,
-    print_final_stats
 )
 from ._loop_util import SYNC_LOG_INTERVAL_SEC, StopLike, fast_gil_handoff, \
     stop_requested
@@ -325,72 +323,3 @@ def run_portaudio_loop(processor: DenoiserAudioProcessor,
         "lost=%.0fms overflows=%d", time.time() - start_time, stalls.count,
         stalls.max_ms, stalls.lost_ms, overflows)
     return processor.get_stats()
-
-
-def process_with_sounddevice(processor: DenoiserAudioProcessor,
-                             input_device: Optional[int] = None,
-                             output_device: Optional[int] = None,
-                             backend: Optional[str] = None) -> None:
-    """
-    Process system audio from CABLE Output to the output device.
-
-    Runs on the native WASAPI path when available (see wasapi_backend),
-    else on PortAudio blocking streams.
-
-    Args:
-        processor: DenoiserAudioProcessor instance
-        input_device: Input device ID (optional)
-        output_device: Output device ID (optional)
-        backend: "auto", "wasapi" or "portaudio"; None reads POISE_BACKEND
-    """
-    if not USE_SOUNDDEVICE:
-        raise RuntimeError("This mode requires sounddevice library")
-
-    # Native path first: fixed delay, clocks bridged, no Python in the
-    # audio thread. PortAudio stays as the fallback.
-    from .wasapi_backend import (
-        WasapiStartError, process_with_wasapi, select_windows_backend,
-        windows_backend_preference)
-    preference = windows_backend_preference(backend)
-    chosen, reason = select_windows_backend(preference)
-    _logger.info("Windows backend: %s (%s)", chosen, reason)
-    if chosen == "wasapi":
-        input_id, output_id = select_devices(processor, input_device,
-                                             output_device)
-        try:
-            process_with_wasapi(processor, sd.query_devices(input_id)['name'],
-                                sd.query_devices(output_id)['name'])
-            return
-        except WasapiStartError as e:
-            if preference == "wasapi":
-                raise
-            _logger.warning(
-                "Native audio path did not start (%s); using PortAudio", e)
-            print(f"Warning: native audio path did not start ({e}); "
-                  "using PortAudio")
-
-    def started(input_id: int, output_id: int) -> None:
-        print(f"\nStarting real-time system audio processing...")
-        print(f"Input device: {sd.query_devices(input_id)['name']} (ID: {input_id})")
-        print(f"Output device: {sd.query_devices(output_id)['name']} (ID: {output_id})")
-        print(f"Output sample rate: {processor.target_sr}Hz")
-        print("Press Ctrl+C to stop...\n")
-
-    try:
-        run_portaudio_loop(
-            processor, input_device, output_device,
-            on_stats=lambda stats, elapsed: print_stats(stats, elapsed),
-            on_started=started, pause_gc=True)
-    except ValueError as e:
-        print(f"Error selecting output device: {e}")
-        print("\nAvailable output devices:")
-        for i, device in enumerate(sd.query_devices()):
-            if device['max_output_channels'] > 0:
-                host_api = sd.query_hostapis(device['hostapi'])['name']
-                print(f"  ID {i}: {device['name']} (API: {host_api})")
-        raise
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-
-    stats = processor.get_stats()
-    print_final_stats(stats)

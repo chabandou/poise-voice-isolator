@@ -296,25 +296,3 @@ def run_pipewire_loop(processor,
             pass
         node.close()
     return processor.get_stats()
-
-
-def process_with_pipewire(processor, sink: Optional[str] = None,
-                          route_default: bool = True) -> None:
-    """Blocking CLI entry point: run as a PipeWire node until Ctrl+C."""
-    from ..device_utils import print_stats, print_final_stats
-
-    _logger.info("Using PipeWire node backend")
-    print("\nStarting real-time system audio processing (PipeWire node)...")
-    print(f"Sink: {PW_NODE_DESCRIPTION} ({PW_NODE_NAME})"
-          + ("" if route_default else " - route apps to it manually"))
-    print(f"Output: {pick_output_sink(sink) or 'default'}")
-    print("Press Ctrl+C to stop...\n")
-    try:
-        final_stats = run_pipewire_loop(
-            processor, sink=sink, should_stop=None,
-            on_stats=lambda stats, elapsed: print_stats(stats, elapsed),
-            route_default=route_default, pause_gc=True)
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-        final_stats = processor.get_stats()
-    print_final_stats(final_stats)

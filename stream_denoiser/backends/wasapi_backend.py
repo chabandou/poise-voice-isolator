@@ -275,26 +275,3 @@ def _run_node(processor, capture, render, should_stop, on_stats,
             pass
         node.close()
     return processor.get_stats()
-
-
-def process_with_wasapi(processor, capture: Optional[str],
-                        render: Optional[str]) -> None:
-    """Blocking CLI entry point: run on the native path until Ctrl+C.
-
-    Raises WasapiStartError if the devices could not be opened.
-    """
-    from ..device_utils import print_stats, print_final_stats
-
-    _logger.info("Using native WASAPI backend")
-    print("\nStarting real-time system audio processing (native WASAPI)...")
-    print(f"Input device: {capture or 'default'}")
-    print(f"Output device: {render or 'default'}")
-    print("Press Ctrl+C to stop...\n")
-    try:
-        final_stats = run_wasapi_loop(
-            processor, capture, render,
-            on_stats=lambda stats, elapsed: print_stats(stats, elapsed))
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-        final_stats = processor.get_stats()
-    print_final_stats(final_stats)

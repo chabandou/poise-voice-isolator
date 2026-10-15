@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from stream_denoiser import audio_host as ah
+from stream_denoiser import session
 from stream_denoiser.engines.base import DenoiseEngine
 from stream_denoiser.processor import DenoiserAudioProcessor
 
@@ -98,25 +99,30 @@ def test_control_ends_the_process_when_the_ui_is_gone():
     assert ctl.quit
 
 
-def _session(monkeypatch, channel, run_backend):
-    monkeypatch.setattr(ah, "_build_processor", lambda config: _processor())
-    monkeypatch.setattr(ah, "_run_backend", run_backend)
+def _session(monkeypatch, channel, run_session):
+    monkeypatch.setattr(session, "build_processor",
+                        lambda config: _processor())
+    monkeypatch.setattr(session, "run_session", run_session)
     return ah._run_session(channel, {"backend": "pipewire"})
 
 
 def test_session_streams_stats_until_stopped(monkeypatch):
     channel = FakeChannel([{"cmd": "set", "aad_threshold_db": -50}])
 
-    def run_backend(processor, config, ctl):
-        ctl.on_stats({}, 1.0)
+    def run_backend(processor, config, should_stop, on_stats, on_started,
+                    **_):
+        on_started("pipewire", None, None)
+        on_stats({}, 1.0)
         channel.inbox.append({"cmd": "stop"})
-        while not ctl.should_stop():
+        while not should_stop():
             pass
         processor.process_chunk(np.full(480, 0.1, dtype=np.float32))
-        ctl.on_stats({}, 2.0)
+        on_stats({}, 2.0)
         return {"empty_reads": 3}
 
     assert _session(monkeypatch, channel, run_backend) is False
+    assert channel.events("running") == [{"event": "running",
+                                          "backend": "pipewire"}]
     stats = channel.events("stats")
     assert stats and stats[-1]["elapsed"] == 2.0
     assert stats[-1]["stats"]["aad_threshold_db"] == -50.0
@@ -129,18 +135,18 @@ def test_session_streams_stats_until_stopped(monkeypatch):
 def test_session_failure_sends_the_notice_then_stops(monkeypatch):
     channel = FakeChannel()
 
-    def run_backend(processor, config, ctl):
-        raise ah._SessionError("no monitor", ah.CAPTURE_NOTICE)
+    def run_backend(processor, config, **_):
+        raise session.SessionError("no monitor", session.CAPTURE_NOTICE)
 
     _session(monkeypatch, channel, run_backend)
     assert [m["event"] for m in channel.sent] == ["error", "stopped"]
-    assert channel.sent[0]["notice"] == ah.CAPTURE_NOTICE
+    assert channel.sent[0]["notice"] == session.CAPTURE_NOTICE
 
 
 def test_session_crash_in_the_loop_is_an_audio_error(monkeypatch):
     channel = FakeChannel()
 
-    def run_backend(processor, config, ctl):
+    def run_backend(processor, config, **_):
         raise RuntimeError("Poise output: target gone")
 
     _session(monkeypatch, channel, run_backend)
@@ -153,8 +159,8 @@ def test_session_crash_in_the_loop_is_an_audio_error(monkeypatch):
 def test_quit_ends_the_process(monkeypatch):
     channel = FakeChannel([{"cmd": "quit"}])
 
-    def run_backend(processor, config, ctl):
-        while not ctl.should_stop():
+    def run_backend(processor, config, should_stop, **_):
+        while not should_stop():
             pass
         return {}
 
@@ -165,14 +171,13 @@ def test_quit_ends_the_process(monkeypatch):
 def test_stop_before_the_loop_skips_it(monkeypatch):
     channel = FakeChannel([{"cmd": "stop"}])
     _session(monkeypatch, channel,
-             lambda *a: pytest.fail("loop started after stop"))
+             lambda *a, **k: pytest.fail("loop started after stop"))
     assert [m["event"] for m in channel.sent] == ["stopped"]
 
 
 def test_unknown_backend_is_an_error():
     with pytest.raises(ValueError, match="unknown audio backend"):
-        ah._run_backend(_processor(), {"backend": "alsa"},
-                        ah._Control(FakeChannel()))
+        session.run_session(_processor(), {"backend": "alsa"})
 
 
 # --- pulse-simple endpoints ------------------------------------------------------
@@ -198,34 +203,37 @@ def linux(monkeypatch):
 def test_pulse_endpoints_follow_the_router(linux):
     config = {"routed": True, "monitor_source": "Poise_Capture.monitor",
               "fallback_sink": "saved_hw"}
-    assert ah._pulse_endpoints(config) == ("Poise_Capture.monitor",
-                                           "saved_hw")
+    assert session.pulse_endpoints(config) == ("Poise_Capture.monitor",
+                                               "saved_hw")
     config["output_device"] = "chosen"
-    assert ah._pulse_endpoints(config)[1] == "chosen"
-    assert ah._pulse_endpoints({"routed": True, "monitor_source": "m"}) \
+    assert session.pulse_endpoints(config)[1] == "chosen"
+    assert session.pulse_endpoints({"routed": True, "monitor_source": "m"}) \
         == ("m", "default_hw")
+    # An explicit capture source (the CLI's --source) wins.
+    config["input_device"] = "x.monitor"
+    assert session.pulse_endpoints(config) == ("x.monitor", "chosen")
 
 
 def test_pulse_endpoints_without_router_capture_the_default_monitor(linux):
-    assert ah._pulse_endpoints({"routed": False}) == ("hw.monitor",
-                                                     "default_hw")
+    assert session.pulse_endpoints({"routed": False}) == ("hw.monitor",
+                                                         "default_hw")
 
 
 @pytest.mark.parametrize("config, patch, notice", [
-    ({"routed": True}, {}, ah.CAPTURE_NOTICE),
+    ({"routed": True}, {}, session.CAPTURE_NOTICE),
     ({"routed": True, "monitor_source": "m"},
-     {"wait_for_source": lambda name: None}, ah.CAPTURE_NOTICE),
+     {"wait_for_source": lambda name: None}, session.CAPTURE_NOTICE),
     ({"routed": False}, {"find_monitor_source_pulsectl": lambda: None},
-     ah.CAPTURE_NOTICE),
+     session.CAPTURE_NOTICE),
     ({"routed": False}, {"get_default_sink_name": lambda: None},
-     ah.PLAYBACK_NOTICE),
+     session.PLAYBACK_NOTICE),
 ])
 def test_pulse_endpoints_fail_fast(linux, monkeypatch, config, patch,
                                    notice):
     for name, fn in patch.items():
         monkeypatch.setattr(linux, name, fn)
-    with pytest.raises(ah._SessionError) as err:
-        ah._pulse_endpoints(config)
+    with pytest.raises(session.SessionError) as err:
+        session.pulse_endpoints(config)
     assert err.value.notice == notice
 
 

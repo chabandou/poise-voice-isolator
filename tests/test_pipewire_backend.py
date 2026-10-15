@@ -270,27 +270,33 @@ def test_cli_runs_the_pipewire_node_when_selected(monkeypatch):
     monkeypatch.setattr(pwb, "pipewire_node_status", lambda: (True, "ok"))
     seen = {}
 
-    def fake_run(processor, sink=None, route_default=True):
+    def fake_run(processor, sink=None, route_default=True, pause_gc=False,
+                 **_):
         seen.update(frame=processor.frame_size, sink=sink,
-                    route=route_default)
+                    route=route_default, pause_gc=pause_gc)
+        return processor.get_stats()
 
-    monkeypatch.setattr(pwb, "process_with_pipewire", fake_run)
+    monkeypatch.setattr(pwb, "run_pipewire_loop", fake_run)
     cli_mod.process_system_audio_realtime(_engine(), sink="alsa_out",
                                           use_vb_cable=False)
-    assert seen == {"frame": 480, "sink": "alsa_out", "route": False}
+    assert seen == {"frame": 480, "sink": "alsa_out", "route": False,
+                    "pause_gc": True}
 
 
 def test_cli_keeps_pulse_path_when_forced(monkeypatch):
     from stream_denoiser import cli as cli_mod
     monkeypatch.setattr(cli_mod, "is_linux", lambda: True)
     monkeypatch.setattr(pwb, "pipewire_node_status", lambda: (True, "ok"))
-    monkeypatch.setattr(pwb, "process_with_pipewire",
+    monkeypatch.setattr(pwb, "run_pipewire_loop",
                         lambda *a, **k: pytest.fail("PipeWire path taken"))
     seen = {}
     import stream_denoiser.backends.pulse_backend as pulse_backend
-    monkeypatch.setattr(pulse_backend, "process_with_pulse",
-                        lambda processor, source, sink: seen.update(
-                            source=source, sink=sink))
+
+    def fake_run(processor, source, sink, **_):
+        seen.update(source=source, sink=sink)
+        return processor.get_stats(), 0
+
+    monkeypatch.setattr(pulse_backend, "run_pulse_loop", fake_run)
     cli_mod.process_system_audio_realtime(
         _engine(), source="x.monitor", sink="alsa_out", use_vb_cable=False,
         backend="pulse")

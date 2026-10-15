@@ -36,12 +36,8 @@ import traceback
 from contextlib import contextmanager
 from typing import Callable, Optional
 
-from .constants import (
-    DEFAULT_AAD_THRESHOLD_DB,
-    DEFAULT_FRAME_SIZE,
-    DEFAULT_MODEL,
-    PULSE_TARGET_SR,
-)
+from . import session
+from .constants import WIN_PROCESS_MARGIN_SAMPLES
 from .logging_config import (
     get_crash_log_path,
     get_file_handler,
@@ -57,8 +53,6 @@ STOP_TIMEOUT_SEC = 3.0
 STATS_INTERVAL_SEC = 0.5
 
 AUDIO_ERROR_NOTICE = "Audio error. See log for details."
-CAPTURE_NOTICE = "Capture device not found. See log for fixes."
-PLAYBACK_NOTICE = "Playback device not found. See log for fixes."
 CRASH_NOTICE = "Audio process stopped unexpectedly. See log for details."
 
 
@@ -198,19 +192,7 @@ class AudioHost:
         _logger.info("audio process started (pid %d)", proc.pid)
 
     def start(self, config: dict) -> None:
-        """Start a session.
-
-        config keys: model, backend ("pipewire", "pulse"; on Windows
-        "auto", "wasapi" or "portaudio"),
-        output_device, aad_threshold_db, atten_lim_db (optional);
-        pipewire only, optional: route_default, node_name, description;
-        pulse only: routed (the UI set up the null sink), monitor_source,
-        fallback_sink; Windows ("auto": the native path, PortAudio if it
-        cannot start), optional: input_device and output_device
-        (PortAudio IDs; names for "wasapi"), realtime (PortAudio loop
-        under MMCSS, default on). Optional everywhere: onnx_path (a custom
-        DF3 model), aad_enabled (default on).
-        """
+        """Start a session; config keys as in stream_denoiser.session."""
         if self.running:
             raise RuntimeError("audio session already running")
         self.stats = {}
@@ -415,14 +397,6 @@ def _child_main(conn, options: dict) -> None:
             return
 
 
-class _SessionError(RuntimeError):
-    """A session cannot run; ``notice`` is the UI's short message."""
-
-    def __init__(self, message: str, notice: str):
-        super().__init__(message)
-        self.notice = notice
-
-
 class _Control:
     """The session's end of the pipe: the loop's should_stop and on_stats."""
 
@@ -466,6 +440,9 @@ class _Control:
                 processor.engine.set_atten_lim_db(float(value))
         self._pending.clear()
 
+    def started(self, backend: str, *_endpoints) -> None:
+        self.channel.send({"event": "running", "backend": backend})
+
     def on_stats(self, stats: dict, elapsed: float) -> None:
         """The processor's diagnostics, plus whatever the loop adds (the
         native node's counters)."""
@@ -491,153 +468,6 @@ class _Control:
                 signal.signal(sig, old)
 
 
-def _build_processor(config: dict):
-    from .engines import create_engine
-    from .processor import DenoiserAudioProcessor
-
-    kwargs = {}
-    if config.get("atten_lim_db") is not None:
-        kwargs["atten_lim_db"] = float(config["atten_lim_db"])
-    # A fresh engine per session: engines hold streaming state.
-    engine_kwargs = dict(kwargs)
-    if config.get("onnx_path"):
-        engine_kwargs["onnx_path"] = config["onnx_path"]
-    engine = create_engine(config.get("model") or DEFAULT_MODEL,
-                           **engine_kwargs)
-    try:
-        return DenoiserAudioProcessor(
-            engine,
-            target_sr=PULSE_TARGET_SR,
-            frame_size=engine.required_frame_size or DEFAULT_FRAME_SIZE,
-            enable_aad=bool(config.get("aad_enabled", True)),
-            aad_threshold_db=float(config.get("aad_threshold_db",
-                                              DEFAULT_AAD_THRESHOLD_DB)),
-            **kwargs)
-    except Exception:
-        engine.close()
-        raise
-
-
-def _pulse_endpoints(config: dict):
-    """(source, sink) names for pulse-simple. Fails fast rather than
-    capturing the default input, which would record silence while the
-    default sink points at the null sink (100% AAD bypass)."""
-    from .backends.platform.linux import (
-        find_monitor_source_pulsectl, get_default_sink_name, wait_for_source)
-
-    monitor = config.get("monitor_source")
-    if config.get("routed"):
-        if not monitor:
-            raise _SessionError(
-                "Audio routing did not provide a monitor source.",
-                CAPTURE_NOTICE)
-        source = wait_for_source(monitor)
-        if source is None:
-            raise _SessionError(
-                f"Null sink monitor '{monitor}' not visible at the "
-                "PulseAudio level. Not starting: capturing the default "
-                "input instead would record silence. Fixes: check "
-                "pavucontrol/PipeWire Pulse backend, or restart without "
-                "auto-routing.", CAPTURE_NOTICE)
-    else:
-        # No router: capture the default sink's monitor.
-        found = find_monitor_source_pulsectl()
-        source = found.name if found else None
-        if source is None:
-            raise _SessionError("No PulseAudio monitor source found.",
-                                CAPTURE_NOTICE)
-    # Explicit selection, else the real sink saved at routing setup, else
-    # the current default.
-    sink = (config.get("output_device") or config.get("fallback_sink")
-            or get_default_sink_name())
-    if not sink:
-        raise _SessionError("No PulseAudio sink found for playback.",
-                            PLAYBACK_NOTICE)
-    return source, sink
-
-
-def _run_backend(processor, config: dict, ctl: _Control) -> dict:
-    """Run the loop until stopped; returns extra final stats."""
-    backend = config.get("backend")
-    if backend == "pipewire":
-        from .backends.pipewire_backend import run_pipewire_loop
-        options = {key: config[key] for key in
-                   ("route_default", "node_name", "description")
-                   if config.get(key) is not None}
-        ctl.channel.send({"event": "running", "backend": backend})
-        run_pipewire_loop(processor, config.get("output_device") or None,
-                          should_stop=ctl.should_stop, on_stats=ctl.on_stats,
-                          stats_interval_sec=STATS_INTERVAL_SEC,
-                          pause_gc=True, **options)
-        return {}
-    if backend == "pulse":
-        from .backends.pulse_backend import run_pulse_loop
-        source, sink = _pulse_endpoints(config)
-        ctl.channel.send({"event": "running", "backend": backend})
-        _final, empty_reads = run_pulse_loop(
-            processor, source, sink, should_stop=ctl.should_stop,
-            on_stats=ctl.on_stats, stats_interval_sec=STATS_INTERVAL_SEC,
-            pause_gc=True)
-        return {"empty_reads": empty_reads}
-    if backend in ("auto", "wasapi", "portaudio") and sys.platform == "win32":
-        _run_windows(processor, config, ctl, backend)
-        return {}
-    raise ValueError(f"unknown audio backend {backend!r}")
-
-
-def _run_windows(processor, config: dict, ctl: _Control, backend: str) -> None:
-    """The native path ("wasapi"), PortAudio ("portaudio"), or the native
-    path with PortAudio as the fallback when it cannot start ("auto", as
-    the CLI does). "running" goes out once audio flows."""
-    from .backends.wasapi_backend import (
-        WasapiStartError, run_wasapi_loop, select_windows_backend)
-    from .constants import WIN_PROCESS_MARGIN_SAMPLES
-
-    def running(name):
-        return lambda *_: ctl.channel.send({"event": "running",
-                                            "backend": name})
-
-    chosen, reason = select_windows_backend(backend)
-    _logger.info("Windows backend: %s (%s)", chosen, reason)
-    if chosen == "wasapi":
-        try:
-            # Nothing else holds this process's GIL: inference needs far
-            # less time per frame than in the UI's process (see constants).
-            run_wasapi_loop(
-                processor, _device_name(config.get("input_device"), "input"),
-                _device_name(config.get("output_device"), "output"),
-                should_stop=ctl.should_stop, on_stats=ctl.on_stats,
-                stats_interval_sec=STATS_INTERVAL_SEC,
-                on_started=running("wasapi"),
-                margin=WIN_PROCESS_MARGIN_SAMPLES, pause_gc=True)
-            return
-        except WasapiStartError as e:
-            if backend == "wasapi":
-                raise
-            _logger.warning(
-                "Native audio path did not start (%s); using PortAudio", e)
-    from .backends.sounddevice_backend import run_portaudio_loop
-    run_portaudio_loop(
-        processor, config.get("input_device"), config.get("output_device"),
-        should_stop=ctl.should_stop, on_stats=ctl.on_stats,
-        stats_interval_sec=STATS_INTERVAL_SEC,
-        on_started=running("portaudio"), pause_gc=True,
-        realtime=bool(config.get("realtime", True)))
-
-
-def _device_name(device, kind: str) -> Optional[str]:
-    """A WASAPI endpoint name for the native path: names pass through,
-    PortAudio IDs are looked up; None finds CABLE Output (input) or keeps
-    the default (output)."""
-    if isinstance(device, str) or (device is None and kind == "output"):
-        return device or None
-    import sounddevice as sd
-    if device is None:
-        from .device_utils import find_loopback_device
-        device = find_loopback_device(None)
-    return sd.query_devices(int(device))["name"]
-
-
 def _run_session(channel: _Channel, config: dict) -> bool:
     """One start..stop. True when the process should exit afterwards."""
     ctl = _Control(channel)
@@ -646,12 +476,20 @@ def _run_session(channel: _Channel, config: dict) -> bool:
     try:
         with ctl.signals():
             try:
-                processor = _build_processor(config)
+                processor = session.build_processor(config)
                 ctl.processor = processor
                 ctl.apply_pending()
                 if not ctl.should_stop():
-                    extra = _run_backend(processor, config, ctl)
-            except _SessionError as e:
+                    # Nothing else holds this process's GIL: the native
+                    # path's inference needs far less time per frame than
+                    # in the UI's process (see constants).
+                    extra = session.run_session(
+                        processor, config, should_stop=ctl.should_stop,
+                        on_stats=ctl.on_stats, on_started=ctl.started,
+                        stats_interval_sec=STATS_INTERVAL_SEC,
+                        wasapi_margin=WIN_PROCESS_MARGIN_SAMPLES,
+                        wasapi_pause_gc=True)
+            except session.SessionError as e:
                 _logger.error("%s", e)
                 channel.send({"event": "error", "message": str(e),
                               "notice": e.notice})

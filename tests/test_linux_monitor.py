@@ -138,9 +138,6 @@ def test_cli_fails_fast_when_monitor_missing(monkeypatch):
         def get_monitor_source_name(self):
             return "Poise_Capture.monitor"
 
-        def wait_for_monitor_source(self, timeout_sec=3.0, poll_interval_sec=0.05):
-            return None
-
         @property
         def original_sink_name(self):
             return "alsa_output.pci.hw"
@@ -153,12 +150,11 @@ def test_cli_fails_fast_when_monitor_missing(monkeypatch):
     monkeypatch.setattr(cli_mod, "is_windows", lambda: False)
     real_router_mod = _load_linux_module()
     monkeypatch.setattr(real_router_mod, "LinuxAudioRouter", _FakeRouter)
-
-    class _Engine:
-        required_frame_size = 480
+    monkeypatch.setattr(real_router_mod, "wait_for_source", lambda name: None)
 
     with pytest.raises(RuntimeError, match="not visible at the"):
-        cli_mod.process_system_audio_realtime(_Engine(), input_device=None,
+        cli_mod.process_system_audio_realtime(_fake_rnnoise_engine(),
+                                              input_device=None,
                                               backend="pulse")
     assert made.get("restored") is True
 
@@ -195,9 +191,6 @@ def test_cli_uses_source_and_sink_names(monkeypatch):
         def get_monitor_source_name(self):
             return "Poise_Capture.monitor"
 
-        def wait_for_monitor_source(self, timeout_sec=3.0, poll_interval_sec=0.05):
-            return "Poise_Capture.monitor"
-
         @property
         def original_sink_name(self):
             return "alsa_output.pci.hw"
@@ -210,14 +203,17 @@ def test_cli_uses_source_and_sink_names(monkeypatch):
     real_router_mod = _load_linux_module()
     monkeypatch.setattr(real_router_mod, "LinuxAudioRouter", lambda auto_switch=True: _FakeRouter())
 
+    monkeypatch.setattr(real_router_mod, "wait_for_source", lambda name: name)
+
     seen = {}
 
-    def _fake_backend(processor, source, sink):
+    def _fake_backend(processor, source, sink, **_):
         seen["source"] = source
         seen["sink"] = sink
+        return processor.get_stats(), 0
 
     import stream_denoiser.backends.pulse_backend as pulse_backend
-    monkeypatch.setattr(pulse_backend, "process_with_pulse", _fake_backend)
+    monkeypatch.setattr(pulse_backend, "run_pulse_loop", _fake_backend)
 
     cli_mod.process_system_audio_realtime(_fake_rnnoise_engine(),
                                           backend="pulse")

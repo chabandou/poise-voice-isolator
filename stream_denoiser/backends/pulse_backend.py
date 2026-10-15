@@ -1,19 +1,17 @@
 """
 PulseAudio backend (Linux).
 
-Single shared processing loop used by both the CLI
-(:func:`process_with_pulse`) and the TUI, so the two paths cannot
-diverge. I/O is via libpulse-simple at a fixed 48 kHz float32; the
+The processing loop the CLI and the TUI share (see session.py). I/O is
+via libpulse-simple at a fixed 48 kHz float32; the
 server handles rate/format conversion, so no resampler is configured.
 """
 import time
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 
 from ..audio_gc import gc_paused
 from ..constants import PULSE_TARGET_SR, STATS_PRINT_INTERVAL_SEC
-from ..device_utils import print_stats, print_final_stats
 from ..logging_config import get_logger, get_log_file_path
 from ..sync import CaptureBacklogGuard, StallCounter
 from ._loop_util import SYNC_LOG_INTERVAL_SEC, StopLike, fast_gil_handoff, \
@@ -142,39 +140,3 @@ def run_pulse_loop(processor,
         stalls.max_ms,
     )
     return final, empty_reads
-
-
-def process_with_pulse(processor,
-                       source: str,
-                       sink: str) -> None:
-    """Blocking CLI entry point: capture -> process -> playback until Ctrl+C.
-
-    Args:
-        processor: DenoiserAudioProcessor instance.
-        source: Pulse source name for capture.
-        sink: Pulse sink name for playback.
-    """
-    _logger.info("Using pulse-simple backend")
-    print("\nStarting real-time system audio processing...")
-    print(f"Source: {source}")
-    print(f"Sink: {sink}")
-    print("Press Ctrl+C to stop...\n")
-
-    start_time = time.time()
-    last_stats_time = start_time
-
-    def _on_stats(stats: Dict, elapsed: float) -> None:
-        nonlocal last_stats_time
-        print_stats(stats, elapsed)
-        last_stats_time = time.time()
-
-    try:
-        final_stats, _ = run_pulse_loop(
-            processor, source, sink,
-            should_stop=None, on_stats=_on_stats, pause_gc=True,
-        )
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
-        final_stats = processor.get_stats()
-
-    print_final_stats(final_stats)
