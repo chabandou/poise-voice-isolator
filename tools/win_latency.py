@@ -10,7 +10,14 @@ Measure Poise's delay on Windows from outside, on real devices.
   wasapi-proc     the native path in the audio process, likewise;
   portaudio       the PortAudio loop on a thread of this process, as the
                   GUI runs it (the load threads share its GIL);
-  wasapi          the native path on a thread of this process.
+  wasapi          the native path on a thread of this process;
+  cli             ``python -m stream_denoiser`` on the native path, in a
+                  process of its own as a user starts it (VB-Cable
+                  switching off: latmeter plays into CABLE Input itself).
+                  --margin and --pause-gc/--no-pause-gc replace the
+                  margin and collector setting the CLI passes to its
+                  session; without them it runs as shipped. --console
+                  gives it a console of its own, as in a terminal.
 It also starts
 latmeter.exe (native/latmeter), which plays band-limited noise into
 CABLE Input like a video player and records loopback streams of CABLE
@@ -31,6 +38,8 @@ Load phases run one after the other (name:seconds):
   gilblock  a thread that holds the GIL for 80 ms every second inside
             one C call (a UI stuck in a long native call)
   cpugil    cpu and gil together (a busy UI on a busy machine)
+The load runs in this process: with cli and the -proc backends, gil and
+gilblock are one more busy thread on the machine, not in Poise's process.
 """
 import argparse
 import ctypes
@@ -207,7 +216,8 @@ class NodeWatch:
     def __init__(self, path: Path):
         self.node = None
         self.host = None      # AudioHost: its stats carry the node's
-        self._f = open(path, "w")
+        self._path = path
+        self._f = None        # opened on the first snapshot
         self._stop = threading.Event()
         self._t = threading.Thread(target=self._run, daemon=True)
 
@@ -230,13 +240,153 @@ class NodeWatch:
                            **node.io_stats(), "latency": node.latency_samples}
                 except Exception:
                     continue
+            if self._f is None:
+                self._f = open(self._path, "w")
             self._f.write(json.dumps(rec) + "\n")
             self._f.flush()
 
     def stop(self):
         self._stop.set()
         self._t.join(3)
-        self._f.close()
+        if self._f is not None:
+            self._f.close()
+
+
+def _run_cli(args, out: Path, stop, started, meta) -> None:
+    """``python -m stream_denoiser`` (cmd_cli_child) until ``stop``. Its
+    counters arrive in node.jsonl; its console output goes to cli.out,
+    or with --console to a console of its own (minimized), as in a
+    terminal: the CLI prints on its inference thread."""
+    cmd = [sys.executable, str(Path(__file__).resolve()), "cli-child",
+           "--stats", str(out / "node.jsonl")]
+    if args.margin is not None:
+        cmd += ["--margin", str(args.margin)]
+    if args.pause_gc is not None:
+        cmd.append("--pause-gc" if args.pause_gc else "--no-pause-gc")
+    if args.console:
+        cmd.append("--console")
+    cmd += ["--", "--backend", "wasapi", "--model", "deepfilternet3",
+            "--atten-lim-db", str(args.atten_lim_db), "--no-vb-cable",
+            "--input-device", str(_device_id(CAPTURE, False)),
+            "--output-device", str(_device_id(args.speakers, True))]
+    stats = out / "node.jsonl"
+    log = out / ("cli.err" if args.console else "cli.out")
+    with open(log, "w") as console:
+        if args.console:
+            info = subprocess.STARTUPINFO()
+            info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            info.wShowWindow = 7  # SW_SHOWMINNOACTIVE
+            io = {"stdout": subprocess.DEVNULL, "stderr": console,
+                  "creationflags": subprocess.CREATE_NEW_CONSOLE,
+                  "startupinfo": info}
+        else:
+            io = {"stdout": console, "stderr": subprocess.STDOUT}
+        child = subprocess.Popen(cmd, stdin=subprocess.PIPE, cwd=ROOT, **io)
+        while child.poll() is None and not stop.wait(0.2):
+            if not started.is_set() and stats.exists() and stats.stat().st_size:
+                started.set()
+        child.stdin.close()       # its Ctrl+C
+        try:
+            meta["cli_exit"] = child.wait(30)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            meta["cli_exit"] = "killed"
+    text = log.read_text(errors="replace")
+    if not started.is_set():
+        meta["error"] = "the CLI exited: " + text[-2000:]
+        started.set()
+        return
+    # What the session ran with: its core delay (frame, render quantum,
+    # fade and margin) and the collector, from its counters.
+    with open(stats) as f:
+        first = json.loads(f.readline())
+    meta["cli_core_delay"] = first["delay"]
+    meta["cli_gc_paused"] = not first["gc_enabled"]
+
+
+class _TimedStream:
+    """The CLI's sys.stdout, timed (it prints and logs on its inference
+    thread): the writes slower than 1 ms, as (QPC s, ms), and a copy of
+    the text."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self.text = []
+        self.slow = []
+
+    def _timed(self, call, *a):
+        t = time.perf_counter()
+        try:
+            return call(*a)
+        finally:
+            ms = (time.perf_counter() - t) * 1000.0
+            if ms > 1.0:
+                self.slow.append((round(t, 4), round(ms, 2)))
+
+    def write(self, s):
+        self.text.append(s)
+        return self._timed(self._stream.write, s)
+
+    def flush(self):
+        return self._timed(self._stream.flush)
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def cmd_cli_child(args) -> None:
+    """The CLI as ``python -m stream_denoiser`` runs it, except: its
+    session gets --margin / --pause-gc when given, print_stats also
+    writes what it is passed (the processor's and the node's counters,
+    once a second on the inference thread) and the slow writes to
+    stdout since the last time to --stats, and stdin closing is Ctrl+C."""
+    import _thread
+    import gc
+
+    if args.console:
+        # stdin is the harness's pipe; print to this process's console as
+        # Python does in a terminal.
+        sys.stdout = open("CONOUT$", "w")
+    # Before the loggers take sys.stdout.
+    out = sys.stdout = _TimedStream(sys.stdout)
+    if args.console:
+        sys.stderr = out
+    from stream_denoiser import cli, device_utils, session
+
+    override = {}
+    if args.margin is not None:
+        override["wasapi_margin"] = args.margin
+    if args.pause_gc is not None:
+        override["wasapi_pause_gc"] = args.pause_gc
+    run_session = session.run_session
+    session.run_session = lambda *a, **kw: run_session(*a, **{**kw, **override})
+
+    record = open(args.stats, "w")
+    print_stats = device_utils.print_stats
+
+    def print_and_record(stats, elapsed, *rest):
+        print_stats(stats, elapsed, *rest)
+        slow, out.slow = out.slow, []
+        record.write(json.dumps({"t": time.perf_counter(), **stats,
+                                 "gc_enabled": gc.isenabled(),
+                                 "slow_writes": slow},
+                                default=float) + "\n")
+        record.flush()
+
+    device_utils.print_stats = print_and_record
+
+    def ctrl_c():
+        sys.stdin.read()          # blocks without the GIL until closed
+        _thread.interrupt_main()
+
+    threading.Thread(target=ctrl_c, daemon=True).start()
+    rest = args.cli_args[1:] if args.cli_args[:1] == ["--"] else args.cli_args
+    sys.argv = ["stream_denoiser"] + rest
+    try:
+        cli.main()
+    finally:
+        if args.console:
+            Path(args.stats).with_name("cli.out").write_text("".join(out.text))
 
 
 def cmd_run(args) -> Path:
@@ -261,15 +411,20 @@ def cmd_run(args) -> Path:
     if not LATMETER.exists():
         raise SystemExit(f"{LATMETER} missing: build native/latmeter first")
 
+    child = args.backend.endswith("-proc") or args.backend == "cli"
     if args.engine is None:
-        args.engine = "df3" if args.backend.endswith("-proc") else "shadow"
+        args.engine = "df3" if child else "shadow"
+    if args.backend != "cli" and (args.margin is not None
+                                  or args.pause_gc is not None
+                                  or args.console):
+        raise SystemExit("--margin, --pause-gc and --console are for "
+                         "--backend cli")
     if args.atten_lim_db is None:
         # Real DF3 output: keep 89% of the input so the noise is measurable.
         args.atten_lim_db = -1.0 if args.engine == "df3" else -60.0
     if args.onnx_threads:
         # Before the engine modules are imported (here and in a child).
         os.environ["POISE_ONNX_THREADS"] = str(args.onnx_threads)
-    child = args.backend.endswith("-proc")
     if child and args.engine != "df3":
         raise SystemExit(f"{args.backend} builds its own engine: use --engine df3 "
                          "(with --atten-lim-db -1 so the noise stays measurable)")
@@ -287,11 +442,15 @@ def cmd_run(args) -> Path:
             "realtime": not args.no_realtime,
             "onnx_threads": os.environ.get("POISE_ONNX_THREADS"),
             "margin_env": os.environ.get("POISE_WIN_MARGIN_MS"),
+            "margin": args.margin, "pause_gc": args.pause_gc,
+            "console": args.console,
             "speakers": args.speakers, "phases": phases, "log": log_path}
 
     def poise():
         try:
-            if args.backend == "wasapi":
+            if args.backend == "cli":
+                _run_cli(args, out, stop, started, meta)
+            elif args.backend == "wasapi":
                 from stream_denoiser.backends import wasapi_backend
                 real_node = wasapi_backend.WasapiNode
 
@@ -634,8 +793,10 @@ def analyze(out: Path, step_ms: float = 250.0, win_ms: float = 100.0):
         for ph, a, b in zip(report["phases"], marks, marks[1:]):
             inside = [r for r in recs if a["t"] <= r["t"] < b["t"]]
             if len(inside) >= 2:
-                ph["frames_dry"] = inside[-1]["frames_dry"] - inside[0]["frames_dry"]
-                ph["frames_wet"] = inside[-1]["frames_wet"] - inside[0]["frames_wet"]
+                for key in ("frames_dry", "frames_wet", "frames_late",
+                            "render_underruns"):
+                    if key in inside[0]:
+                        ph[key] = inside[-1][key] - inside[0][key]
         last = recs[-1]
         report["node_final"] = {k: last[k] for k in (
             "frames_wet", "frames_dry", "frames_late", "frames_skipped",
@@ -698,11 +859,11 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--backend", choices=("wasapi", "wasapi-proc", "portaudio",
-                                         "portaudio-proc"),
+                                         "portaudio-proc", "cli"),
                    default="wasapi-proc")
     r.add_argument("--engine", choices=("shadow", "df3", "passthrough"),
-                   default=None, help="default: df3 for the -proc backends, "
-                   "else shadow")
+                   default=None, help="default: df3 for cli and the -proc "
+                   "backends, else shadow")
     r.add_argument("--atten-lim-db", type=float, default=None,
                    help="default: -1 with df3")
     r.add_argument("--phases", default="idle:60")
@@ -714,6 +875,23 @@ def main():
                    help="PortAudio loop thread without MMCSS (A/B tests)")
     r.add_argument("--onnx-threads", type=int, default=0,
                    help="ONNX Runtime intra-op threads (default: Poise's)")
+
+    def session_options(p):
+        p.add_argument("--margin", type=int, default=None,
+                       help="cli: the native path's margin (samples); "
+                       "default: what the CLI passes")
+        p.add_argument("--pause-gc", action=argparse.BooleanOptionalAction,
+                       default=None, help="cli: collector off while the "
+                       "devices are open; default: what the CLI passes")
+        p.add_argument("--console", action="store_true",
+                       help="cli: in a console of its own (minimized), as "
+                       "in a terminal, instead of printing to cli.out")
+
+    session_options(r)
+    k = sub.add_parser("cli-child", help="run --backend cli's process")
+    k.add_argument("--stats", required=True)
+    session_options(k)
+    k.add_argument("cli_args", nargs=argparse.REMAINDER)
     a = sub.add_parser("analyze")
     a.add_argument("dir")
     c = sub.add_parser("cable", help="VB-Cable's own delay, without Poise")
@@ -726,6 +904,8 @@ def main():
         print(json.dumps(analyze(out), indent=1))
     elif args.cmd == "cable":
         cmd_cable(args)
+    elif args.cmd == "cli-child":
+        cmd_cli_child(args)
     else:
         print(json.dumps(analyze(Path(args.dir)), indent=1))
 

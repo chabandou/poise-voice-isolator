@@ -36,7 +36,10 @@ LINUX_BACKENDS = ("auto", "pipewire", "pulse")
 # unprocessed with a busy UI under load). In the audio process
 # (audio_host) nothing else holds it, and inference under MMCSS takes
 # p99 4 ms even with every core busy: 5 ms played every frame processed
-# under full load and cut the A/V offset by 19 ms.
+# under full load and cut the A/V offset by 19 ms. The CLI keeps 21 ms:
+# it prints its stats and log on the inference thread, and with every
+# core busy a console write takes up to 30 ms (5 ms let frames play
+# unprocessed there; measurements/windows-latency.md, section 13).
 WIN_MARGIN_SAMPLES = 1024
 WIN_PROCESS_MARGIN_SAMPLES = 256
 WIN_FADE_SAMPLES = PW_FADE_SAMPLES

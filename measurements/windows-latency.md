@@ -475,6 +475,62 @@ the test's settings (render buffer 1126 samples, period 512, primed with
   the whole session, which fits the per-start `render_queue` of section
   6 (2113 in W1, 1938 in W2, vs ~1600): not delay.
 
+## 13. The CLI's margin: it prints on its inference thread
+
+The audio process runs the native path with a 5.3 ms margin and the
+collector paused (section 6). The CLI (`python -m stream_denoiser`) kept
+the UI process's 21.3 ms and the collector on, although it does nothing
+else in its process either. `tools/win_latency.py run --backend cli` runs
+the CLI in a process of its own as a user starts it (`--backend wasapi
+--no-vb-cable`: latmeter plays into CABLE Input itself); `--margin` and
+`--pause-gc` set those two values, and `--console` gives it a console of
+its own (conhost, minimized) instead of a file for what it prints. Real
+DF3 at -1 dB, idle/cpu/gil/cpugil 60 s each, the load in the harness
+process (so gil is one more busy thread, not one in the CLI's process);
+the runs of each batch alternated, 2026-10-15.
+
+| Runs | CLI prints to | Margin, collector | Dry (= late) frames per run | Underruns | A/V per run (mean) |
+|---|---|---|---|---|---|
+| C1, C3, C4-cli1024 | a file | 21.3 ms, on | 0, 0, 0 | 0 | 199.9, 207.2, 203.7 (203.6 ms) |
+| C1-C4-cli256 | a file | 5.3 ms, paused | 0, 0, 0, 0 | 0 | 183.1, 189.5, 194.9, 201.0 (192.1 ms) |
+| D1-D3-con1024 | a console | 21.3 ms, on | 0, 0, 0 | 0 | 198.0, 205.7, 203.1 (202.3 ms) |
+| D1-D3-con256, C5, C6-console | a console | 5.3 ms, paused | 7, 12, 7, 4, 11 (cpu 24, cpugil 17, idle/gil 0) | 0 | 188.6, 193.6, 198.1, 188.2, 193.6 (192.4 ms) |
+| C1-C3-proc (the audio process) | - | 5.3 ms, paused | 0, 0, 0 | 0 | 194.2, 192.2, 184.1 (190.2 ms) |
+
+- Printing to a file, 5.3 ms is as safe in the CLI as in the audio
+  process: no frame late in any phase, every core busy included.
+- In a console it is not. The CLI's worker loop runs on its main thread
+  and prints the stats line every second, and its log lines, from there.
+  With every core busy a console write takes a median ~9 ms and up to
+  30 ms (68 ms once), at either margin (conhost runs at normal priority
+  behind the busy processes); idle or with the gil thread, under 1 ms
+  (D runs, every write over 1 ms timed). 21.3 ms absorbs that: 0 late
+  frames in 3 runs. 5.3 ms let 4-12 frames per run play unprocessed in
+  all 5 runs, only under cpu and cpugil, each within a second of a write
+  over 5 ms. A CLI runs in a terminal, so the CLI keeps 21.3 ms and the
+  collector on; 5.3 ms would need its printing off the inference thread
+  first.
+- What 5.3 ms would buy: 16.0 ms less delay inside Poise (the node's
+  FIFO, core delay and engine: 88.4 vs 104.4 ms in starts where the
+  filter took out VB-Cable's start hole; the three 5.3 ms starts without
+  one sat at ~100 ms). The rest of the A/V offset, VB-Cable and the
+  speakers, is the same in every configuration (93-107 ms per run, means
+  98-101 ms). Over these runs mean A/V is 10-12 ms lower at 5.3 ms; the
+  per-run spread is VB-Cable's holes and the speakers' starts (sections
+  11, 12).
+- Dropouts (4 in 19 runs, 1.8-6.6 ms) were all VB-Cable holes the filter
+  could not take out, each with its ~10 ms step (section 11).
+  C5-console's 19 bad windows (gil, 160-164 s) followed the clock bridge
+  inserting 72 samples for a late capture packet, not inference.
+- The collector, paused, finds 37 unreachable objects at the stop
+  collection in the CLI and in the audio process alike.
+- Interference: the user's GUI was open, idle, at the start of
+  C1-cli1024 and closed during it. Another session installed packages
+  and rendered screenshots during C2-cli1024 (left out of the means; its
+  counters match the other 1024 runs), and two short-lived python
+  processes ran at C2-proc's start; nothing shows in either. Every other
+  run started after 20 s without another busy python process.
+
 ## Open issues
 
 - The glitch staircase (sections 3, 11): VB-Cable's holes. The native
@@ -485,3 +541,6 @@ the test's settings (render buffer 1126 samples, period 512, primed with
 - VB-Cable's share of the A/V offset: 45-68 ms depending on the start;
   neither its latency setting (section 7) nor restarting the capture
   (section 10) reduces its own part of it.
+- The CLI prints on its inference thread, and under load a console write
+  takes up to 30-68 ms (section 13): it keeps the 21.3 ms margin, 16 ms
+  more delay than the audio process.
