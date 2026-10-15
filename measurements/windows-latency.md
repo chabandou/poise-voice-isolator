@@ -82,7 +82,7 @@ first phase 0.5 s in.)
 
 ### Clock bridge after a capture stall (simulation, tests/test_wasapi_bridge.py)
 
-| | Before | After (fbd127d) |
+| | Before | After (003a4da) |
 |---|---|---|
 | 150 ms stall: delay 5 s later | +20.8 ms (22.2 -> 43.0 ms) | -1.5 ms dip, back within ~5 s |
 | Recovery | ~50 s | ~5 s |
@@ -105,7 +105,7 @@ On the native path (dry frames, cpu / cpugil, 90 s each):
 |---|---|---|---|
 | X0-wasapi | normal priority class, 2 threads | 241 | 464 |
 | X1-wasapi | ABOVE_NORMAL class, 2 threads (rejected) | 280 | 915 |
-| Y1-wasapi | MMCSS + 1 thread (de42b90) | 0 | 58 |
+| Y1-wasapi | MMCSS + 1 thread (b390b8f) | 0 | 58 |
 
 ### Worker margin, native path in the UI's process (after MMCSS)
 
@@ -191,7 +191,7 @@ fixes settled into ~200-420 dropouts per 2 min for the whole run.
 
 H1 and H3 were discarded: latmeter's capture thread stalled 1.9-4 s on
 disk I/O under load and the loopback lost audio unflagged (fixed in
-bb37188 / e75a1e1).
+333cc1b / d1a66be).
 
 ## 5. What limits the native path's latency
 

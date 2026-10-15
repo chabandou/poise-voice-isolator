@@ -17,8 +17,8 @@ X0-wasapi,2026-10-14 00:42,native,ui,21.3,HIGHEST,2,shadow,priority A/B: normal 
 X0-wasapi,2026-10-14 00:42,native,ui,21.3,HIGHEST,2,shadow,priority A/B: normal class,cpugil,90.2,357,26,0,0.0,219.29,219.24,226.34,9.44,57.04,162.27,0.807,464
 X1-wasapi,2026-10-14 00:47,native,ui,21.3,HIGHEST+ABOVE_NORMAL class,2,shadow,priority A/B: rejected,cpu,0.0,356,3,0,0.0,215.87,217.02,215.79,2.15,49.14,166.73,-0.571,280
 X1-wasapi,2026-10-14 00:47,native,ui,21.3,HIGHEST+ABOVE_NORMAL class,2,shadow,priority A/B: rejected,cpugil,90.1,358,11,1,2.8,216.33,215.91,226.76,11.83,49.15,167.19,10.842,915
-Y1-wasapi,2026-10-14 00:52,native,ui,21.3,MMCSS,1,shadow,de42b90,cpu,0.0,357,2,1,2.2,216.41,215.46,216.25,3.68,54.68,161.73,1.241,0
-Y1-wasapi,2026-10-14 00:52,native,ui,21.3,MMCSS,1,shadow,de42b90,cpugil,90.2,357,0,0,0.0,216.45,216.22,216.5,1.29,54.67,161.78,0.024,58
+Y1-wasapi,2026-10-14 00:52,native,ui,21.3,MMCSS,1,shadow,b390b8f,cpu,0.0,357,2,1,2.2,216.41,215.46,216.25,3.68,54.68,161.73,1.241,0
+Y1-wasapi,2026-10-14 00:52,native,ui,21.3,MMCSS,1,shadow,b390b8f,cpugil,90.2,357,0,0,0.0,216.45,216.22,216.5,1.29,54.67,161.78,0.024,58
 M21-wasapi,2026-10-14 00:57,native,ui,21.3,MMCSS,1,shadow,margin A/B,idle,0.0,237,0,0,0.0,217.87,217.68,217.67,1.55,51.66,166.2,-0.17,0
 M21-wasapi,2026-10-14 00:57,native,ui,21.3,MMCSS,1,shadow,margin A/B,cpu,60.1,236,0,0,0.0,218.5,217.65,218.77,1.55,51.66,166.67,0.236,1
 M21-wasapi,2026-10-14 00:57,native,ui,21.3,MMCSS,1,shadow,margin A/B,gil,120.3,237,0,0,0.0,219.41,218.88,220.76,3.98,51.65,167.69,4.024,0

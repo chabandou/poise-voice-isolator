@@ -21,7 +21,7 @@ RUNS = {
     "B-portaudio": ("portaudio", "ui", None, "normal", 2, "master's loop"),
     "X0-wasapi": ("native", "ui", 21.3, "HIGHEST", 2, "priority A/B: normal class"),
     "X1-wasapi": ("native", "ui", 21.3, "HIGHEST+ABOVE_NORMAL class", 2, "priority A/B: rejected"),
-    "Y1-wasapi": ("native", "ui", 21.3, "MMCSS", 1, "de42b90"),
+    "Y1-wasapi": ("native", "ui", 21.3, "MMCSS", 1, "b390b8f"),
     "M21-wasapi": ("native", "ui", 21.3, "MMCSS", 1, "margin A/B"),
     "M11-wasapi": ("native", "ui", 10.7, "MMCSS", 1, "margin A/B"),
     "D1-wasapi": ("native", "ui", 21.3, "MMCSS", 1, "render_queue diagnostics"),
