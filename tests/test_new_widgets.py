@@ -207,19 +207,25 @@ def test_settings_row_lock_note_swaps_subtitle_and_disables(app):
     assert row._sub.text() == "caption" and ctl.isEnabled()
 
 
-def test_setup_summary_reflects_settings(app):
-    from stream_denoiser.gui.widgets.setup_summary import SetupSummary
-    summary = SetupSummary()
-    opened = []
-    summary.open_settings.connect(lambda: opened.append(True))
-    summary.refresh("deepfilternet3", True, -45.0)
-    assert summary._model_value.text() == "DeepFilterNet3"
-    assert summary._aad_value.text() == "On"
-    assert "-45 dB" in summary._aad_sub.text()
-    summary.refresh("deepfilternet3", False, -45.0)
-    assert summary._aad_value.text() == "Off"
-    summary.settings_btn.click()
-    assert opened == [True]
+def test_model_selector_surface_and_lock(app):
+    from stream_denoiser.gui.widgets.model_selector import ModelSelector
+    selector = ModelSelector()
+    picked = []
+    selector.currentTextChanged.connect(picked.append)
+    models = selector.models()
+    assert models
+    selector.setCurrentText(models[-1])
+    assert selector.currentText() == models[-1]
+    selector.setCurrentText("no-such-model")        # ignored
+    assert selector.currentText() == models[-1]
+    if len(models) > 1:
+        assert picked == [models[-1]]
+    selector.set_locked(True)
+    assert selector.is_locked
+    assert selector._subtitle.text() == "Locked while running"
+    selector.set_locked(False)
+    assert not selector.is_locked
+    assert selector._subtitle.text() == selector.CAPTION
 
 
 def _lit_row_image(app, first, last):

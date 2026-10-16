@@ -2,9 +2,9 @@
 Poise Voice Isolator - Main Window
 
 Dashboard layout: sidebar navigation with Home / Settings / Logs / About
-pages. Home is the tick-ring dial (Start/Stop + reduction strength) next
-to the output device and a summary of the current setup; everything else
-lives in Settings. Live performance stats sit in the status bar.
+pages. Home is the tick-ring dial (Start/Stop + reduction strength) above
+two cards: the output device and the model; everything else lives in
+Settings. Live performance stats sit in the status bar.
 """
 import datetime
 import logging
@@ -52,7 +52,7 @@ from .widgets.device_selector import DeviceSelector
 from .widgets.chip import IconChip
 from .widgets.model_cards import ModelCards
 from .widgets.settings_row import SettingsRow
-from .widgets.setup_summary import SetupSummary
+from .widgets.model_selector import ModelSelector
 from .widgets.stats_bar import StatsBar, status_word
 from .widgets.emblem import Emblem
 from .widgets.pattern_card import PatternCard
@@ -85,6 +85,8 @@ class MainWindow(QMainWindow):
     Main application window for Poise Voice Isolator.
     """
 
+    CARDS_STACK_BELOW = 1000  # design px: Home's two cards stack below this
+
     def __init__(self):
         super().__init__()
 
@@ -112,6 +114,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(*self._window_size(700, 560))
         self.setStyleSheet(get_stylesheet())
         self._resp = None  # responsive mode: wide / compact / narrow
+        self._cards_stacked = None
         self._icon_buttons = []  # (button, icon name) re-tinted per theme
 
         self.setup_ui()
@@ -186,9 +189,10 @@ class MainWindow(QMainWindow):
     def _apply_responsive(self) -> None:
         """Adapt chrome density and row direction to the window width.
 
-        Wide puts the dial card beside the cards; compact tightens it;
-        narrow stacks everything and collapses the sidebar to an icon
-        rail. Runs only on mode changes, so live resizes stay cheap. The
+        Home is always the dial card over its two cards; compact tightens
+        it (and below CARDS_STACK_BELOW stacks the two cards); narrow
+        collapses the sidebar to an icon rail. Runs only on mode changes,
+        so live resizes stay cheap. The
         window width alone drives the mode (internal changes never feed
         back into it), so this cannot oscillate.
         """
@@ -204,22 +208,32 @@ class MainWindow(QMainWindow):
             pass
         mode = ("narrow" if w < 850
                 else "compact" if w < 1150 else "wide")
-        if mode == self._resp:
+        cards_stacked = w < self.CARDS_STACK_BELOW
+        if mode == self._resp and cards_stacked == self._cards_stacked:
             return
         self._resp = mode
+        self._cards_stacked = cards_stacked
         narrow = mode == "narrow"
         V = QBoxLayout.Direction.TopToBottom
         H = QBoxLayout.Direction.LeftToRight
 
         # Home
-        self._home_layout.setDirection(V if narrow else H)
+        # Wide paddings are trimmed vertically so the default window shows
+        # the dial card and both cards without scrolling.
         self._home_layout.setContentsMargins(
-            *self._rm((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
-        self._home_layout.setSpacing(sp(self._rv(20, 16, 12)))
+            *self._rm((26, 20, 26, 20), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._home_layout.setSpacing(sp(self._rv(16, 16, 12)))
         self._stage_layout.setContentsMargins(
-            *self._rm((26, 28, 26, 24), (20, 24, 20, 20), (16, 20, 16, 18)))
-        self._right_col.setSpacing(sp(self._rv(20, 16, 12)))
+            *self._rm((26, 24, 26, 20), (20, 24, 20, 20), (16, 20, 16, 18)))
         self.power_btn.set_dial_size(sp(self._rv(300, 270, 240)))
+        # The cards stack before narrow mode: side by side they need more
+        # room than compact chrome leaves.
+        self._cards_layout.setDirection(V if cards_stacked else H)
+        self._cards_layout.setSpacing(sp(self._rv(16, 16, 12)))
+        for card_layout in self._home_card_layouts:
+            card_layout.setContentsMargins(
+                *self._rm((24, 20, 24, 20), (20, 18, 20, 18),
+                          (16, 16, 16, 16)))
 
         # Settings
         self._settings_layout.setContentsMargins(
@@ -311,7 +325,7 @@ class MainWindow(QMainWindow):
 
     def _build_home_page(self) -> QWidget:
         page = QWidget()
-        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, page)
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(sp(26), sp(26), sp(26), sp(26))
         layout.setSpacing(sp(20))
         self._home_layout = layout
@@ -361,37 +375,33 @@ class MainWindow(QMainWindow):
         hint.setAlignment(center)
         hint.setWordWrap(True)
         stage_layout.addWidget(hint)
-        layout.addWidget(stage, stretch=2)
+        layout.addWidget(stage, stretch=1)
 
-        # --- Right: output device + current setup ---
-        right = QVBoxLayout()
-        right.setSpacing(sp(20))
-        self._right_col = right
+        # --- Below: output device and model, side by side ---
+        cards = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        cards.setSpacing(sp(16))
+        self._cards_layout = cards
+        self._home_card_layouts = []
 
-        output_card = QFrame()
-        output_card.setObjectName("card")
-        output_layout = QVBoxLayout(output_card)
-        output_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(20))
-        output_layout.setSpacing(sp(12))
+        # Input is always VB-Cable (named in the status bar); only the
+        # output is picked here.
         self.output_selector = DeviceSelector(
             "Output device", "output", "Where the clean audio plays")
         self.output_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'output_device', id))
-        output_layout.addWidget(self.output_selector)
-        # Input is always VB-Cable: say so once, plainly.
-        routing_note = QLabel(
-            "Locked while running. If routing fails, Poise "
-            "stops and shows manual steps.")
-        routing_note.setObjectName("row-sub")
-        routing_note.setWordWrap(True)
-        output_layout.addWidget(routing_note)
-        right.addWidget(output_card)
-
-        self.setup_summary = SetupSummary()
-        self.setup_summary.open_settings.connect(
-            lambda: self._on_page_requested(1))
-        right.addWidget(self.setup_summary, stretch=1)
-        layout.addLayout(right, stretch=3)
+        # Settings' model cards stay in step (see _on_model_changed).
+        self.model_selector = ModelSelector()
+        self.model_selector.currentTextChanged.connect(
+            self._on_home_model_picked)
+        for content in (self.output_selector, self.model_selector):
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+            card_layout.addWidget(content)
+            self._home_card_layouts.append(card_layout)
+            cards.addWidget(card, stretch=1)
+        layout.addLayout(cards)
         return page
 
     # -- Settings page -------------------------------------------------------
@@ -498,6 +508,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.model_cards.currentTextChanged.connect(self._on_model_changed)
+        self.model_selector.setCurrentText(self.model_cards.currentText())
         model_layout.addWidget(self.model_cards)
         model_layout.addStretch(1)
         bottom.addWidget(model_card, stretch=3)
@@ -543,7 +554,6 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(bottom)
         layout.addStretch()
-        self._refresh_summary()
         return page
 
     def _card_head(self, icon: str, title: str, subtitle: str):
@@ -892,7 +902,6 @@ class MainWindow(QMainWindow):
 
         # Restore devices (output only — input is always VB-Cable)
         self.output_selector.selected_device_id = self.settings.output_device
-        self._refresh_summary()
 
     def _on_theme_changed(self, index: int):
         """Persist the selected theme and apply it live."""
@@ -925,6 +934,7 @@ class MainWindow(QMainWindow):
         for chip in self.findChildren(IconChip):
             chip.refresh_theme()
         self.output_selector.refresh_theme()
+        self.model_selector.refresh_theme()
         apply_titlebar(self, theme_store.current())
         self._refresh_credits()
         self._tint_icon_buttons()
@@ -952,21 +962,16 @@ class MainWindow(QMainWindow):
             self._about_icon.set_pixmap(QPixmap(icon_path))
 
     def _on_model_changed(self, model: str):
-        """Persist selected denoising engine."""
+        """Persist selected denoising engine (and show it on Home)."""
         try:
             self.settings.model = model
         except Exception:
             pass
-        self._refresh_summary()
+        self.model_selector.setCurrentText(model)
 
-    def _refresh_summary(self) -> None:
-        """Keep Home's "Current setup" card in step with Settings."""
-        if not hasattr(self, "setup_summary") or not hasattr(self, "aad_switch"):
-            return
-        self.setup_summary.refresh(
-            self.model_cards.currentText(),
-            self.aad_switch.isChecked(),
-            float(self.thresh_slider.value()))
+    def _on_home_model_picked(self, model: str):
+        """Home's dropdown drives Settings' cards, which persist it."""
+        self.model_cards.setCurrentText(model)
 
     def _on_atten_changed(self, value: int):
         """Persist the attenuation limit and apply it to a running worker."""
@@ -1061,9 +1066,8 @@ class MainWindow(QMainWindow):
         )
 
     def _set_controls_enabled(self, enabled: bool):
-        self.output_selector.setEnabled(enabled)
-        self.output_selector.set_subtitle(
-            "Where the clean audio plays")
+        self.output_selector.set_locked(not enabled)
+        self.model_selector.set_locked(not enabled)
         self.model_cards.setEnabled(enabled)
         # Turning silence skipping on/off would rebuild the detector inside
         # the running processor; the threshold itself stays live.
@@ -1125,13 +1129,11 @@ class MainWindow(QMainWindow):
         self.settings.aad_threshold = float(value)
         if self.worker is not None:
             self.worker.set_aad_threshold(float(value))
-        self._refresh_summary()
 
     def _on_aad_toggled(self, checked):
         """Handle AAD switch toggle."""
         self.thresh_slider.setEnabled(checked)
         self.settings.aad_enabled = checked
-        self._refresh_summary()
 
     def update_status(self, message: str):
         """Update status line message."""

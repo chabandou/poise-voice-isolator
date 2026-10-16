@@ -183,3 +183,20 @@ def test_is_vb_cable_names():
     assert is_vb_cable("CABLE Input (VB-Audio Virtual C")   # truncated
     assert not is_vb_cable("Speakers (Realtek(R) Audio)")
     assert not is_vb_cable("Cable Modem Speakers")
+
+
+def test_lock_swaps_caption_and_disables_picking(app):
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    selector = DeviceSelector("Output device", "output", "Caption")
+    selector.set_locked(True)
+    assert selector.is_locked
+    assert not selector._combo.isEnabled()
+    assert not selector._refresh_btn.isEnabled()
+    assert selector._refresh_btn.isHidden()
+    assert selector._subtitle.text() == "Locked while running"
+    selector.set_subtitle("New caption")      # kept for the unlock
+    assert selector._subtitle.text() == "Locked while running"
+    selector.set_locked(False)
+    assert not selector.is_locked and selector._refresh_btn.isEnabled()
+    assert selector._subtitle.text() == "New caption"
+    selector.close()

@@ -112,38 +112,45 @@ def test_skip_silence_switch_locks_while_running(window, monkeypatch):
         window.settings.device_switch_done = switch_done
 
 
-def test_summary_follows_settings_changes(window):
+def test_threshold_follows_the_silence_switch(window):
     window.aad_switch.setChecked(False)
-    assert window.setup_summary._aad_value.text() == "Off"
     assert not window.thresh_slider.isEnabled()
     window.aad_switch.setChecked(True)
     window.thresh_slider.setValue(-33)
-    assert window.setup_summary._aad_value.text() == "On"
-    assert "-33 dB" in window.setup_summary._aad_sub.text()
     assert window.thresh_val_label.text() == "-33 dB"
 
 
-def test_model_cards_drive_the_summary(window):
+def test_home_and_settings_model_pickers_stay_in_step(window):
+    """Home's dropdown and Settings' cards show and save one choice."""
     usable = [m for m, c in window.model_cards._cards.items()
               if c.isEnabled()]
-    for model in usable:
+    assert window.model_selector.models() == usable
+    assert window.model_selector.currentText() == window.model_cards.currentText()
+    for model in usable:                     # Settings -> Home
         window.model_cards.setCurrentText(model)
-        label = window.setup_summary._model_value.text()
-        assert label and label != "-"
+        assert window.model_selector.currentText() == model
+        assert window.settings.model == model
+    for model in reversed(usable):           # Home -> Settings
+        window.model_selector.setCurrentText(model)
+        assert window.model_cards.currentText() == model
         assert window.settings.model == model
 
 
 def test_controls_lock_while_running(window):
+    output, model = window.output_selector, window.model_selector
     window._set_controls_enabled(False)
-    assert not window.output_selector.isEnabled()
+    assert output.is_locked and output._refresh_btn.isHidden()
+    assert model.is_locked
     assert not window.model_cards.isEnabled()
-    # The lock is explained once in the routing note, not the subtitle.
-    subtitle = "Where the clean audio plays"
-    assert window.output_selector._subtitle.text() == subtitle
+    # Each card's caption says why.
+    assert output._subtitle.text() == "Locked while running"
+    assert model._subtitle.text() == "Locked while running"
     window._set_controls_enabled(True)
-    assert window.output_selector.isEnabled()
+    assert not output.is_locked and not output._refresh_btn.isHidden()
+    assert not model.is_locked
     assert window.model_cards.isEnabled()
-    assert window.output_selector._subtitle.text() == subtitle
+    assert output._subtitle.text() == "Where the clean audio plays"
+    assert model._subtitle.text() == model.CAPTION
 
 
 def test_status_messages_drive_headline_and_status_bar(window, monkeypatch):
@@ -208,13 +215,17 @@ def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
 
 
 def test_home_only_keeps_the_everyday_controls(window):
-    """Silence/model/tray controls live in Settings; Home has the dial,
-    the output device and the read-only summary."""
+    """Silence/tray controls live in Settings; Home has the dial and,
+    under it, the output device and model cards."""
     from stream_denoiser.gui.widgets.slider import HoverSlider
     home = window.stack.widget(0)
     assert home.isAncestorOf(window.power_btn)
     assert home.isAncestorOf(window.output_selector)
-    assert home.isAncestorOf(window.setup_summary)
+    assert home.isAncestorOf(window.model_selector)
+    assert window._home_layout.indexOf(window._stage) == 0
+    cards = window._cards_layout
+    assert cards.itemAt(0).widget().isAncestorOf(window.output_selector)
+    assert cards.itemAt(1).widget().isAncestorOf(window.model_selector)
     assert not home.isAncestorOf(window.aad_switch)
     assert not home.isAncestorOf(window.model_cards)
     assert not home.findChildren(HoverSlider)
