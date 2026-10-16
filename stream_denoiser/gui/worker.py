@@ -86,7 +86,8 @@ class AudioWorker(QThread):
         Configure worker settings before starting.
         
         Args:
-            model: Denoising engine name ("deepfilternet3" or "rnnoise")
+            model: Denoising engine name ("deepfilternet3", "gtcrn" or
+                "rnnoise")
             onnx_path: Path to ONNX model file (deepfilternet3 only)
             input_device: Input device ID (optional)
             output_device: Output device ID (optional)

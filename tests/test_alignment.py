@@ -8,7 +8,9 @@ offset that changes between silent and active stretches).
 import numpy as np
 import pytest
 
-from stream_denoiser.constants import MODEL_DEEPFILTERNET3, MODEL_RNNOISE
+from stream_denoiser.constants import (
+    MODEL_DEEPFILTERNET3, MODEL_GTCRN, MODEL_RNNOISE,
+)
 from stream_denoiser.engines import create_engine, RNNoiseEngine
 from stream_denoiser.engines.base import DelayLine, DenoiseEngine
 from stream_denoiser.processor import DenoiserAudioProcessor
@@ -267,14 +269,15 @@ def _process(engine, x):
                            for i in range(len(x) // n)])
 
 
-@pytest.mark.parametrize("name", [MODEL_DEEPFILTERNET3, MODEL_RNNOISE])
+@pytest.mark.parametrize("name", [MODEL_DEEPFILTERNET3, MODEL_GTCRN,
+                                  MODEL_RNNOISE])
 def test_engine_dry_mix_lags_by_latency_samples(name):
     """out = f*dry + (1-f)*wet; the model ignores the mix, so the dry path
     can be recovered exactly and must be the input, latency_samples late."""
     wet_engine, mix_engine = _make(name, None), _make(name, -6.0)
     try:
         n, L = mix_engine.required_frame_size, mix_engine.latency_samples
-        assert L > 0 and L % n == 0
+        assert L > 0
         rng = np.random.default_rng(3)
         x = (rng.standard_normal(30 * n) * 0.1).astype(np.float32)
         wet, mixed = _process(wet_engine, x), _process(mix_engine, x)
@@ -310,7 +313,8 @@ def _vowels(seconds=3.0, seed=0):
     return (0.3 * y / np.max(np.abs(y))).astype(np.float32)
 
 
-@pytest.mark.parametrize("name", [MODEL_DEEPFILTERNET3, MODEL_RNNOISE])
+@pytest.mark.parametrize("name", [MODEL_DEEPFILTERNET3, MODEL_GTCRN,
+                                  MODEL_RNNOISE])
 def test_latency_samples_matches_the_models_wet_lag(name):
     """Guards the measured constants: re-measure if a model changes."""
     engine = _make(name, None)

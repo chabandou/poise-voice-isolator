@@ -2,7 +2,7 @@
 Denoise Engine Base Class
 
 Common interface implemented by every denoising model backend
-(DeepFilterNet via ONNX Runtime, RNNoise via librnnoise, ...).
+(DeepFilterNet3 and GTCRN via ONNX Runtime, RNNoise via librnnoise, ...).
 """
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -98,6 +98,16 @@ class DelayLine:
 
     def reset(self) -> None:
         self._buf = np.zeros_like(self._buf)
+
+
+def dry_mix_fraction(atten_lim_db: Optional[float]) -> float:
+    """
+    Dry-mix fraction emulating an attenuation limit: f = 10**(-|dB|/20),
+    e.g. -60 dB keeps 0.1% of the input (None = no dry mix).
+    """
+    if atten_lim_db is None:
+        return 0.0
+    return float(10.0 ** (-abs(atten_lim_db) / 20.0))
 
 
 def mix_dry(wet: np.ndarray, dry: np.ndarray,

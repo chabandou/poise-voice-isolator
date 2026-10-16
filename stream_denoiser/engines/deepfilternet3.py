@@ -11,20 +11,13 @@ between frames.
 155-node graph — ~2x faster per frame on CPU than the previous model.
 """
 import os
-import sys
 from typing import Dict, Optional
 
 import numpy as np
 
 from .base import DelayLine, DenoiseEngine, mix_dry
-from ..constants import (
-    MODEL_DEEPFILTERNET3,
-    ONNX_INTRA_OP_THREADS,
-    ONNX_INTER_OP_THREADS,
-)
-from ..logging_config import get_logger
-
-_logger = get_logger(__name__)
+from .onnx_model import find_model_file, load_session
+from ..constants import MODEL_DEEPFILTERNET3
 
 DEFAULT_DF3_ONNX = 'denoiser_model_df3.onnx'
 DEFAULT_DF3_STATES = 'denoiser_model_df3_states.npz'
@@ -32,51 +25,14 @@ DEFAULT_DF3_STATES = 'denoiser_model_df3_states.npz'
 
 def _search_model_files(onnx_name: str, states_name: Optional[str] = None):
     """
-    Locate the DF3 ONNX file (and its states .npz) in the usual locations:
-    the package's models/ dir (where the vendored model lives, in source
-    checkouts, wheels and frozen builds alike), then next to the package,
-    the repo root, the main script dir, or the cwd.
+    Locate the DF3 ONNX file (and its states .npz) in the usual locations
+    (see onnx_model.model_search_paths).
 
     Returns (onnx_path, states_path); states_path is resolved as the
     `<onnx_stem>_states.npz` sibling unless states_name is given.
     Raises FileNotFoundError listing every searched location.
     """
-    search_paths = []
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    search_paths.append(os.path.join(os.path.dirname(script_dir), 'models', onnx_name))
-    search_paths.append(os.path.join(script_dir, onnx_name))
-    search_paths.append(os.path.join(script_dir, '..', onnx_name))
-    # Grandparent: repo root in dev checkouts, payload root in Nuitka
-    # onefile bundles (data files land next to stream_denoiser/, not in it)
-    search_paths.append(os.path.join(script_dir, '..', '..', onnx_name))
-
-    # Nuitka onefile payload root: the running binary lives next to the
-    # bundled data files (verified: /proc/self/exe -> poise.bin in the
-    # payload dir). Harmless in dev runs (points at the python binary's
-    # dir, which never contains the model).
-    if sys.platform.startswith("linux"):
-        try:
-            exe_dir = os.path.dirname(os.path.realpath("/proc/self/exe"))
-            search_paths.append(os.path.join(exe_dir, onnx_name))
-        except OSError:
-            pass
-
-    if hasattr(sys, 'argv') and sys.argv[0]:
-        main_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        search_paths.append(os.path.join(main_dir, onnx_name))
-
-    search_paths.append(os.path.join(os.getcwd(), onnx_name))
-
-    if hasattr(sys, '_MEIPASS'):
-        search_paths.append(os.path.join(sys._MEIPASS, onnx_name))
-
-    onnx_path = next((p for p in search_paths if os.path.exists(p)), None)
-    if onnx_path is None:
-        raise FileNotFoundError(
-            f"DeepFilterNet3 model not found: {onnx_name}\n"
-            f"Searched in:\n" + "\n".join(f"  - {p}" for p in search_paths)
-        )
+    onnx_path = find_model_file(onnx_name, "DeepFilterNet3")
 
     if states_name is None:
         stem, _ = os.path.splitext(os.path.basename(onnx_path))
@@ -157,7 +113,7 @@ class DeepFilterNet3Engine(DenoiseEngine):
                   atten_lim_db: float = -60.0) -> "DeepFilterNet3Engine":
         """Load the vendored DF3 model (searching the usual locations)."""
         model_path, states_file = _search_model_files(onnx_path, states_path)
-        session = _load_df3_session(model_path)
+        session = load_session(model_path, "DeepFilterNet3")
         with np.load(states_file) as z:
             initial = {k: z[k].astype(np.float32) for k in z.files}
         return cls(session, initial, atten_lim_db=atten_lim_db)
@@ -196,33 +152,3 @@ class DeepFilterNet3Engine(DenoiseEngine):
     def reset(self) -> None:
         self._states = {k: v.copy() for k, v in self._init_states.items()}
         self._dry_delay.reset()
-
-
-def _load_df3_session(model_path: str):
-    """Create the ONNX Runtime session with the repo's standard tuning."""
-    import onnxruntime
-
-    _logger.info(f"Loading DeepFilterNet3 model: {model_path}")
-
-    session_options = onnxruntime.SessionOptions()
-    session_options.graph_optimization_level = (
-        onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-    )
-    session_options.intra_op_num_threads = ONNX_INTRA_OP_THREADS
-    session_options.inter_op_num_threads = ONNX_INTER_OP_THREADS
-    session_options.enable_mem_pattern = True
-    session_options.enable_cpu_mem_arena = True
-
-    providers = [
-        ('CPUExecutionProvider', {
-            'arena_extend_strategy': 'kSameAsRequested',
-        })
-    ]
-
-    session = onnxruntime.InferenceSession(
-        model_path,
-        sess_options=session_options,
-        providers=providers
-    )
-    _logger.info("DeepFilterNet3 model loaded with optimizations")
-    return session

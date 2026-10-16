@@ -50,6 +50,7 @@ jobs:
         run: |
           test -f stream_denoiser/models/denoiser_model_df3.onnx || { echo "Missing stream_denoiser/models/denoiser_model_df3.onnx"; exit 1; }
           test -f stream_denoiser/models/denoiser_model_df3_states.npz || { echo "Missing stream_denoiser/models/denoiser_model_df3_states.npz"; exit 1; }
+          test -f stream_denoiser/models/gtcrn.onnx || { echo "Missing stream_denoiser/models/gtcrn.onnx"; exit 1; }
           echo "ONNX models found"
 
       - name: Clear ONNX Runtime executable-stack flag
@@ -87,6 +88,7 @@ jobs:
             --assume-yes-for-downloads \
             --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
             --include-data-files=stream_denoiser/models/denoiser_model_df3_states.npz=stream_denoiser/models/denoiser_model_df3_states.npz \
+            --include-data-files=stream_denoiser/models/gtcrn.onnx=stream_denoiser/models/gtcrn.onnx \
             --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
             --include-data-files=pyproject.toml=pyproject.toml \
             --output-filename=poise \

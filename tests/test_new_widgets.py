@@ -133,6 +133,33 @@ def test_model_cards_select_and_signal(app):
     cards.close()
 
 
+def test_model_cards_are_rows_that_fit_their_blurbs(app):
+    """One full-width row per engine; a narrow row grows with its wrapped
+    blurb instead of clipping it, and shrinks back when widened."""
+    from stream_denoiser.gui.widgets.model_cards import ModelCards
+    cards = ModelCards()
+    cards.resize(700, 400)
+    cards.show()
+    _pump(app)
+    rows = list(cards._cards.values())
+    assert len({c.x() for c in rows}) == 1                 # stacked
+    assert all(c.width() == rows[0].width() for c in rows)
+    wide = [c.height() for c in rows]
+
+    def fits(card):
+        return card.height() >= card.layout().totalHeightForWidth(card.width())
+
+    assert all(fits(c) for c in rows)
+    cards.resize(240, 600)
+    _pump(app)
+    assert all(fits(c) for c in rows)
+    assert max(c.height() for c in rows) > max(wide)       # wrapped, grew
+    cards.resize(700, 400)
+    _pump(app)
+    assert [c.height() for c in rows] == wide
+    cards.close()
+
+
 def test_settings_row_lights_on_hover_and_focus(app):
     from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QPushButton

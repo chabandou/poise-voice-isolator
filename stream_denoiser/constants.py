@@ -55,8 +55,9 @@ DEFAULT_FRAME_SIZE = 480
 
 # Model / engine selection
 MODEL_DEEPFILTERNET3 = "deepfilternet3"
+MODEL_GTCRN = "gtcrn"
 MODEL_RNNOISE = "rnnoise"
-ALL_MODELS = (MODEL_DEEPFILTERNET3, MODEL_RNNOISE)
+ALL_MODELS = (MODEL_DEEPFILTERNET3, MODEL_GTCRN, MODEL_RNNOISE)
 DEFAULT_MODEL = MODEL_DEEPFILTERNET3
 
 # Display info per model (single source for TUI picker, GUI tooltips, ...).
@@ -70,6 +71,12 @@ MODEL_INFO = {
         "card_blurb": "Removes music and keeps voices. Medium CPU use.",
         # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
+    },
+    MODEL_GTCRN: {
+        "label": "GTCRN",
+        "picker_blurb": "Noise removal for speech · low CPU load",
+        "card_blurb": "Removes noise from speech, not music. Light CPU use.",
+        "blurb": "Frequency domain (STFT, 16 kHz) · ONNX Runtime",
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",

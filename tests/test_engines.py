@@ -1,4 +1,5 @@
-"""Tests for denoising engines (DeepFilterNet3 + RNNoise)."""
+"""Tests for denoising engines (DeepFilterNet3 + RNNoise; GTCRN in
+test_gtcrn.py)."""
 import numpy as np
 import pytest
 
@@ -6,6 +7,7 @@ from stream_denoiser.constants import (
     DEFAULT_FRAME_SIZE,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
+    MODEL_GTCRN,
     MODEL_RNNOISE,
 )
 from stream_denoiser.engines import (
@@ -241,7 +243,8 @@ def test_mix_dry_ramps_to_the_new_mix():
 @pytest.mark.parametrize("make", [
     lambda db: _make_rnnoise_engine_at(db),
     lambda db: _make_df3_engine_at(db),
-], ids=["rnnoise", "deepfilternet3"])
+    lambda db: _make_gtcrn_engine_at(db),
+], ids=["rnnoise", "deepfilternet3", "gtcrn"])
 def test_set_atten_lim_db_applies_live(make):
     """Changing the limit mid-stream ramps over one frame, then matches an
     engine built with that limit (model state ignores the dry mix)."""
@@ -278,3 +281,10 @@ def _make_df3_engine_at(db):
         return create_engine(MODEL_DEEPFILTERNET3, atten_lim_db=db)
     except FileNotFoundError as e:
         pytest.skip(f"deepfilternet3 model files not found: {e}")
+
+
+def _make_gtcrn_engine_at(db):
+    try:
+        return create_engine(MODEL_GTCRN, atten_lim_db=db)
+    except FileNotFoundError as e:
+        pytest.skip(f"gtcrn model file not found: {e}")

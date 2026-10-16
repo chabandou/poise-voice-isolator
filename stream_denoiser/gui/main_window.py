@@ -816,7 +816,7 @@ class MainWindow(QMainWindow):
         link = (f'<a href="{VB_AUDIO_URL}" style="color:{accent}; '
                 f'text-decoration:{underline};">VB-Audio Software \u2197</a>')
         self.about_credits.setText(
-            "Denoising: DeepFilterNet3 · RNNoise (xiph.org)<br>"
+            "Denoising: DeepFilterNet3 · GTCRN · RNNoise (xiph.org)<br>"
             f"Audio routing: VB-CABLE by {link} · third-party, donationware"
             "<br>Built with Python and PyQt6 · MIT licensed")
 

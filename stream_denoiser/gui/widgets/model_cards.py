@@ -1,7 +1,8 @@
 """
 Poise Voice Isolator - Model Cards
 
-Selectable cards for the denoising engines (replaces the model dropdown).
+Selectable cards for the denoising engines (replaces the model dropdown),
+stacked as full-width rows: name over the tradeoff blurb.
 Exposes the small QComboBox-like surface MainWindow already uses:
 currentText() / setCurrentText() / currentTextChanged / setEnabled().
 The value is the engine id (a MODEL_INFO key, e.g. "deepfilternet3").
@@ -9,7 +10,7 @@ Engines that are not usable here stay visible but disabled, with the
 reason in place of the blurb.
 """
 from PyQt6.QtWidgets import (
-    QButtonGroup, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QButtonGroup, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 from PyQt6.QtCore import QEvent, QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
@@ -33,10 +34,10 @@ class _ModelCard(QPushButton):
         self.setObjectName("model-card")
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(sp(96))
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(sp(20), sp(16), sp(20), sp(16))
-        layout.setSpacing(sp(4))
+        # Right margin: room for the selection diamond.
+        layout.setContentsMargins(sp(20), sp(14), sp(52), sp(14))
+        layout.setSpacing(sp(2))
         self._name = QLabel(name)
         self._name.setObjectName("model-name")
         self._blurb = QLabel(blurb)
@@ -46,7 +47,6 @@ class _ModelCard(QPushButton):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         layout.addWidget(self._name)
         layout.addWidget(self._blurb)
-        layout.addStretch(1)
 
         self._hover = Blend(self, self.update, 150)
         self._check = Blend(self, self.update, 200)
@@ -60,6 +60,19 @@ class _ModelCard(QPushButton):
 
     def set_blurb(self, text: str) -> None:
         self._blurb.setText(text)
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """Grow to the wrapped blurb. A push button's height is fixed at
+        its minimum, and its size hint ignores its layout: a narrow card
+        would clip the text."""
+        need = max(sp(72), self.layout().totalHeightForWidth(self.width()))
+        if self.minimumHeight() != need:
+            self.setMinimumHeight(need)
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        self._fit_height()
 
     def enterEvent(self, event):  # noqa: N802 (Qt override)
         if self.isEnabled():
@@ -115,7 +128,7 @@ class _ModelCard(QPushButton):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(marker)
             d = sp(7) * (0.6 + 0.4 * check)
-            p.translate(QPointF(w - sp(26), sp(26)))
+            p.translate(QPointF(w - sp(28), h / 2.0))
             p.rotate(45)
             p.drawRoundedRect(QRectF(-d, -d, 2 * d, 2 * d), 2, 2)
         p.end()
@@ -128,9 +141,9 @@ class ModelCards(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(sp(14))
+        layout.setSpacing(sp(10))
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._cards = {}
@@ -153,7 +166,7 @@ class ModelCards(QWidget):
             card.setProperty("available", ok)
             self._group.addButton(card)
             self._cards[model_id] = card
-            layout.addWidget(card, stretch=1)
+            layout.addWidget(card)
         self._group.buttonToggled.connect(self._on_toggled)
 
         first = next((m for m, c in self._cards.items() if c.isEnabled()), None)
