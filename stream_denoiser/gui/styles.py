@@ -345,13 +345,8 @@ QComboBox#device-combo {
     font-size: 15px;
 }
 
-QComboBox#device-combo:hover {
-    border: 1px solid {secondary};
-}
-
-QComboBox#device-combo:on {
-    border: 1px solid {secondary};
-}
+/* No :hover / open border here: AnimatedComboBox paints the gold ring
+   (hover is lost while its popup holds the mouse; see widgets/combo.py). */
 
 QComboBox#device-combo:focus {
     outline: none;
@@ -370,27 +365,12 @@ QComboBox#device-combo::drop-down {
     border-left: 1px solid rgba(148, 163, 184, 0.2);
 }
 
+/* The chevron is painted by AnimatedComboBox (it turns as the list
+   opens), and the list itself is its card popup (widgets/combo.py). */
 QComboBox#device-combo::down-arrow {
-    image: url("{ASSETS_DIR}/chevron-down.svg");
+    image: none;
     width: 12px;
     height: 8px;
-}
-
-/* Dropdown popups (shared list styling for both combo styles).
-   NOTE: QSS ::item subcontrols never reach combo popup views, so row
-   height, dividers, and row states are painted by PopupItemDelegate
-   (see widgets/combo.py) — only the frame itself is styled here.
-   The popup's outer frame is styled in code (AnimatedComboBox): style-
-   sheets don't cascade into top-level popup windows, so it carries its
-   own tiny sheet. */
-QComboBox#device-combo QAbstractItemView,
-QComboBox#settings-combo QAbstractItemView {
-    background-color: transparent;
-    color: {text};
-    border: none;
-    padding: 0px;
-    outline: none;
-    font-size: 15px;
 }
 
 /* Settings-page dropdown (boxed style) */

@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from .phosphor import PhosphorIcon
 from ..themes import current as current_theme
 from .chip import IconChip
-from .combo import AnimatedComboBox
+from .combo import BLURB_ROLE, TITLE_ROLE, AnimatedComboBox
 from ..scaling import sp
 
 try:
@@ -28,6 +28,20 @@ def is_vb_cable(name: str) -> bool:
     Virtual Cable)"), even when WASAPI truncates the name. VB-Audio always
     capitalises CABLE, which keeps e.g. "Cable Modem Speakers" out."""
     return "vb-audio" in name.lower() or name.startswith("CABLE ")
+
+
+def card_text(name: str, is_default: bool = False):
+    """(title, blurb) for a device's card in the open list: WASAPI names
+    read "Speakers (Realtek(R) Audio)", so the endpoint is the title and
+    the hardware the blurb (truncated names may lose the last ")")."""
+    title, _, hardware = name.partition(" (")
+    hardware = hardware[:-1] if hardware.endswith(")") else hardware
+    if not title.strip():
+        title, hardware = name, ""
+    notes = [part for part in (hardware.strip(),
+                               "System default" if is_default else "")
+             if part]
+    return title.strip(), " · ".join(notes)
 
 
 class DeviceSelector(QWidget):
@@ -88,15 +102,21 @@ class DeviceSelector(QWidget):
 
         self._refresh_btn = QPushButton()
         self._refresh_btn.setObjectName("icon-btn")
-        self._refresh_btn.setFixedSize(sp(28), sp(28))
-        refresh_layout = QHBoxLayout(self._refresh_btn)
-        refresh_layout.setContentsMargins(6, 6, 6, 6)
         self._refresh_icon = PhosphorIcon(
             "refresh", color=current_theme()["secondary"], size=15)
         # Let the button (not the icon) own hover so its wash paints.
         self._refresh_icon.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        refresh_layout.addWidget(self._refresh_icon)
+        # Centred: the button is the icon plus equal padding (~28 px in
+        # all). Fixed 6 px margins left the boosted icon (isp) more room
+        # than it had, so it overflowed right and down, off-centre.
+        glyph = self._refresh_icon.width()
+        pad = max(sp(4), (sp(28) - glyph) // 2)
+        self._refresh_btn.setFixedSize(glyph + 2 * pad, glyph + 2 * pad)
+        refresh_layout = QHBoxLayout(self._refresh_btn)
+        refresh_layout.setContentsMargins(0, 0, 0, 0)
+        refresh_layout.addWidget(self._refresh_icon,
+                                 alignment=Qt.AlignmentFlag.AlignCenter)
         self._refresh_btn.setToolTip("Rescan audio devices")
         self._refresh_btn.clicked.connect(self.refresh_devices)
         # Hidden while locked (its icon can't grey out); keeps its room.
@@ -144,9 +164,14 @@ class DeviceSelector(QWidget):
         
         try:
             self._devices = list(sd.query_devices())
+            default_id = self._system_default_id()
             for i, device in enumerate(self._devices):
                 if self._accepts(device):
                     self._combo.addItem(f"{device['name']}", i)
+                    title, blurb = card_text(device['name'], i == default_id)
+                    row = self._combo.count() - 1
+                    self._combo.setItemData(row, title, TITLE_ROLE)
+                    self._combo.setItemData(row, blurb, BLURB_ROLE)
         except Exception as e:
             self._combo.addItem(f"Error: {str(e)}", None)
         if self._combo.count() == 0:

@@ -200,3 +200,30 @@ def test_lock_swaps_caption_and_disables_picking(app):
     assert not selector.is_locked and selector._refresh_btn.isEnabled()
     assert selector._subtitle.text() == "New caption"
     selector.close()
+
+
+def test_card_text_splits_endpoint_from_hardware():
+    from stream_denoiser.gui.widgets.device_selector import card_text
+    assert card_text("Speakers (Realtek(R) Audio)") == (
+        "Speakers", "Realtek(R) Audio")
+    # WASAPI truncates long names, losing the closing parenthesis.
+    assert card_text("Headphones (WH-1000XM4 Stereo") == (
+        "Headphones", "WH-1000XM4 Stereo")
+    assert card_text("Digital Output", is_default=True) == (
+        "Digital Output", "System default")
+    assert card_text("Speakers (USB DAC)", is_default=True) == (
+        "Speakers", "USB DAC \u00b7 System default")
+
+
+def test_refresh_icon_is_centred_in_its_button(app):
+    """Fixed 6 px margins once left the boosted icon too little room:
+    it overflowed right and down, off-centre in its hover wash."""
+    from stream_denoiser.gui.widgets.device_selector import DeviceSelector
+    selector = DeviceSelector("Output device", "output", "Caption")
+    selector.show()
+    _pump(app, 0.1)
+    button, glyph = selector._refresh_btn, selector._refresh_icon.geometry()
+    assert button.width() == button.height()
+    assert glyph.left() == button.width() - glyph.right() - 1
+    assert glyph.top() == button.height() - glyph.bottom() - 1
+    selector.close()

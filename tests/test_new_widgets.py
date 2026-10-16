@@ -214,6 +214,13 @@ def test_model_selector_surface_and_lock(app):
     selector.currentTextChanged.connect(picked.append)
     models = selector.models()
     assert models
+    # The open list shows each engine's Settings blurb under its name.
+    from stream_denoiser.constants import MODEL_INFO
+    from stream_denoiser.gui.widgets.combo import BLURB_ROLE
+    for row, model in enumerate(models):
+        assert selector._combo.itemData(row, BLURB_ROLE) == (
+            MODEL_INFO[model].get("card_blurb")
+            or MODEL_INFO[model].get("picker_blurb", ""))
     selector.setCurrentText(models[-1])
     assert selector.currentText() == models[-1]
     selector.setCurrentText("no-such-model")        # ignored

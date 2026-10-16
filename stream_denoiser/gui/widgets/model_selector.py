@@ -8,10 +8,10 @@ Exposes the QComboBox-like surface ModelCards has, so MainWindow keeps
 the two in step: currentText() / setCurrentText() / currentTextChanged.
 """
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 
 from .chip import IconChip
-from .combo import AnimatedComboBox
+from .combo import BLURB_ROLE, AnimatedComboBox
 from ..scaling import sp
 from ...constants import MODEL_INFO
 
@@ -58,10 +58,11 @@ class ModelSelector(QWidget):
         for model_id, info in MODEL_INFO.items():
             if model_id in usable:
                 self._combo.addItem(info.get("label", model_id), model_id)
+                # The open list shows Settings' card blurb under the name.
                 self._combo.setItemData(
                     self._combo.count() - 1,
                     info.get("card_blurb") or info.get("picker_blurb", ""),
-                    Qt.ItemDataRole.ToolTipRole)
+                    BLURB_ROLE)
         self._combo.currentIndexChanged.connect(self._on_index_changed)
         layout.addWidget(self._combo)
         # Header + combo stay at the top if the card grows taller.
