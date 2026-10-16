@@ -108,6 +108,102 @@ def test_deepfilternet3_reset_is_deterministic():
         engine.close()
 
 
+# -- DF3 behaviour ---------------------------------------------------------------
+SR = 48000
+
+
+def _process(engine, x):
+    n = engine.required_frame_size
+    return np.concatenate([engine.process_frame(x[i:i + n].copy()).copy()
+                           for i in range(0, len(x) // n * n, n)])
+
+
+def _rms(x):
+    return float(np.sqrt(np.mean(np.asarray(x, np.float64) ** 2)))
+
+
+def _voice(seconds):
+    """Voice-like test signal: a gliding 140 Hz harmonic tone in syllables."""
+    t = np.arange(int(seconds * SR)) / SR
+    phase = 2 * np.pi * np.cumsum(140 + 30 * np.sin(2 * np.pi * 0.6 * t)) / SR
+    tone = sum(np.sin(k * phase) / k for k in range(1, 30))
+    syllables = np.clip(np.sin(2 * np.pi * 3.0 * t), 0, None) ** 0.5
+    return (0.1 * tone * syllables).astype(np.float32)
+
+
+def test_deepfilternet3_removes_white_noise():
+    engine = _make_df3_engine_at(None)
+    try:
+        noise = (np.random.default_rng(1).standard_normal(2 * SR) * 0.05).astype(np.float32)
+        out = _process(engine, noise)
+        assert 20 * np.log10(_rms(out[SR:]) / _rms(noise)) < -30.0     # ~-41 dB
+    finally:
+        engine.close()
+
+
+def test_deepfilternet3_keeps_voice_and_lifts_its_snr():
+    """Clean voice passes nearly unchanged (~-0.5 dB); in noise at 4.5 dB
+    SNR the output's SNR is ~17 dB."""
+    v = _voice(3.0)
+    clean, noisy = _make_df3_engine_at(None), _make_df3_engine_at(None)
+    try:
+        L = clean.latency_samples
+        kept = _process(clean, v)
+        ref = v[SR:len(kept) - L]                                  # past the warm-up, delay-aligned
+        kept = kept[SR + L:]
+        assert abs(20 * np.log10(_rms(kept) / _rms(ref))) < 3.0
+
+        noise = (np.random.default_rng(2).standard_normal(3 * SR) * 0.03).astype(np.float32)
+        out = _process(noisy, v + noise)[SR + L:]
+        speech = ref * (np.dot(out, ref) / np.dot(ref, ref))       # the part of the output that is the voice
+        snr_in = 20 * np.log10(_rms(v) / _rms(noise))
+        snr_out = 20 * np.log10(_rms(speech) / _rms(out - speech))
+        assert snr_out > snr_in + 8.0
+    finally:
+        clean.close()
+        noisy.close()
+
+
+def test_deepfilternet3_stays_bounded_over_a_long_run():
+    """30 s of voice in noise, loud noise and full-scale DC: the output and
+    the recurrent state stay finite and in range."""
+    engine = _make_df3_engine_at(None)
+    try:
+        rng = np.random.default_rng(4)
+        x = np.concatenate([_voice(10.0) + (rng.standard_normal(10 * SR) * 0.05).astype(np.float32),
+                            (rng.standard_normal(10 * SR) * 0.3).astype(np.float32),
+                            np.full(10 * SR, 0.9, np.float32)])
+        out = _process(engine, x)
+        assert np.all(np.isfinite(out))
+        assert float(np.max(np.abs(out))) < 1.5
+        for name in ("enc_hidden", "erb_dec_hidden", "df_dec_hidden"):
+            assert np.all(np.isfinite(engine._states[name]))
+            assert float(np.max(np.abs(engine._states[name]))) <= 1.0 + 1e-6
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("file_name, tool, source_sha256", [
+    ("denoiser_model_df3.onnx", "tools/optimize_df3.py",
+     "b758c49d6708a5b7979e3de185705a8a4915076c862fb17b1b304d9a72b75cdc"),
+    ("gtcrn.onnx", "tools/optimize_gtcrn.py",
+     "f648b02f2d7ff96ebcb0eec2219688a08ed12fe7e3d50f248605a90eba8cad17"),
+])
+def test_vendored_models_are_their_build_scripts_output(file_name, tool, source_sha256):
+    """The vendored models are rebuilt from upstream files by tools/ scripts,
+    which stamp what they built from: a model swapped in by hand fails here."""
+    import onnxruntime
+    from stream_denoiser.engines.onnx_model import find_model_file
+
+    try:
+        path = find_model_file(file_name, file_name)
+    except FileNotFoundError as e:
+        pytest.skip(str(e))
+    meta = onnxruntime.InferenceSession(path, providers=["CPUExecutionProvider"]).get_modelmeta()
+    assert meta.producer_name == f"poise {tool}"
+    assert meta.custom_metadata_map["source_sha256"] == source_sha256
+
+
 def test_processor_uses_engine_frame_size_for_df3():
     engine = _make_df3_engine()
     try:

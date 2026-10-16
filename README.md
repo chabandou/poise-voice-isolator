@@ -324,11 +324,13 @@ python -m stream_denoiser.cli
 
 ### Models
 
-- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in `stream_denoiser/models/`). Removes music and keeps vocals/speech, ~2x less CPU (RTF ~0.11), 512-sample frames. No extra install.
-- **gtcrn**: [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) (`gtcrn.onnx`, 248 KB, vendored; the model Poise for Android uses), an ultra-lightweight speech-enhancement network. It runs at 16 kHz: each 768-sample frame (16 ms) is low-passed and decimated to 16 kHz, enhanced one STFT hop at a time, and interpolated back, so its output stops at ~7.6 kHz. Removes broadband noise about as well as DeepFilterNet3, but like RNNoise it does *not* remove music. Its model delay is 18 ms (DeepFilterNet3: 32 ms), so Poise's total delay is ~9 ms lower. Light on CPU: RTF ~0.04, vs ~0.14 for DeepFilterNet3 and ~0.08 for the bundled rnnoise.dll (Windows, Ryzen 5 4500U laptop on AC). No extra install.
+- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in `stream_denoiser/models/`). Removes music and keeps vocals/speech, 512-sample frames. RTF ~0.12 (Windows, Ryzen 5 4500U laptop on AC). No extra install.
+
+  The vendored file is the original DF3 export rewritten by `tools/optimize_df3.py` into an equivalent graph (same inputs, outputs and states; output within 3e-7 of the original's) that runs ~15% faster: its inverse FFT was a 4.2 MB matrix product, now two small MatMuls. The script rebuilds the file from the original (`git show 05c081a:stream_denoiser/models/denoiser_model_df3.onnx`, checked by SHA-256) and needs the `onnx` package; Poise itself does not.
+- **gtcrn**: [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) (`gtcrn.onnx`, 248 KB, vendored; the model Poise for Android uses), an ultra-lightweight speech-enhancement network. It runs at 16 kHz: each 768-sample frame (16 ms) is low-passed and decimated to 16 kHz, enhanced one STFT hop at a time, and interpolated back, so its output stops at ~7.6 kHz. Removes broadband noise about as well as DeepFilterNet3, but like RNNoise it does *not* remove music. Its model delay is 18 ms (DeepFilterNet3: 32 ms), so Poise's total delay is ~9 ms lower. Light on CPU: RTF ~0.04, vs ~0.12 for DeepFilterNet3 and ~0.08 for the bundled rnnoise.dll (Windows, Ryzen 5 4500U laptop on AC). No extra install.
 
   The vendored file is upstream's streaming export rewritten by `tools/optimize_gtcrn.py` into an equivalent graph (same inputs, outputs and caches; output within 1e-6 of upstream's) that ONNX Runtime runs ~2.2x faster: at this size its per-operator overhead, not the arithmetic, sets the cost. The script rebuilds the file from upstream's `gtcrn.onnx` (checked by SHA-256) and needs the `onnx` package; Poise itself does not.
-- **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Much lower CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
+- **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Low CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
 
 ```bash
 # DeepFilterNet3 mode (faster)
