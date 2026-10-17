@@ -743,9 +743,94 @@ def test_pattern_card_pings_from_its_origin_until_stopped(app, motion):
     assert card._ping_frame() is not None
     assert card._ping_centre() is not None
     card.grab()                                   # paints the ring
-    card.set_live(False)
+    card.set_live(False, animated=False)          # no fade: gone at once
     assert card._ping_at is None and card._ping_frame() is None
     card.close()
+
+
+def _ping_card(app):
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    from stream_denoiser.gui.widgets.pattern_card import PatternCard
+    card = PatternCard()
+    card.resize(600, 400)
+    origin = QWidget()
+    origin.setFixedSize(100, 100)
+    QVBoxLayout(card).addWidget(origin)
+    card.set_ping_origin(origin)
+    card.show()
+    _pump(app, 0.05)
+    card.set_live(True)
+    card.start_pings()
+    return card
+
+
+def test_stopping_fades_the_ring_out(app, motion):
+    """Stop mid-ring: the ring fades away (it used to vanish in a frame)
+    and the card sends no more."""
+    from stream_denoiser.gui.widgets.pattern_card import PING_FADE_MS
+    card = _ping_card(app)
+    _pump(app, 0.15)
+    _, before = card._ping_frame()
+    card.stop_pings()
+    assert not card.pinging                       # nothing more scheduled
+    assert card._ping_frame() is not None         # ...but the ring lingers
+    _pump(app, PING_FADE_MS / 2000)
+    _, mid = card._ping_frame()
+    assert 0 < mid < before
+    _pump(app, PING_FADE_MS / 1000)
+    assert card._ping_frame() is None and card._ping_at is None
+    card.close()
+
+
+def test_no_ring_goes_out_after_stop(app, motion):
+    """Stop between rings (e.g. the app is still stopping when the next
+    one is due): no ring goes out."""
+    import time
+    from stream_denoiser.gui.widgets import pattern_card as pc
+    card = _ping_card(app)
+    # Just before the second ring is due; nothing on screen.
+    card._ping_at = time.monotonic() - (pc.PING_PERIOD_MS - 60) / 1000
+    assert card._ping_frame() is None
+    card.stop_pings()
+    assert card._ping_at is None
+    _pump(app, 0.2)
+    assert card._ping_frame() is None
+    # The same with a fading ring on screen when the next is due.
+    card.start_pings()
+    card.stop_pings()
+    card._ping_at -= pc.PING_PERIOD_MS / 1000     # next ring "now"
+    card._ping_end -= pc.PING_PERIOD_MS / 1000 - 0.05
+    assert card._ping_frame() is None
+    card.close()
+
+
+def test_stopping_mid_charge_fades_the_dial_glow(app, motion):
+    """The dial charges before each later ping. Stop mid-charge: the glow
+    fades out instead of cutting off, and no new charge starts."""
+    import time
+    from stream_denoiser.gui.widgets import dial as d
+    dial = d.DialButton()
+    dial.show()
+    _pump(app, 0.05)
+    dial.set_active(True)
+    assert dial.phase() == "live"
+    # Put the live phase half-way into the first charge.
+    t = dial._ignite_end() + d.PING_PERIOD_MS - d.CHARGE_LEAD_MS / 2
+    dial._phase_at = time.monotonic() - t / 1000
+    charge = dial._charge(dial._ms())
+    assert charge > 0.1
+    dial._on_clicked()                            # Stop pressed...
+    dial.set_transitioning(True)                  # ...and stopping
+    assert dial.phase() == "stopping"
+    assert dial._charge(dial._ms()) == pytest.approx(charge, abs=0.05)
+    _pump(app, d.CHARGE_DROP_MS / 2000)
+    assert 0 < dial._charge(dial._ms()) < charge
+    _pump(app, d.CHARGE_DROP_MS / 1000)
+    assert dial._charge(dial._ms()) == 0.0
+    # Still stopping a ping period later: no new charge.
+    dial._phase_at -= d.PING_PERIOD_MS / 1000
+    assert dial._charge(dial._ms()) == 0.0
+    dial.close()
 
 
 def test_pattern_card_pings_stay_off_under_reduced_motion(app, monkeypatch):

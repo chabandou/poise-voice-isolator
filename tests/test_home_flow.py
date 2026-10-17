@@ -416,3 +416,23 @@ def test_reset_is_locked_while_running(window, monkeypatch):
     assert window._reset_row._sub.text() == "Locked while running"
     window._on_worker_stopped()
     assert window.reset_btn.isEnabled()
+
+
+def test_stop_ends_the_lattice_pings_at_once(window, monkeypatch):
+    """Pressing Stop ends the pings straight away (not when the worker
+    has finished stopping), so none goes out while stopping."""
+    monkeypatch.setattr(window, "tray", None)
+    monkeypatch.setattr(type(window.worker), "is_running",
+                        property(lambda self: True))
+    monkeypatch.setattr(window.worker, "stop", lambda: None)
+    switch_done = window.settings.device_switch_done
+    try:
+        window._on_worker_started()
+        window._stage.start_pings()
+        assert window._stage.pinging
+        window.power_btn._on_clicked()            # Stop
+        assert not window._stage.pinging
+        assert window.power_btn.phase() == "stopping"
+    finally:
+        window._on_worker_stopped()
+        window.settings.device_switch_done = switch_done

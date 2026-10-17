@@ -13,7 +13,9 @@ lattice leaves the dial (set_ping_origin) and crosses the card. The
 first goes out as the dial's live sweep closes (start_pings), then a
 fainter one every PING_PERIOD_MS; the dial charges up before each of
 those (see DialButton). The ring lights the bare lattice, so it shows
-in the clear middle too.
+in the clear middle too. Stopping (stop_pings, from the moment Stop is
+pressed) sends no more rings; one already crossing fades out over
+PING_FADE_MS rather than vanishing.
 
 Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
@@ -51,6 +53,7 @@ PING_FROM, PING_TO = 70.0, 720.0   # ring radius, design px
 PING_BAND = 80.0            # the ring: clear this far inside its edge,
 PING_CORE = 22.0            # full strength this far inside it
 PING_FRAME_MS = 33
+PING_FADE_MS = 420          # a ring in flight when pings stop fades out
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -101,6 +104,7 @@ class PatternCard(QFrame):
         self._live = Blend(self, self.update, LIVE_FADE_MS, EASE_BREATHE)
         self._origin = None                    # the dial the pings leave
         self._ping_at = None
+        self._ping_end = None                  # pings stopped: ring fades
         self._pinging = False                  # a ring is on screen
         self._ping_timer = QTimer(self)
         self._ping_timer.setInterval(PING_FRAME_MS)
@@ -110,7 +114,7 @@ class PatternCard(QFrame):
         """Secondary colour when idle, the accent while isolating."""
         self._live.set_target(1.0 if live else 0.0, animated)
         if not live:
-            self.stop_pings()
+            self.stop_pings(fade=animated)
 
     # -- pings ------------------------------------------------------------------
     def set_ping_origin(self, widget) -> None:
@@ -122,11 +126,31 @@ class PatternCard(QFrame):
         if not motion_ok():
             return
         self._ping_at = time.monotonic()
+        self._ping_end = None
         self._ping_timer.start()
         self.update()
 
-    def stop_pings(self) -> None:
-        self._ping_at = None
+    def stop_pings(self, fade: bool = True) -> None:
+        """No more pings. A ring already crossing fades out (vanishes
+        with fade=False or under reduced motion)."""
+        if self._ping_at is None:
+            return
+        if fade and self._ping_end is not None:
+            return                             # already fading out
+        if fade and motion_ok() and self._ping_frame() is not None:
+            self._ping_end = time.monotonic()
+            if self.isVisible():
+                self._ping_timer.start()
+            return
+        self._clear_pings()
+
+    @property
+    def pinging(self) -> bool:
+        """Pings are scheduled (False once stopped, even mid-fade)."""
+        return self._ping_at is not None and self._ping_end is None
+
+    def _clear_pings(self) -> None:
+        self._ping_at = self._ping_end = None
         self._ping_timer.stop()
         if self._pinging:
             self._pinging = False
@@ -148,20 +172,33 @@ class PatternCard(QFrame):
         if on or self._pinging:   # one more frame clears the last ring
             self.update()
         self._pinging = on
+        if not on and self._ping_end is not None:
+            self._clear_pings()   # the fading ring is gone: all done
 
     def _ping_frame(self):
         """(radius in design px, alpha) of the ring on screen, or None."""
         if self._ping_at is None:
             return None
-        t = (time.monotonic() - self._ping_at) * 1000.0
+        now = time.monotonic()
+        t = (now - self._ping_at) * 1000.0
         index = int(t // PING_PERIOD_MS)
         into = t - index * PING_PERIOD_MS
         span = PING_FIRST_MS if index == 0 else PING_LOOP_MS
         if into >= span:
             return None
+        fade = 1.0
+        if self._ping_end is not None:
+            stopped = (self._ping_end - self._ping_at) * 1000.0
+            if index * PING_PERIOD_MS > stopped:
+                return None                    # no ring after Stop
+            u = (now - self._ping_end) * 1000.0 / PING_FADE_MS
+            if u >= 1.0:
+                return None
+            fade = (1.0 - u) ** 2              # eases out to nothing
         eased = 1.0 - (1.0 - into / span) ** 3
         alpha = PING_FIRST_ALPHA if index == 0 else PING_LOOP_ALPHA
-        return PING_FROM + (PING_TO - PING_FROM) * eased, alpha * (1 - eased)
+        return (PING_FROM + (PING_TO - PING_FROM) * eased,
+                alpha * (1 - eased) * fade)
 
     def _ping_centre(self):
         origin = self._origin

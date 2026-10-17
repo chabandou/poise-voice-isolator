@@ -1059,6 +1059,8 @@ class MainWindow(QMainWindow):
             return
 
         self.power_btn.set_transitioning(True)
+        # No more lattice pings from here; one crossing the card fades.
+        self._stage.stop_pings()
         self.update_status("Stopping...")
 
         self.worker.stop()

@@ -27,7 +27,9 @@ Motion, phase by phase:
   lattice pings follow it, see PatternCard). A slow brightness crest
   then flows over the lit ticks, and the disc charges up (glow and rim)
   in the second before each later ping;
-- stopping: the accent drains back from the head; the dots settle;
+- stopping: the accent drains back from the head; the dots settle; a
+  charge glow caught mid-way fades out (CHARGE_DROP_MS) rather than
+  cutting off, and no new charge starts;
 - error: lit ticks flash white then settle red and the disc shakes.
 
 Geometry is authored in a 300-unit square and scaled to the widget, so
@@ -99,6 +101,7 @@ POP_MS = 480
 RIPPLE_MS = 1050
 CHARGE_LEAD_MS = 1144     # the disc charges this long before each later ping
 CHARGE_FADE_MS = 624
+CHARGE_DROP_MS = 420      # a charge caught by Stop fades out (cf. the ring)
 DRAIN_STEP = 9            # stopping: between ticks draining back
 DRAIN_MS = 320
 DOTS_OUT_MS = 520
@@ -217,6 +220,8 @@ class DialButton(PowerButton):
         self._ignite_lit = 0              # lit ticks when the sweep began
         self._ignited = False
         self._drain_at = None             # stopping began (outlasts it)
+        self._charge_from = 0.0           # charge glow when live ended
+        self._charge_drop_at = None
         self._sweep_at = None             # first show: the ring sweeps on
         self._swept = False
         self._pluck_at = None
@@ -245,7 +250,7 @@ class DialButton(PowerButton):
         self.setAccessibleName("Start isolating")
         self.setToolTip(
             "Press to start or stop. Drag the ring to set the reduction "
-            "strength; it applies right away.")
+            "strength; it applies live.")
 
     # -- sizing ---------------------------------------------------------------
     def sizeHint(self):  # noqa: N802 (Qt override)
@@ -359,6 +364,12 @@ class DialButton(PowerButton):
         phase = self._phase_now()
         if phase == self._phase:
             return
+        if self._phase == "live":
+            # Leaving live mid-charge: let that glow fade, not cut off.
+            self._charge_from = self._charge(self._ms())
+            self._charge_drop_at = time.monotonic()
+        elif phase == "live":
+            self._charge_from, self._charge_drop_at = 0.0, None
         self._phase = phase
         self._phase_at = time.monotonic()
         if phase == "stopping":
@@ -412,6 +423,9 @@ class DialButton(PowerButton):
         if self._since(self._drain_at) < (TICKS - 1) * DRAIN_STEP + DRAIN_MS:
             return True
         if self._phase == "error" and self._ms() < ERROR_FLASH_MS:
+            return True
+        if (self._charge_from > 0.01
+                and self._since(self._charge_drop_at) < CHARGE_DROP_MS):
             return True
         return (self._since(self._pluck_at) < PLUCK_BIG_MS
                 or self._since(self._bump_at) < BUMP_MS
@@ -739,9 +753,15 @@ class DialButton(PowerButton):
         return 0.9 + 0.1 * _back((u - 0.3) / 0.7)
 
     def _charge(self, t: float) -> float:
-        """Live: 0..1 glow of the disc around each later lattice ping."""
-        if self._phase != "live" or not motion_ok():
+        """Live: 0..1 glow of the disc around each later lattice ping
+        (after live: the glow it was left with, fading out)."""
+        if not motion_ok():
             return 0.0
+        if self._phase != "live":
+            u = self._since(self._charge_drop_at) / CHARGE_DROP_MS
+            if self._charge_from <= 0.0 or u >= 1.0:
+                return 0.0
+            return self._charge_from * (1.0 - _ease_out(u))
         rel = t - self._ignite_end()
         k = max(1, round(rel / PING_PERIOD_MS))
         d = rel - k * PING_PERIOD_MS
