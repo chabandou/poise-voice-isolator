@@ -959,7 +959,7 @@ class MainWindow(QMainWindow):
             crossfade_from(self, snapshot)
 
     def _sync_home_pace(self) -> None:
-        """A breathing theme (Vigil) mists the headline slowly from one
+        """A breathing theme (Vigil, Mono) mists the headline slowly from one
         state to the next and tracks it wider; the others roll it."""
         from PyQt6.QtGui import QFont
         from .animations import EASE_BREATHE, EASE_OUT

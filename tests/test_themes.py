@@ -83,13 +83,6 @@ def test_abyss_preserves_current_look():
     assert "95, 213, 235" in css  # abyss accent rgb
 
 
-def test_mono_is_cyan_free():
-    css = styles.get_stylesheet(scale=1.0, theme="mono")
-    for cyan in ("#5fd5eb", "#22d3ee", "95, 213, 235", "34, 211, 238"):
-        assert cyan not in css
-    assert "201, 209, 219" in css  # mono accent rgb
-
-
 def _rgb(hex_color):
     return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
 
@@ -190,3 +183,29 @@ def test_vigil_stylesheet_glows_with_lighter_headings():
     abyss = styles.get_stylesheet(scale=1.0, theme="abyss")
     assert "qradialgradient" not in abyss      # flat, as before
     assert _heading_weight(abyss) == 700
+
+
+def _hls(hex_color):
+    import colorsys
+    return colorsys.rgb_to_hls(*(c / 255.0 for c in _rgb(hex_color)))
+
+
+def test_mono_is_vigil_in_soft_graphite():
+    """Mono shares Vigil's sky, rhythm and lit surfaces in its own calm
+    palette: graphite, a pewter idle and a muted signature cyan live."""
+    for key in ("backdrop", "motion", "heading_weight"):
+        assert themes.style(key, "mono") == themes.style(key, "vigil")
+    css = styles.get_stylesheet(scale=1.0, theme="mono")
+    assert "qradialgradient" in css and "qlineargradient" in css
+    assert _heading_weight(css) == 600
+    mono, abyss = themes.get_theme("mono"), themes.get_theme("abyss")
+    # The cyan is a hint: Abyss's hue at well under half its saturation.
+    hue, _, sat = _hls(mono["accent"])
+    abyss_hue, _, abyss_sat = _hls(abyss["accent"])
+    assert abs(hue - abyss_hue) * 360 < 10
+    assert sat < abyss_sat / 2
+    for cyan in ("#5fd5eb", "95, 213, 235"):
+        assert cyan not in css
+    # Easy on the eyes: no near-white text, faint edges.
+    assert _contrast(mono["text"], "#ffffff") > 1.1
+    assert mono["border_alpha"] <= 0.2 and mono["divider_alpha"] <= 0.25
