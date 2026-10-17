@@ -70,21 +70,31 @@ THEMES: Dict[str, Dict] = {
         "badge_bg": "#232329", "badge_fg": "#c9d1db",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
-    "ultraviolet": {
-        "label": "Ultraviolet",
-        "blurb": "Violet glow on near-black purple.",
-        "bg": "#0f0d1d", "sidebar": "#0c0a17",
-        "card": "#151226", "pill": "#191530", "groove": "#251f3d",
-        "text": "#f5f3ff", "muted": "#8f8aa3",
-        "device_title": "#9c94b5",
-        "nav_active": "#d6c9ff", "nav_muted": "#8f8aa3",
-        "accent": "#a78bfa", "accent_light": "#d6c9ff",
-        "accent_rgb": "167, 139, 250",
-        "secondary": "#F3A0C0", "secondary_rgb": "243, 160, 192",
-        "border_rgb": "190, 170, 255", "border_alpha": 0.24,
-        "divider_rgb": "180, 160, 255", "divider_alpha": 0.34,
-        "badge_bg": "#1e1836", "badge_fg": "#a78bfa",
-        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+    "vigil": {
+        "label": "Vigil",
+        "blurb": "Lavender and candle gold under a slow night sky.",
+        "bg": "#0a0920", "sidebar": "#07061a",
+        "card": "#141131", "pill": "#151236", "groove": "#2a2552",
+        "text": "#f3efff", "muted": "#9a93b8",
+        "device_title": "#a49dc2",
+        "nav_active": "#e4dcff", "nav_muted": "#a49dc2",
+        "accent": "#b9a6ff", "accent_light": "#e4dcff",
+        "accent_rgb": "185, 166, 255",
+        "secondary": "#E6CD8A", "secondary_rgb": "230, 205, 138",
+        "border_rgb": "190, 170, 255", "border_alpha": 0.18,
+        "divider_rgb": "190, 170, 255", "divider_alpha": 0.24,
+        "badge_bg": "#1c1842", "badge_fg": "#b9a6ff",
+        "success": "#7ee0b0", "warning": "#f5d77a", "error": "#f49aa6",
+        # Beyond the colours: a night sky behind the dial instead of the
+        # lattice, the dial breathing on a slow cycle, lighter headings
+        # and softly lit surfaces (see STYLE_DEFAULTS and widgets/sky.py).
+        "backdrop": "sky", "motion": "breath",
+        "heading_weight": 600,
+        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
+                        "fx:0.62, fy:0.28, stop:0 #181440, stop:0.45 "
+                        "#0e0c28, stop:0.75 #0a0920, stop:1 #0a0920)"),
+        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                      "stop:0 #18143c, stop:1 #100e29)"),
     },
     "ember": {
         "label": "Ember",
@@ -122,6 +132,23 @@ THEMES: Dict[str, Dict] = {
 
 DEFAULT_THEME = "abyss"
 
+#: Retired theme ids and the theme that replaced each, so a saved choice
+#: lands on its successor rather than the default.
+RENAMED = {"ultraviolet": "vigil"}
+
+#: Optional per-theme keys and their values when a theme leaves them out.
+#: backdrop: what the dial card shows behind the dial ("lattice" or
+#: "sky"); motion: the Home rhythm ("tactile", or "breath": slower, on a
+#: breathing cycle); heading_weight: the heading font weight; window_fill
+#: and card_fill: QSS backgrounds (None: the flat bg / card colour).
+STYLE_DEFAULTS = {
+    "backdrop": "lattice",
+    "motion": "tactile",
+    "heading_weight": 700,
+    "window_fill": None,
+    "card_fill": None,
+}
+
 # "secondary" is the second brand colour: idle dial ring, icon chips,
 # focus markers and picker chevrons. Accent means "live"; secondary means
 # "available / waiting". Chosen per theme as a soft complement of its accent.
@@ -132,10 +159,17 @@ ACCENT_WASH_ALPHA = 0.12
 _current_id = DEFAULT_THEME
 
 
+def resolve_id(theme_id) -> str:
+    """A known theme id for `theme_id`: itself, its successor if it was
+    retired, else the default."""
+    theme_id = RENAMED.get(theme_id, theme_id)
+    return theme_id if theme_id in THEMES else DEFAULT_THEME
+
+
 def set_current(theme_id: str) -> str:
     """Select the active theme (falls back to default). Returns the id used."""
     global _current_id
-    _current_id = theme_id if theme_id in THEMES else DEFAULT_THEME
+    _current_id = resolve_id(theme_id)
     return _current_id
 
 
@@ -157,6 +191,18 @@ def theme_ids() -> List[str]:
 def get_theme(theme_id: str) -> Dict:
     """Palette for an id, falling back to the default theme."""
     return THEMES.get(theme_id, THEMES[DEFAULT_THEME])
+
+
+def style(key: str, theme_id: str = None):
+    """An optional STYLE_DEFAULTS key of a theme (default: the current
+    one), falling back to its default."""
+    palette = get_theme(_current_id if theme_id is None else theme_id)
+    return palette.get(key, STYLE_DEFAULTS[key])
+
+
+def breathing(theme_id: str = None) -> bool:
+    """True when the theme's Home moves on the slow breathing cycle."""
+    return style("motion", theme_id) == "breath"
 
 
 def theme_label(theme_id: str) -> str:

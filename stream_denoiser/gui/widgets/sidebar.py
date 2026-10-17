@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QPoint, QRectF, pyqtSignal, Qt
 from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap
 
-from .phosphor import PhosphorIcon
+from .phosphor import MotionIcon, PhosphorIcon
 from ..scaling import isp, sp
 from ..themes import current as current_theme
 from ..animations import Blend
@@ -45,7 +45,9 @@ class NavButton(QPushButton):
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(14, 0, 8, 0)
         self._layout.setSpacing(12)
-        self._icon = PhosphorIcon(
+        # Hovering moves the glyph: bars bob, the gear turns, the page's
+        # lines draw in, the info dot hops.
+        self._icon = MotionIcon(
             icon, color=current_theme()["nav_muted"], size=20)
         self._layout.addWidget(self._icon)
         self._label = QLabel(text)
@@ -72,10 +74,12 @@ class NavButton(QPushButton):
     def enterEvent(self, event):  # noqa: N802 (Qt override)
         if not self.property("active"):
             self._hover_blend.set_target(1.0)
+        self._icon.hover(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):  # noqa: N802 (Qt override)
         self._hover_blend.set_target(0.0)
+        self._icon.hover(False)
         super().leaveEvent(event)
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)

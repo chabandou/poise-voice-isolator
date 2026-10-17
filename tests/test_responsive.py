@@ -1,8 +1,9 @@
 """Responsive layout modes (needs Qt; skipped without it).
 
-Wide puts the dial card beside the cards; compact tightens chrome;
-narrow stacks the cards, re-grids theme tiles, shrinks the dial and
-collapses the sidebar to an icon rail.
+Home is the dial card over two cards in every mode. Wide keeps the cards
+side by side; compact tightens chrome (and stacks them below 1000 px);
+narrow re-grids theme tiles, shrinks the dial and collapses the sidebar
+to an icon rail.
 """
 import os
 import time
@@ -50,18 +51,22 @@ def test_wide_mode_is_the_layout(app):
     window = _make_window(app)
     _wide(app, window)
     assert window._resp == "wide"
-    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert window._home_layout.direction() == QBoxLayout.Direction.TopToBottom
+    assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
     assert (window._settings_bottom.direction()
             == QBoxLayout.Direction.LeftToRight)
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     m = window._home_layout.contentsMargins()
-    assert (m.left(), m.top()) == (sp(26), sp(26))
+    assert (m.left(), m.top()) == (sp(26), sp(20))
     assert window.power_btn.width() == sp(300)
-    # Routing note explains automatic VB-Cable capture (no input selector).
-    notes = [l for l in window.findChildren(QLabel)
-             if "VB-Cable" in l.text()]
-    assert notes, "expected automatic VB-Cable routing note"
+    # The two cards share the row evenly.
+    left = window._cards_layout.itemAt(0).widget()
+    right = window._cards_layout.itemAt(1).widget()
+    assert abs(left.width() - right.width()) <= 1
+    # No input selector: the status bar names the VB-Cable source.
+    assert [l for l in window.stats_bar.findChildren(QLabel)
+            if l.text() == "vb-cable"]
     window.close()
 
 
@@ -71,7 +76,6 @@ def test_compact_mode_tightens_chrome(app):
     window = _make_window(app)
     _wide(app, window, w=1000, h=700)
     assert window._resp == "compact"
-    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
     assert (window._settings_bottom.direction()
             == QBoxLayout.Direction.LeftToRight)
     assert not window.sidebar.is_compact
@@ -79,6 +83,33 @@ def test_compact_mode_tightens_chrome(app):
     assert (m.left(), m.top()) == (sp(16), sp(16))
     assert window._home_layout.spacing() == sp(16)
     assert window.power_btn.width() == sp(270)
+    # The page fits the viewport: nothing is clipped on the right.
+    scroll = window.stack.widget(0)
+    assert (scroll.widget().minimumSizeHint().width()
+            <= scroll.viewport().width())
+    window.close()
+
+
+def test_cards_stack_before_they_overflow(app):
+    """Side by side just above CARDS_STACK_BELOW still fits; below, they
+    stack."""
+    import math
+    from PyQt6.QtWidgets import QBoxLayout
+    from stream_denoiser.gui.scaling import ui_scale
+    window = _make_window(app)
+    scroll = window.stack.widget(0)
+    _wide(app, window, h=700,
+          w=math.ceil(window.CARDS_STACK_BELOW * ui_scale()) + 2)
+    assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert (scroll.widget().minimumSizeHint().width()
+            <= scroll.viewport().width())
+    _wide(app, window, w=900, h=700)
+    assert window._resp == "compact"
+    assert window._cards_layout.direction() == QBoxLayout.Direction.TopToBottom
+    assert (scroll.widget().minimumSizeHint().width()
+            <= scroll.viewport().width())
+    _wide(app, window, w=1250, h=760)
+    assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
     window.close()
 
 
@@ -89,7 +120,7 @@ def test_narrow_mode_reflows(app):
     window = _make_window(app)
     _wide(app, window, w=720, h=640)
     assert window._resp == "narrow"
-    assert window._home_layout.direction() == QBoxLayout.Direction.TopToBottom
+    assert window._cards_layout.direction() == QBoxLayout.Direction.TopToBottom
     assert (window._settings_bottom.direction()
             == QBoxLayout.Direction.TopToBottom)
     assert window.power_btn.width() == sp(240)
@@ -126,7 +157,7 @@ def test_roundtrip_restores_wide(app):
     assert window._resp == "narrow"
     _wide(app, window, w=1250, h=760)
     assert window._resp == "wide"
-    assert window._home_layout.direction() == QBoxLayout.Direction.LeftToRight
+    assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
     assert (window._settings_bottom.direction()
             == QBoxLayout.Direction.LeftToRight)
     assert window.power_btn.width() == sp(300)

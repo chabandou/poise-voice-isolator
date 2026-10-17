@@ -66,22 +66,22 @@ MODEL_INFO = {
     MODEL_DEEPFILTERNET3: {
         "label": "DeepFilterNet3",
         # Picker modal: quality/CPU tradeoff.
-        "picker_blurb": "Music/voice isolation · medium CPU load",
+        "picker_blurb": "Best isolation · medium CPU load",
         # GUI model card: plain-language summary.
-        "card_blurb": "Removes music and keeps voices. Medium CPU use.",
+        "card_blurb": "Best isolation · medium CPU load.",
         # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
     },
     MODEL_GTCRN: {
         "label": "GTCRN",
-        "picker_blurb": "Noise removal for speech · low CPU load",
-        "card_blurb": "Removes noise from speech, not music. Light CPU use.",
+        "picker_blurb": "Lower quality isolation · Lightest CPU load",
+        "card_blurb": "Lower quality isolation · Lightest CPU load.",
         "blurb": "Frequency domain (STFT, 16 kHz) · ONNX Runtime",
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",
-        "picker_blurb": "Worse isolation · lower CPU load",
-        "card_blurb": "Light CPU use but lower quality isolation.",
+        "picker_blurb": "Lowest quality isolation · Lighter CPU load",
+        "card_blurb": "Lowest quality isolation · Lighter CPU load.",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
     },
 }

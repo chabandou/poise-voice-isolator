@@ -194,8 +194,60 @@ def test_settings_row_wash_is_eased(app):
     _pump(app, 0.4)
     assert row._lit_blend.value == pytest.approx(1.0)
     _leave(row)
-    _pump(app, 0.4)
+    assert row._lit_blend.running
+    _pump(app, 0.55)
     assert row._lit_blend.value == pytest.approx(0.0)
+    row.close()
+
+
+def test_blend_new_duration_starts_from_where_it_is(app):
+    """A glide with a different duration than the last one starts from
+    the current value (Qt re-emits a stale value while it's reconfigured:
+    a 240 ms run read at 240 of 380 ms said 0.7, a visible jump)."""
+    from PyQt6.QtCore import QEasingCurve
+    from PyQt6.QtWidgets import QWidget
+    from stream_denoiser.gui.animations import Blend
+    owner = QWidget()
+    seen = []
+    blend = Blend(owner, lambda: seen.append(blend.value), 240)
+    blend.set_target(1.0)
+    _pump(app, 0.4)
+    assert blend.value == pytest.approx(1.0)
+    seen.clear()
+    blend.set_target(0.0, duration_ms=380,
+                     easing=QEasingCurve.Type.InOutSine)
+    assert blend.value == pytest.approx(1.0)
+    _pump(app, 0.03)
+    assert seen and min(seen) > 0.9            # eased start, no jump
+    _pump(app, 0.5)
+    assert blend.value == pytest.approx(0.0)
+    # The override was for that glide only.
+    blend.set_target(1.0)
+    assert blend._anim.duration() == 240
+    assert blend._anim.easingCurve().type() == QEasingCurve.Type.OutCubic
+
+
+def test_settings_row_light_eases_both_ways(app):
+    """The light comes up and goes away as eased glides (the way out a
+    touch slower), so neither edge reads as a snap."""
+    from PyQt6.QtWidgets import QPushButton
+    from stream_denoiser.gui.widgets import settings_row as sr
+    assert sr.LIT_IN_MS >= 200 and sr.LIT_OUT_MS > sr.LIT_IN_MS
+    row = sr.SettingsRow("Title", "caption", QPushButton("x"))
+    row.show()
+    _pump(app, 0.2)
+    _leave(row)
+    _pump(app, 0.6)
+    anim = row._lit_blend._anim
+    _enter(row)
+    assert anim.duration() == sr.LIT_IN_MS
+    assert anim.easingCurve().type() == sr.LIT_IN_EASE
+    _pump(app, 0.4)
+    _leave(row)
+    assert anim.duration() == sr.LIT_OUT_MS
+    assert anim.easingCurve().type() == sr.LIT_OUT_EASE
+    _pump(app, 0.1)
+    assert 0.05 < row._lit_blend.value < 1.0     # still on its way out
     row.close()
 
 
@@ -313,3 +365,27 @@ def test_text_swap_is_instant_when_hidden_reduced_or_effect_taken(
     monkeypatch.setenv("POISE_NO_ANIM", "1")
     swap.set_text("instant")
     assert shown_label.text() == "instant"
+
+
+def test_text_swap_can_roll_and_still_drops_its_effect(app, shown_label, monkeypatch):
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    from stream_denoiser.gui.animations import TextSwap, _RollEffect
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    swap = TextSwap(shown_label, rise=12)
+    swap.set_text("rolled")
+    eff = shown_label.graphicsEffect()
+    assert isinstance(eff, _RollEffect) and isinstance(eff, QGraphicsOpacityEffect)
+    _pump(app, 0.5)
+    assert shown_label.text() == "rolled"
+    assert shown_label.graphicsEffect() is None
+
+
+def test_rise_in_lands_and_removes_its_effect(app, shown_label, monkeypatch):
+    from stream_denoiser.gui.animations import rise_in
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    rise_in(shown_label, delay_ms=0, duration_ms=120, rise=10)
+    assert shown_label.graphicsEffect() is not None
+    _pump(app, 0.4)
+    assert shown_label.graphicsEffect() is None

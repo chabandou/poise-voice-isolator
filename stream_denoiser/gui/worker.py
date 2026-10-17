@@ -165,11 +165,13 @@ class AudioWorker(QThread):
             devices = self._pick_devices()
             if devices is None or not self._running:
                 return
-            if self._vb_cable_switcher is not None:
-                # The volume keys now move CABLE Input's slider, which
-                # VB-Cable ignores: pass it on to where Poise plays.
-                self._vb_cable_switcher.mirror_volume(
-                    str(sd.query_devices(devices[1])['name']))
+            name = self._device_name(devices[1])
+            if name:
+                self.status_changed.emit(f"Output: {name}")
+                if self._vb_cable_switcher is not None:
+                    # The volume keys now move CABLE Input's slider, which
+                    # VB-Cable ignores: pass it on to where Poise plays.
+                    self._vb_cable_switcher.mirror_volume(name)
             self._run_session(*devices)
 
         except Exception as e:
@@ -255,7 +257,7 @@ class AudioWorker(QThread):
 
         if self._host is None:
             self._host = AudioHost(self._on_host_event)
-        self.status_changed.emit("Loading model...")
+        self.status_changed.emit(f"Loading {self._model_label()}...")
         try:
             self._host.start(config)
         except RuntimeError as e:
@@ -273,6 +275,22 @@ class AudioWorker(QThread):
                 self.stats_updated.emit(dict(stats))
                 last_stats = stats
             self.msleep(int(STATS_UPDATE_INTERVAL_SEC * 1000))
+
+    @staticmethod
+    def _device_name(device_id) -> str:
+        """PortAudio device name ("" when it can't be read)."""
+        try:
+            return str(sd.query_devices(device_id).get("name", "")).strip()
+        except Exception:
+            return ""
+
+    def _model_label(self) -> str:
+        """The engine's display name ("GTCRN"), else "model"."""
+        try:
+            from ..constants import MODEL_INFO
+            return MODEL_INFO.get(self.model, {}).get("label") or "model"
+        except Exception:
+            return "model"
 
     def _on_host_event(self, msg: dict) -> None:
         """AudioHost events (its reader thread; signals are thread-safe)."""
@@ -312,13 +330,16 @@ class AudioWorker(QThread):
         self.status_changed.emit("Stopping...")
     
     def _cleanup(self) -> None:
-        """Clean up resources."""
-        if self._vb_cable_switcher is not None:
+        """Clean up resources (and say where playback went back to)."""
+        switcher, self._vb_cable_switcher = self._vb_cable_switcher, None
+        if switcher is not None:
             try:
-                self._vb_cable_switcher.restore_original_device()
+                restored = switcher.restore_original_device()
             except Exception:
-                pass
-            self._vb_cable_switcher = None
+                restored = False
+            original = getattr(switcher, "original_device", None)
+            if restored and original and "CABLE" not in original.upper():
+                self.status_changed.emit(f"Restored playback to {original}")
 
         self.status_changed.emit("Stopped")
 

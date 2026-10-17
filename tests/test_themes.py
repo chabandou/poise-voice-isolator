@@ -154,10 +154,39 @@ def test_six_themes_fill_a_three_by_two_grid():
 
 
 def test_ghost_buttons_hover_like_the_dropdown():
-    """One hover colour for fields and ghost buttons: the secondary."""
+    """One hover colour for fields and ghost buttons: the secondary.
+    (The dropdown's ring is painted in that colour: test_combo.py.)"""
     import re
     css = styles.get_stylesheet(scale=1.0, theme="abyss")
     ghost = re.search(r"QPushButton#ghost:hover\s*\{([^}]*)\}", css)
-    combo = re.search(r"QComboBox#device-combo:hover\s*\{([^}]*)\}", css)
-    assert ghost and combo
-    assert "#E8C468" in ghost.group(1) and "#E8C468" in combo.group(1)
+    assert ghost
+    assert "#E8C468" in ghost.group(1)
+
+
+def test_vigil_replaces_ultraviolet():
+    """Ultraviolet is retired; a saved choice lands on Vigil, its
+    successor, which also changes the Home backdrop and rhythm."""
+    ids = themes.theme_ids()
+    assert "ultraviolet" not in ids and "vigil" in ids
+    assert themes.resolve_id("ultraviolet") == "vigil"
+    assert themes.resolve_id("nope") == themes.DEFAULT_THEME
+    assert themes.set_current("ultraviolet") == "vigil"
+    assert themes.breathing() and themes.style("backdrop") == "sky"
+    themes.set_current(themes.DEFAULT_THEME)
+    assert not themes.breathing()
+    assert themes.style("backdrop") == "lattice"
+
+
+def _heading_weight(css):
+    rule = re.search(r"QLabel#home-title \{[^}]*?font-weight: (\d+);", css)
+    return int(rule.group(1))
+
+
+def test_vigil_stylesheet_glows_with_lighter_headings():
+    css = styles.get_stylesheet(scale=1.0, theme="vigil")
+    assert "qradialgradient" in css            # the night glow
+    assert "qlineargradient" in css            # softly lit cards
+    assert _heading_weight(css) == 600
+    abyss = styles.get_stylesheet(scale=1.0, theme="abyss")
+    assert "qradialgradient" not in abyss      # flat, as before
+    assert _heading_weight(abyss) == 700

@@ -3,7 +3,10 @@ Poise Voice Isolator - Dashboard Theme
 
 Card-based dark theme driven by gui/themes.py palettes: every hue in
 this sheet is a {token} resolved per theme, so all colorways stay
-self-matching. {HEADING_FONT} is the bundled heading face (gui/fonts.py).
+self-matching. {HEADING_FONT} is the bundled heading face (gui/fonts.py);
+{HEADING_WEIGHT}, {WINDOW_FILL} and {CARD_FILL} are optional per theme
+(themes.STYLE_DEFAULTS: bold headings on flat surfaces unless a theme,
+like Vigil, says otherwise).
 Custom-painted widgets (DialButton, ToggleSwitch) draw
 themselves from the same palette; icons come from the vendored
 Phosphor SVGs (see widgets/phosphor.py).
@@ -14,7 +17,7 @@ POISE_STYLESHEET = """
    GLOBAL SETTINGS
    ================================================================================= */
 QMainWindow {
-    background-color: {bg};
+    background-color: {WINDOW_FILL};
     color: {text};
 }
 
@@ -37,7 +40,7 @@ QLabel#logo {
     color: {text};
     font-family: {HEADING_FONT};
     font-size: 24px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
 }
 
 QPushButton#nav {
@@ -78,7 +81,7 @@ QLabel#version {
    CARDS
    ================================================================================= */
 QFrame#card {
-    background-color: {card};
+    background-color: {CARD_FILL};
     border: {CARD_BORDER_WIDTH}px solid rgba({border_rgb}, {border_alpha});
     border-radius: 16px;
 }
@@ -125,13 +128,13 @@ QLabel#device-title {
     font-family: {HEADING_FONT};
     color: {text};
     font-size: 24px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
 }
 
 QLabel#page-title {
     font-family: {HEADING_FONT};
     font-size: 34px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {text};
 }
 
@@ -143,7 +146,7 @@ QLabel#page-subtitle {
 QLabel#card-title {
     font-family: {HEADING_FONT};
     font-size: 24px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {text};
 }
 
@@ -151,7 +154,7 @@ QLabel#card-title {
 QLabel#row-title {
     font-family: {HEADING_FONT};
     font-size: 22px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {text};
 }
 
@@ -163,7 +166,7 @@ QLabel#row-sub {
 QLabel#row-value {
     font-family: {HEADING_FONT};
     font-size: 21px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {secondary};
 }
 
@@ -171,7 +174,7 @@ QLabel#row-value {
 QLabel#home-title {
     font-family: {HEADING_FONT};
     font-size: 36px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {text};
 }
 
@@ -179,7 +182,7 @@ QLabel#home-title {
 QLabel#model-name {
     font-family: {HEADING_FONT};
     font-size: 24px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {text};
     background-color: transparent;
 }
@@ -220,7 +223,7 @@ QFrame#err-chip {
 QLabel#step-num {
     font-family: {HEADING_FONT};
     font-size: 14px;
-    font-weight: 700;
+    font-weight: {HEADING_WEIGHT};
     color: {secondary};
     border: 1px solid rgba({secondary_rgb}, 0.55);
     border-radius: 12px;
@@ -272,6 +275,7 @@ QStatusBar::item {
 
 QLabel#sb-text,
 QLabel#sb-value,
+QLabel#sb-status,
 QLabel#sb-good,
 QLabel#sb-warn,
 QLabel#sb-bad {
@@ -282,6 +286,8 @@ QLabel#sb-bad {
 
 QLabel#sb-text { color: {muted}; }
 QLabel#sb-value { color: {text}; }
+QLabel#sb-status { color: {text}; }
+QLabel#sb-status[state="error"] { color: {error}; }
 QLabel#sb-good { color: {success}; }
 QLabel#sb-warn { color: {warning}; }
 QLabel#sb-bad { color: {error}; }
@@ -325,12 +331,6 @@ QLabel#stat-good { font-size: 20px; font-weight: 700; color: {success}; }
 QLabel#stat-warning { font-size: 20px; font-weight: 700; color: {warning}; }
 QLabel#stat-bad { font-size: 20px; font-weight: 700; color: {error}; }
 
-QLabel#thresh-value {
-    font-size: 15px;
-    font-weight: 600;
-    color: {accent};
-}
-
 /* =================================================================================
    DEVICE DROPDOWNS (underline style)
    ================================================================================= */
@@ -345,13 +345,8 @@ QComboBox#device-combo {
     font-size: 15px;
 }
 
-QComboBox#device-combo:hover {
-    border: 1px solid {secondary};
-}
-
-QComboBox#device-combo:on {
-    border: 1px solid {secondary};
-}
+/* No :hover / open border here: AnimatedComboBox paints the gold ring
+   (hover is lost while its popup holds the mouse; see widgets/combo.py). */
 
 QComboBox#device-combo:focus {
     outline: none;
@@ -370,27 +365,12 @@ QComboBox#device-combo::drop-down {
     border-left: 1px solid rgba(148, 163, 184, 0.2);
 }
 
+/* The chevron is painted by AnimatedComboBox (it turns as the list
+   opens), and the list itself is its card popup (widgets/combo.py). */
 QComboBox#device-combo::down-arrow {
-    image: url("{ASSETS_DIR}/chevron-down.svg");
+    image: none;
     width: 12px;
     height: 8px;
-}
-
-/* Dropdown popups (shared list styling for both combo styles).
-   NOTE: QSS ::item subcontrols never reach combo popup views, so row
-   height, dividers, and row states are painted by PopupItemDelegate
-   (see widgets/combo.py) — only the frame itself is styled here.
-   The popup's outer frame is styled in code (AnimatedComboBox): style-
-   sheets don't cascade into top-level popup windows, so it carries its
-   own tiny sheet. */
-QComboBox#device-combo QAbstractItemView,
-QComboBox#settings-combo QAbstractItemView {
-    background-color: transparent;
-    color: {text};
-    border: none;
-    padding: 0px;
-    outline: none;
-    font-size: 15px;
 }
 
 /* Settings-page dropdown (boxed style) */
@@ -584,7 +564,7 @@ QScrollArea#page-scroll {
 }
 
 QWidget#page {
-    background-color: {bg};
+    background-color: {WINDOW_FILL};
     border: none;
 }
 
@@ -648,6 +628,7 @@ def get_stylesheet(scale=None, theme=None) -> str:
     from .themes import (
         ACCENT_WASH_ALPHA,
         KEYS,
+        STYLE_DEFAULTS,
         get_theme,
     )
     from . import themes as _themes
@@ -657,6 +638,13 @@ def get_stylesheet(scale=None, theme=None) -> str:
     for key in KEYS:
         css = css.replace("{" + key + "}", str(palette[key]))
     css = css.replace("{ACCENT_WASH_ALPHA}", str(ACCENT_WASH_ALPHA))
+    # Optional theme styling (STYLE_DEFAULTS): fills fall back to the
+    # flat palette colours.
+    def styled(key):
+        return palette.get(key, STYLE_DEFAULTS[key])
+    css = css.replace("{HEADING_WEIGHT}", str(styled("heading_weight")))
+    css = css.replace("{WINDOW_FILL}", styled("window_fill") or palette["bg"])
+    css = css.replace("{CARD_FILL}", styled("card_fill") or palette["card"])
     from .fonts import heading_css
     css = css.replace("{HEADING_FONT}", heading_css())
     # Substitute after px-scaling so the stepped width is not scaled twice.

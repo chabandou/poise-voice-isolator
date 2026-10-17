@@ -112,66 +112,126 @@ def test_skip_silence_switch_locks_while_running(window, monkeypatch):
         window.settings.device_switch_done = switch_done
 
 
-def test_summary_follows_settings_changes(window):
+def test_threshold_follows_the_silence_switch(window):
     window.aad_switch.setChecked(False)
-    assert window.setup_summary._aad_value.text() == "Off"
     assert not window.thresh_slider.isEnabled()
     window.aad_switch.setChecked(True)
     window.thresh_slider.setValue(-33)
-    assert window.setup_summary._aad_value.text() == "On"
-    assert "-33 dB" in window.setup_summary._aad_sub.text()
     assert window.thresh_val_label.text() == "-33 dB"
 
 
-def test_model_cards_drive_the_summary(window):
+def test_home_and_settings_model_pickers_stay_in_step(window):
+    """Home's dropdown and Settings' cards show and save one choice."""
     usable = [m for m, c in window.model_cards._cards.items()
               if c.isEnabled()]
-    for model in usable:
+    assert window.model_selector.models() == usable
+    assert window.model_selector.currentText() == window.model_cards.currentText()
+    for model in usable:                     # Settings -> Home
         window.model_cards.setCurrentText(model)
-        label = window.setup_summary._model_value.text()
-        assert label and label != "-"
+        assert window.model_selector.currentText() == model
+        assert window.settings.model == model
+    for model in reversed(usable):           # Home -> Settings
+        window.model_selector.setCurrentText(model)
+        assert window.model_cards.currentText() == model
         assert window.settings.model == model
 
 
 def test_controls_lock_while_running(window):
+    output, model = window.output_selector, window.model_selector
     window._set_controls_enabled(False)
-    assert not window.output_selector.isEnabled()
+    assert output.is_locked and output._refresh_btn.isHidden()
+    assert model.is_locked
     assert not window.model_cards.isEnabled()
-    # The lock is explained once in the routing note, not the subtitle.
-    subtitle = "Where the clean audio plays"
-    assert window.output_selector._subtitle.text() == subtitle
+    # Each card's caption says why.
+    assert output._subtitle.text() == "Locked while running"
+    assert model._subtitle.text() == "Locked while running"
     window._set_controls_enabled(True)
-    assert window.output_selector.isEnabled()
+    assert not output.is_locked and not output._refresh_btn.isHidden()
+    assert not model.is_locked
     assert window.model_cards.isEnabled()
-    assert window.output_selector._subtitle.text() == subtitle
+    assert output._subtitle.text() == "Where the clean audio plays"
+    assert model._subtitle.text() == model.CAPTION
 
 
-def test_status_messages_drive_headline_and_status_bar(window, monkeypatch):
+@pytest.fixture()
+def no_dwell(monkeypatch):
+    """Status-bar steps show at once (wording, not pacing)."""
+    from stream_denoiser.gui.widgets import stats_bar
+    monkeypatch.setattr(stats_bar, "STEP_MIN_MS", 0)
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+
+
+def test_status_messages_drive_headline_and_status_bar(window, no_dwell):
+    """Home keeps only the headline; the status bar tells each step in
+    full. Errors also get a line under the headline."""
     from stream_denoiser.gui.main_window import HOME_TITLES
-    monkeypatch.setenv("POISE_NO_ANIM", "1")       # wording, not motion
+    bar = window.stats_bar
     window.update_status("Starting...")
     assert window.home_title.text() == HOME_TITLES["starting"]
-    assert window.stats_bar._state.text() == "starting…"
-    window.update_status("Loading model...")
-    assert window.stats_bar._state.text() == "loading model…"
+    assert bar.status_shown == "starting…"
+    assert window.status_label.isHidden()          # no status line
+    window.update_status("Output: Speakers (Realtek(R) Audio)")
+    assert window.home_title.text() == HOME_TITLES["starting"]
+    assert bar.status_shown == "output: Speakers (Realtek(R) Audio)"
+    window.update_status("Loading GTCRN...")
+    assert bar.status_shown == "loading GTCRN…"
     window.update_status("Isolating audio")
     assert window.home_title.text() == HOME_TITLES["isolating"]
-    assert window.stats_bar._state.text() == "processing"
+    assert bar.status_shown == "isolating"
     # The worker's loop says "Processing" after that; Home must stay put.
     window.update_status("Processing")
     assert window.home_title.text() == HOME_TITLES["isolating"]
-    assert window.stats_bar._state.text() == "processing"
+    assert bar.status_shown == "isolating"
+    window.update_status("Stopping...")
+    assert window.home_title.text() == HOME_TITLES["stopping"]
+    window.update_status("Restored playback to Speakers (Realtek(R) Audio)")
+    assert window.home_title.text() == HOME_TITLES["stopping"]
+    assert bar.status_shown.startswith("restored playback to Speakers")
     window.update_status("Error: boom")
     assert window.home_title.text() == HOME_TITLES["error"]
-    assert window.status_label.text() == "Error: boom"
+    assert window.status_label.text() == "boom"
+    assert not window.status_label.isHidden()
+    assert bar.status_shown == "error: boom"
     window.update_status("Ready")
     assert window.home_title.text() == HOME_TITLES["ready"]
-    assert window.stats_bar._state.text() == "ready"
+    assert window.status_label.isHidden()
+    assert bar.status_shown == "ready"
 
 
-def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
-    """Home's headline/status line fade between messages; a burst of
-    messages shows only the newest; the isolating pulse waits its turn."""
+def test_the_error_stays_up_while_the_worker_cleans_up(window, no_dwell):
+    """After a failed start the worker still says "Restored playback..."
+    and "Stopped": the error must stay until the next start."""
+    from stream_denoiser.gui.main_window import HOME_TITLES
+    window._error_state = True
+    window.update_status("Error: VB-CABLE: automatic switch failed.")
+    window._on_worker_status("Restored playback to Speakers")
+    window._on_worker_status("Stopped")
+    assert window.home_title.text() == HOME_TITLES["error"]
+    assert window.status_label.text() == (
+        "VB-CABLE: automatic switch failed.")
+    assert window.stats_bar.status_shown.startswith("error: VB-CABLE")
+    window._error_state = False
+    window._on_worker_status("Starting...")
+    assert window.home_title.text() == HOME_TITLES["starting"]
+    assert window.status_label.isHidden()
+
+
+def test_clicking_the_status_opens_the_log(app, window):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    window._on_page_requested(0)
+    area = window.stats_bar._status
+    QTest.mouseClick(area, Qt.MouseButton.LeftButton,
+                     pos=area.rect().center())
+    _pump(app, 0.6)
+    assert window.stack.currentIndex() == 2
+    window._on_page_requested(0)
+    _pump(app, 0.6)
+
+
+def test_headline_changes_fade_and_coalesce(app, window, monkeypatch):
+    """The headline fades between messages; a burst shows only the
+    newest."""
     from PyQt6.QtWidgets import QGraphicsOpacityEffect
     from stream_denoiser.gui.main_window import HOME_TITLES
     monkeypatch.delenv("POISE_NO_ANIM", raising=False)
@@ -182,39 +242,24 @@ def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
     # Mid-fade: the old text is still up, fading out.
     assert window.home_title.text() == HOME_TITLES["ready"]
     assert isinstance(window.home_title.graphicsEffect(), QGraphicsOpacityEffect)
-    window.update_status("Loading model...")    # arrives during the fade-out
+    window.update_status("Isolating audio")      # arrives during the fade-out
     _pump(app, 0.5)
-    assert window.home_title.text() == HOME_TITLES["starting"]
-    assert window.status_label.text() == "Loading model..."
+    assert window.home_title.text() == HOME_TITLES["isolating"]
     assert window.home_title.graphicsEffect() is None   # effect dropped
-    assert window.stats_bar._state.text() == "loading model…"
-
-    # Running: the pulse starts only after "Isolating" has faded in.
-    window.update_status("Isolating audio")
-    window._start_status_pulse()
-    assert window._status_pulse is None and window._status_swap.busy
-    _pump(app, 0.5)
-    assert window.status_label.text() == "Processing"
-    assert window._status_pulse is not None
-    assert window.status_label.graphicsEffect() is window._status_pulse_eff
-
-    # Leaving the isolating line stops the pulse so the swap can fade.
-    window.update_status("Stopping...")
-    assert window._status_pulse is None
-    _pump(app, 0.5)
-    assert window.status_label.text() == "Stopping..."
-    assert window.status_label.graphicsEffect() is None
-    window._stop_status_pulse()
 
 
 def test_home_only_keeps_the_everyday_controls(window):
-    """Silence/model/tray controls live in Settings; Home has the dial,
-    the output device and the read-only summary."""
+    """Silence/tray controls live in Settings; Home has the dial and,
+    under it, the output device and model cards."""
     from stream_denoiser.gui.widgets.slider import HoverSlider
     home = window.stack.widget(0)
     assert home.isAncestorOf(window.power_btn)
     assert home.isAncestorOf(window.output_selector)
-    assert home.isAncestorOf(window.setup_summary)
+    assert home.isAncestorOf(window.model_selector)
+    assert window._home_layout.indexOf(window._stage) == 0
+    cards = window._cards_layout
+    assert cards.itemAt(0).widget().isAncestorOf(window.output_selector)
+    assert cards.itemAt(1).widget().isAncestorOf(window.model_selector)
     assert not home.isAncestorOf(window.aad_switch)
     assert not home.isAncestorOf(window.model_cards)
     assert not home.findChildren(HoverSlider)
@@ -371,3 +416,23 @@ def test_reset_is_locked_while_running(window, monkeypatch):
     assert window._reset_row._sub.text() == "Locked while running"
     window._on_worker_stopped()
     assert window.reset_btn.isEnabled()
+
+
+def test_stop_ends_the_lattice_pings_at_once(window, monkeypatch):
+    """Pressing Stop ends the pings straight away (not when the worker
+    has finished stopping), so none goes out while stopping."""
+    monkeypatch.setattr(window, "tray", None)
+    monkeypatch.setattr(type(window.worker), "is_running",
+                        property(lambda self: True))
+    monkeypatch.setattr(window.worker, "stop", lambda: None)
+    switch_done = window.settings.device_switch_done
+    try:
+        window._on_worker_started()
+        window._stage.start_pings()
+        assert window._stage.pinging
+        window.power_btn._on_clicked()            # Stop
+        assert not window._stage.pinging
+        assert window.power_btn.phase() == "stopping"
+    finally:
+        window._on_worker_stopped()
+        window.settings.device_switch_done = switch_done
