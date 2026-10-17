@@ -250,6 +250,89 @@ def test_settings_row_lights_on_hover_and_focus(app):
     row.close()
 
 
+def _row_click(row, x, y, release_at=None):
+    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QEvent
+    left, none = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+    for kind, pt in ((QEvent.Type.MouseButtonPress, (x, y)),
+                     (QEvent.Type.MouseButtonRelease, release_at or (x, y))):
+        pos = QPointF(*pt)
+        event = QMouseEvent(kind, pos, row.mapToGlobal(pos), left,
+                            left if kind == QEvent.Type.MouseButtonPress
+                            else Qt.MouseButton.NoButton, none)
+        if kind == QEvent.Type.MouseButtonPress:
+            row.mousePressEvent(event)
+        else:
+            row.mouseReleaseEvent(event)
+
+
+def test_settings_row_toggles_from_anywhere(app):
+    from stream_denoiser.gui.widgets.settings_row import SettingsRow
+    from stream_denoiser.gui.widgets.switch import ToggleSwitch
+    from PyQt6.QtWidgets import QWidget
+    host = QWidget()        # a child row (a window keeps its cursor flag)
+    switch = ToggleSwitch(checked=False)
+    flips = []
+    switch.toggled.connect(flips.append)
+    row = SettingsRow("Title", "caption", switch, parent=host)
+    row.resize(900, 78)
+    host.resize(900, 78)
+    host.show()
+    _pump(app)
+    assert row.toggle is switch
+    _row_click(row, 60, 30)                       # on the title
+    assert switch.isChecked() and flips == [True]
+    _row_click(row, 450, 70)                      # empty middle of the row
+    assert not switch.isChecked() and flips == [True, False]
+    # Pressed on the row but let go off it: nothing (like a button).
+    _row_click(row, 60, 30, release_at=(60, 200))
+    assert flips == [True, False]
+    # A real click on the title/subtitle labels reaches the row.
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    QTest.mouseClick(row._title, Qt.MouseButton.LeftButton)
+    QTest.mouseClick(row._sub, Qt.MouseButton.LeftButton)
+    assert flips == [True, False, True, False]
+    # Clicking the switch itself flips it once (not again via the row).
+    QTest.mouseClick(switch, Qt.MouseButton.LeftButton)
+    assert flips == [True, False, True, False, True]
+    flips[:] = [True, False]
+    switch.blockSignals(True)
+    switch.setChecked(False)
+    switch.blockSignals(False)
+    # Locked: the row does nothing and loses the hand cursor.
+    row.set_locked(True)
+    assert not row.testAttribute(Qt.WidgetAttribute.WA_SetCursor)
+    _row_click(row, 60, 30)
+    assert flips == [True, False]
+    row.set_locked(False)
+    assert row.testAttribute(Qt.WidgetAttribute.WA_SetCursor)
+    _row_click(row, 60, 30)
+    assert flips == [True, False, True]
+    host.close()
+
+
+def test_settings_row_click_does_nothing_without_a_toggle(app):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QPushButton
+    from stream_denoiser.gui.widgets.settings_row import SettingsRow
+    from PyQt6.QtWidgets import QWidget
+    host = QWidget()
+    button = QPushButton("Reset")
+    clicks = []
+    button.clicked.connect(lambda: clicks.append(1))
+    row = SettingsRow("Title", "caption", button, parent=host)
+    row.resize(900, 78)
+    host.show()
+    _pump(app)
+    assert row.toggle is None
+    assert not row.testAttribute(Qt.WidgetAttribute.WA_SetCursor)
+    _row_click(row, 60, 30)
+    assert clicks == []
+    host.close()
+
+
 def test_settings_row_lock_note_swaps_subtitle_and_disables(app):
     from PyQt6.QtWidgets import QPushButton
     from stream_denoiser.gui.widgets.settings_row import SettingsRow
@@ -318,6 +401,45 @@ def test_row_highlight_covers_the_whole_row_height(app, first, last):
     for y in (12, 39, 66):                       # top, middle, bottom
         assert lit.pixelColor(x, y) != unlit.pixelColor(x, y), (
             first, last, y)
+
+
+def test_row_highlight_grows_while_it_fades_in(app):
+    """The wash fades in as its front travels from part-way across to its
+    full reach (never wiping on from nothing), and back on the way out."""
+    from PyQt6.QtWidgets import QPushButton
+    from stream_denoiser.gui.widgets import settings_row as sr
+    row = sr.SettingsRow("Title", "caption", QPushButton("x"))
+    row.set_position(True, True)
+    row.resize(900, 78)
+    row.show()
+    _pump(app)
+    row._hover = False
+    reach = 900 * sr.WASH_REACH
+    assert 0.25 <= sr.WASH_FROM <= 0.6
+    assert row.wash_front(0.0) == pytest.approx(reach * sr.WASH_FROM)
+    assert row.wash_front(1.0) == pytest.approx(reach)
+    assert row.wash_front(0.3) < row.wash_front(0.6) < row.wash_front(1.0)
+
+    def at(value):
+        row._lit_blend.snap(value)
+        return row.grab().toImage()
+
+    unlit, low, half, full = at(0.0), at(0.25), at(0.5), at(1.0)
+    row.close()
+    y = 72                                      # below the text
+
+    def glow(img, x):
+        c, base = img.pixelColor(x, y), unlit.pixelColor(x, y)
+        return (abs(c.red() - base.red()) + abs(c.green() - base.green())
+                + abs(c.blue() - base.blue()))
+
+    # Fades in: the left edge brightens steadily with the light level.
+    assert 0 < glow(low, 20) < glow(half, 20) < glow(full, 20)
+    # Grows: just short of full reach is dark at a low level, lit at full.
+    past = int(row.wash_front(0.25)) + 20
+    assert glow(low, past) == 0 and glow(full, past) > 0
+    # Nothing beyond the reach, even fully lit.
+    assert glow(full, int(reach) + 10) == 0
 
 
 def test_install_button_reaches_the_bundled_installer(app, monkeypatch):

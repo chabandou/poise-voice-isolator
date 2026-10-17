@@ -873,6 +873,7 @@ class Blend(QObject):
         self._value = float(value)
         self._target = float(value)
         self._duration = int(duration_ms)
+        self._easing = easing
         self._anim = QVariantAnimation(self)
         self._anim.setEasingCurve(easing)
         self._anim.valueChanged.connect(self._step)
@@ -894,7 +895,9 @@ class Blend(QObject):
         self._on_change()
 
     def set_target(self, target: float, animated: bool = True,
-                   duration_ms: int | None = None) -> None:
+                   duration_ms: int | None = None, easing=None) -> None:
+        """Glide to `target` (`duration_ms` / `easing` override the
+        defaults for this glide only, e.g. a slower way out)."""
         target = float(target)
         if target == self._target:
             return
@@ -903,10 +906,17 @@ class Blend(QObject):
                 or abs(self._value - target) < 1e-4):
             self.snap(target)
             return
+        start = self._value
         self._anim.stop()
+        # Reconfiguring a stopped animation re-emits its value at the old
+        # current time (a new duration moves that time's progress, e.g.
+        # 240 of 380 ms -> 0.7), which would jump the glide's start.
+        self._anim.blockSignals(True)
+        self._anim.setEasingCurve(self._easing if easing is None else easing)
         self._anim.setDuration(max(1, int(duration_ms or self._duration)))
-        self._anim.setStartValue(self._value)
+        self._anim.setStartValue(start)
         self._anim.setEndValue(target)
+        self._anim.blockSignals(False)
         self._anim.start()
 
     def snap(self, value: float) -> None:
