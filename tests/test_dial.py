@@ -308,3 +308,118 @@ def test_readout_digits_roll_to_the_value(app, motion):
     _pump(app, 0.6)
     assert btn._tens.value == pytest.approx(3) and btn._ones.value == pytest.approx(7)
     btn.close()
+
+
+# -- wheel / key steps: glide, trail, stretch ---------------------------------------
+def _wheel(btn, notches=1, ctrl=False):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+    centre = QPointF(btn.width() / 2, btn.height() / 2)
+    mods = (Qt.KeyboardModifier.ControlModifier if ctrl
+            else Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(btn, QWheelEvent(
+        centre, centre, QPoint(0, 0), QPoint(0, 120 * notches),
+        Qt.MouseButton.NoButton, mods, Qt.ScrollPhase.NoScrollPhase, False))
+
+
+def test_wheel_step_glides_the_needle_and_shows_it(app, motion):
+    """The value changes at once; the needle (and the lit edge) glide
+    there, shown like a drag, then fade back after the last step."""
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.set_strength_db(-30)
+    _pump(app, 0.1)
+    start = btn._needle_pos.value
+    assert start == d.lit_count(-30) - 1
+    assert btn._needle(btn._ms())[0] < 0.5          # idle: needle hidden
+    _wheel(btn, ctrl=True)                          # 10 dB stronger
+    assert btn.strength_db() == -40
+    target = d.lit_count(-40) - 1
+    assert btn._needle_pos.target == target
+    assert btn._needle_pos.value < target           # not jumped
+    _pump(app, 0.08)
+    assert start < btn._needle_pos.value < target   # mid-glide
+    _pump(app, 0.25)
+    assert btn._needle_pos.value == pytest.approx(target)
+    assert btn._needle(btn._ms())[0] == pytest.approx(1.0)   # shown
+    assert btn._strong_hot.target == 1.0            # heading strong
+    _pump(app, (d.NUDGE_HOLD_MS + d.NUDGE_FADE_MS) / 1000 + 0.1)
+    assert btn._nudge.value == pytest.approx(0.0)
+    assert btn._needle(btn._ms())[0] < 0.5          # faded back
+    assert btn._strong_hot.target == 0.0
+    btn.close()
+
+
+def test_wheel_step_leaves_a_trail_along_the_ticks_it_passes(app, motion):
+    """Each tick the needle passes flashes (like the starting comet) in
+    the order it passes them, then settles."""
+    import time as _time
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.set_strength_db(-30)
+    _pump(app, 0.1)
+    before = d.lit_count(-30)
+    _wheel(btn, ctrl=True)
+    after = d.lit_count(-40)
+    assert sorted(btn._trail) == list(range(before, after))  # newly lit
+    stamps = [btn._trail[i] for i in range(before, after)]
+    assert stamps == sorted(stamps)                 # in passing order
+    assert stamps[-1] - stamps[0] <= d.NUDGE_GLIDE_MS / 1000
+    _pump(app, 0.2)
+    now = _time.monotonic()
+    assert any(btn._trail_glow(i, now) > 0.2 for i in range(before, after))
+    btn.grab()                                      # paints the trail
+    _pump(app, (d.NUDGE_GLIDE_MS + d.TRAIL_MS) / 1000 + 0.1)
+    assert not btn._trail                           # all settled
+    # Gentler: the ticks going dark flash, from the old head down.
+    _wheel(btn, -1)
+    assert sorted(btn._trail) == list(range(d.lit_count(-38), after))
+    stamps = [btn._trail[i] for i in range(after - 1, d.lit_count(-38) - 1,
+                                               -1)]
+    assert stamps == sorted(stamps)
+    btn.close()
+
+
+def test_stepping_past_an_end_stretches_the_ring(app, motion):
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.set_strength_db(d.ATTEN_STRONG)
+    _pump(app, 0.1)
+    _wheel(btn)                                     # stronger than strongest
+    assert btn.strength_db() == d.ATTEN_STRONG
+    assert btn._over > 0                            # gives at the strong end
+    _pump(app, 0.8)
+    assert btn._over == pytest.approx(0.0, abs=0.01)
+    btn.set_strength_db(d.ATTEN_GENTLE)
+    _wheel(btn, -1)
+    assert btn._over < 0                            # ...and the gentle end
+    btn.close()
+
+
+def test_keys_step_like_the_wheel(app, motion):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.set_strength_db(-30)
+    _pump(app, 0.1)
+    QTest.keyClick(btn, Qt.Key.Key_End)
+    assert btn.strength_db() == d.ATTEN_STRONG
+    assert btn._needle_pos.value < d.TICKS - 1      # gliding, not jumped
+    assert btn._trail
+    btn.close()
+
+
+def test_drags_and_reduced_motion_do_not_glide(app, monkeypatch):
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.set_strength_db(-30)
+    btn._user_set_strength(-45)                     # drag-style change
+    assert btn._needle_pos.value == d.lit_count(-45) - 1
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    _wheel(btn, ctrl=True)
+    assert btn.strength_db() == -50
+    assert btn._needle_pos.value == d.lit_count(-50) - 1
+    assert not btn._trail and btn._over == 0.0
+    btn.close()

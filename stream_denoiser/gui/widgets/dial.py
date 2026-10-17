@@ -20,6 +20,12 @@ Motion, phase by phase:
   odometer; past either end the ring stretches up to OVERSHOOT_MAX
   degrees and springs back on release, which snaps to the nearest
   SNAP_DB step when within SNAP_WITHIN dB of it;
+- wheel / arrow keys: the needle shows and glides to the new value
+  (NUDGE_GLIDE_MS), the lit ticks filling or emptying behind it; each
+  tick it passes flashes like the starting comet and settles (a short
+  trail), it plucks and the ticks around it lift as in a drag, the end
+  it heads for lights, and a step past either end stretches the ring and
+  springs back. NUDGE_HOLD_MS after the last step it all fades away;
 - starting: lit ticks dim and a comet laps the ring once a second; the
   label's three dots light up in step with it;
 - live: ticks ignite one after another; when the sweep closes the needle
@@ -110,6 +116,12 @@ ERROR_FLASH_MS = 640
 SHAKE_MS = 480
 SHAKE = (0, -2, 4, -7, 7, -7, 7, -7, 4, -2, 0)   # design px, evenly spaced
 PLUCK_MS = 230
+NUDGE_GLIDE_MS = 220      # wheel / key step: the needle glides there
+NUDGE_HOLD_MS = 650       # ...stays lit this long after the last step
+NUDGE_FADE_MS = 360       # ...then fades back
+NUDGE_STRETCH = 0.55      # a step past an end stretches the ring this much
+TRAIL_MS = 520            # a tick the needle passes flashes, then settles
+TRAIL_PEAK = 0.14         # ...reaching full flash this far in
 PLUCK_BIG_MS = 420
 BUMP_MS = 340
 FRAME_MS = 16             # transitions
@@ -213,6 +225,16 @@ class DialButton(PowerButton):
         self._hot = False
         self._hot_blend = Blend(self, self.update, 140)  # head needle glow
         self._wheel_acc = 0
+        # Wheel / key steps: where the needle is drawn (in ticks; glides),
+        # how engaged the step motion is, and the passed ticks' flashes.
+        self._needle_pos = Blend(self, self.update, NUDGE_GLIDE_MS,
+                                 QEasingCurve.Type.OutCubic,
+                                 lit_count(self._strength_db) - 1)
+        self._nudge = Blend(self, self.update, 140)
+        self._nudge_timer = QTimer(self)
+        self._nudge_timer.setSingleShot(True)
+        self._nudge_timer.timeout.connect(self._end_nudge)
+        self._trail = {}                  # tick -> monotonic flash time
 
         # One clock drives every timed effect; the phase says which.
         self._phase = "idle"
@@ -276,16 +298,21 @@ class DialButton(PowerButton):
         db = clamp_db(db)
         if db != self._strength_db:
             self._strength_db = db
+            self._needle_pos.snap(lit_count(db) - 1)
             self._roll_digits()
             self.update()
 
-    def _user_set_strength(self, db) -> None:
+    def _user_set_strength(self, db, nudge: bool = False) -> None:
         db = clamp_db(db)
         if db == self._strength_db:
             return
         old = self._strength_db
         self._strength_db = db
-        if self._dragging:
+        if nudge:
+            self._glide_needle(lit_count(db) - 1)
+        else:
+            self._needle_pos.snap(lit_count(db) - 1)
+        if self._dragging or nudge:
             now = time.monotonic()
             if lit_count(db) != lit_count(old):
                 self._pluck_at = now
@@ -427,6 +454,8 @@ class DialButton(PowerButton):
         if (self._charge_from > 0.01
                 and self._since(self._charge_drop_at) < CHARGE_DROP_MS):
             return True
+        if self._trail or self._nudging():
+            return True
         return (self._since(self._pluck_at) < PLUCK_BIG_MS
                 or self._since(self._bump_at) < BUMP_MS
                 or self._sweeping())
@@ -436,6 +465,11 @@ class DialButton(PowerButton):
                 and self._since(self._sweep_at) < SWEEP_MS)
 
     def _tick(self) -> None:
+        if self._trail:
+            now = time.monotonic()
+            gone = TRAIL_MS / 1000.0
+            self._trail = {i: s for i, s in self._trail.items()
+                           if now - s < gone}
         if (self._phase == "live" and not self._ignited
                 and self._ms() >= self._ignite_end()):
             self._ignite()
@@ -444,6 +478,7 @@ class DialButton(PowerButton):
         else:
             # Once the live sweep has settled only slow loops are left.
             settled = (self._phase == "live"
+                       and not self._trail and not self._nudging()
                        and self._ms() > self._ignite_end() + RIPPLE_MS
                        and self._since(self._pluck_at) >= PLUCK_BIG_MS
                        and self._since(self._bump_at) >= BUMP_MS)
@@ -596,8 +631,67 @@ class DialButton(PowerButton):
             self._wheel_acc -= steps * 120
             ctrl = event.modifiers() & Qt.KeyboardModifier.ControlModifier
             unit = WHEEL_STEP_COARSE if ctrl else WHEEL_STEP
-            self._user_set_strength(self._strength_db - steps * unit)  # up = stronger
+            self._nudge_to(self._strength_db - steps * unit)  # up = stronger
         event.accept()
+
+    # -- stepped changes (wheel / keys) ---------------------------------------------
+    def _nudge_to(self, db) -> None:
+        """A wheel or key step: the needle glides there, trailing."""
+        target = clamp_db(db)
+        if motion_ok() and self.isVisible():
+            self._nudge.set_target(1.0)
+            self._nudge_timer.start(NUDGE_HOLD_MS)
+            if target == self._strength_db and target != db:
+                # Pushing past an end: the ring gives, then springs back.
+                self._drag_dir = 1 if db < target else -1
+                self._sync_ends()
+                self._over_anim.stop()
+                self._set_over(math.copysign(
+                    OVERSHOOT_MAX * NUDGE_STRETCH, -1 if db > target else 1))
+                self._spring_back()
+            self._run_clock()
+        self._user_set_strength(target, nudge=True)
+
+    def _glide_needle(self, target: float) -> None:
+        """Glide the needle to tick `target`, flashing each tick as the
+        needle (and the lit edge) passes it."""
+        start = self._needle_pos.value
+        if not motion_ok() or not self.isVisible() or start == target:
+            self._needle_pos.snap(target)
+            return
+        self._needle_pos.set_target(target)
+        now = time.monotonic()
+        span = target - start
+        lo, hi = sorted((start, target))
+        first = max(0, math.floor(lo + 0.5) + 1)   # ticks that change
+        for j in range(first, min(TICKS - 1, math.floor(hi + 0.5)) + 1):
+            # Tick j changes when the needle crosses j - 0.5; find when on
+            # the glide's OutCubic curve that happens.
+            frac = _clamp((j - 0.5 - start) / span)
+            u = 1.0 - (1.0 - frac) ** (1.0 / 3.0)
+            self._trail[j] = now + u * NUDGE_GLIDE_MS / 1000.0
+        self._run_clock()
+
+    def _end_nudge(self) -> None:
+        self._nudge.set_target(0.0, duration_ms=NUDGE_FADE_MS)
+        if not self._dragging:
+            self._drag_dir = 0
+            self._sync_ends()
+
+    def _nudging(self) -> bool:
+        return self._nudge.value > 0.001
+
+    def _trail_glow(self, i: int, now: float) -> float:
+        """0..1 flash of tick i in the step trail."""
+        stamp = self._trail.get(i)
+        if stamp is None:
+            return 0.0
+        u = (now - stamp) * 1000.0 / TRAIL_MS
+        if u < 0.0 or u >= 1.0:
+            return 0.0
+        if u < TRAIL_PEAK:
+            return _ease_out(u / TRAIL_PEAK)
+        return 1.0 - _ease_in_out((u - TRAIL_PEAK) / (1.0 - TRAIL_PEAK))
 
     # -- keyboard ------------------------------------------------------------------------
     def keyPressEvent(self, event):  # noqa: N802 (Qt override)
@@ -606,13 +700,13 @@ class DialButton(PowerButton):
                 Qt.Key.Key_Left: 1, Qt.Key.Key_Down: 1,
                 Qt.Key.Key_PageUp: -5, Qt.Key.Key_PageDown: 5}.get(key)
         if step is not None:
-            self._user_set_strength(self._strength_db + step)
+            self._nudge_to(self._strength_db + step)
             event.accept()
         elif key == Qt.Key.Key_Home:
-            self._user_set_strength(ATTEN_GENTLE)
+            self._nudge_to(ATTEN_GENTLE)
             event.accept()
         elif key == Qt.Key.Key_End:
-            self._user_set_strength(ATTEN_STRONG)
+            self._nudge_to(ATTEN_STRONG)
             event.accept()
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.click()
@@ -714,12 +808,20 @@ class DialButton(PowerButton):
         return _clamp((edge + 16.0 - ARC_SPAN * i / (TICKS - 1)) / 16.0)
 
     def _swell_px(self, angle: float, head_angle: float) -> float:
-        amount = self._swell.value
-        if amount <= 0.01:
-            return 0.0
-        centre = head_angle if self._dragging else self._swell_angle
-        d = abs(((angle - centre) + 180.0) % 360.0 - 180.0)
-        return amount * SWELL_PX * math.exp(-(d / SWELL_DEG) ** 2)
+        """Lift of the ticks around the pointer (or the needle while it
+        is dragged or stepped)."""
+        nudge = self._nudge.value
+        amount = self._swell.value * (1.0 - nudge)
+        lift = 0.0
+        if amount > 0.01:
+            centre = head_angle if self._dragging else self._swell_angle
+            d = abs(((angle - centre) + 180.0) % 360.0 - 180.0)
+            lift = amount * SWELL_PX * math.exp(-(d / SWELL_DEG) ** 2)
+        if nudge > 0.01:
+            d = abs(((angle - head_angle) + 180.0) % 360.0 - 180.0)
+            lift = max(lift, nudge * SWELL_PX
+                       * math.exp(-(d / SWELL_DEG) ** 2))
+        return lift
 
     def _needle(self, t: float):
         """(alpha, glow, radial scale) of the head needle."""
@@ -729,12 +831,13 @@ class DialButton(PowerButton):
             alpha = _ease_out(u / 0.4)
             glow = _rise_fall(u, 0.4)
         elif self._phase in ("idle", "live"):
-            alpha = 1.0 if (self._dragging or live) else self._hot_blend.value
+            alpha = 1.0 if (self._dragging or live) else max(
+                self._hot_blend.value, self._nudge.value)
             glow = 0.0
         else:
             return 0.0, 0.0, 1.0
         scale = 1.0
-        if self._dragging and self._pluck_at is not None:
+        if (self._dragging or self._nudging()) and self._pluck_at is not None:
             span = PLUCK_BIG_MS if self._pluck_big else PLUCK_MS
             hit = _rise_fall(self._since(self._pluck_at) / span, 0.38)
             scale += (0.1 if self._pluck_big else 0.045) * hit
@@ -831,8 +934,11 @@ class DialButton(PowerButton):
     def _paint_ring(self, p, col, t) -> None:
         """The ticks (lit ones show the strength) and the head needle."""
         c = REF / 2
-        lit = lit_count(self._strength_db)
-        head_angle = ARC_START + ARC_SPAN * max(0, lit - 1) / (TICKS - 1)
+        # The needle (and the lit edge) follow its glide on wheel steps.
+        pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
+        lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
+        head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
+        now = time.monotonic()
         p.save()
         p.translate(c, c)
         p.rotate(self._over)          # stretched past an end
@@ -849,6 +955,12 @@ class DialButton(PowerButton):
                 alpha = 1.0
             else:
                 colour, alpha, scale = col["unlit"], 1.0, 1.0
+            flash = self._trail_glow(i, now)
+            if flash > 0.0:   # passed by a stepped needle: a comet flash
+                tone = col["flash"] if self._phase == "live" else col["comet"]
+                colour = mix_rgba(colour, tone, 0.85 * flash)
+                alpha = max(alpha, flash)
+                scale = max(scale, 1.0 + 0.05 * flash)
             colour = QColor(colour)
             colour.setAlphaF(colour.alphaF() * alpha * visible)
             lift = self._swell_px(angle, head_angle)
@@ -860,7 +972,13 @@ class DialButton(PowerButton):
             alpha, glow, scale = self._needle(t)
             alpha *= self._sweep_visibility(lit - 1)
             if alpha > 0.01:
-                _, r_in, r_out = tick_geometry(lit - 1)
+                # Between ticks (mid-glide) its length blends theirs.
+                below = max(0, min(TICKS - 1, math.floor(pos)))
+                above = min(TICKS - 1, below + 1)
+                mix = _clamp(pos - below)
+                r_in = (tick_geometry(below)[1] * (1 - mix)
+                        + tick_geometry(above)[1] * mix)
+                r_out = R_OUT
                 lift = self._swell_px(head_angle, head_angle)
                 r0, r1 = (r_in + lift) * scale, (r_out + lift) * scale
                 halo = QColor(col["white"])
