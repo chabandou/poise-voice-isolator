@@ -596,3 +596,97 @@ def _enter(widget):
 def _leave(widget):
     from PyQt6.QtCore import QEvent
     widget.leaveEvent(QEvent(QEvent.Type.Leave))
+
+
+# -- D motion: lattice pings, icon motion, locked combos, status halo ----------
+@pytest.fixture
+def motion(monkeypatch):
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+
+
+def test_pattern_card_pings_from_its_origin_until_stopped(app, motion):
+    from PyQt6.QtWidgets import QVBoxLayout, QWidget
+    from stream_denoiser.gui.widgets.pattern_card import PatternCard
+    card = PatternCard()
+    card.resize(600, 400)
+    origin = QWidget()
+    origin.setFixedSize(100, 100)
+    QVBoxLayout(card).addWidget(origin)
+    card.set_ping_origin(origin)
+    card.show()
+    _pump(app, 0.05)
+    card.set_live(True)
+    card.start_pings()
+    assert card._ping_frame() is not None
+    assert card._ping_centre() is not None
+    card.grab()                                   # paints the ring
+    card.set_live(False)
+    assert card._ping_at is None and card._ping_frame() is None
+    card.close()
+
+
+def test_pattern_card_pings_stay_off_under_reduced_motion(app, monkeypatch):
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    from stream_denoiser.gui.widgets.pattern_card import PatternCard
+    card = PatternCard()
+    card.start_pings()
+    assert card._ping_at is None
+
+
+def test_motion_icon_plays_then_rests_and_the_gear_turns(app, motion):
+    from stream_denoiser.gui.widgets.phosphor import MotionIcon
+    bars = MotionIcon("waveform", size=20)
+    bars.show()
+    bars.play()
+    assert bars._moving_ms() is not None
+    bars.grab()                                   # paints the parts
+    _pump(app, 1.0)
+    assert bars._moving_ms() is None
+    gear = MotionIcon("gear", size=20)
+    gear.show()
+    gear.hover(True)
+    _pump(app, 0.8)
+    assert gear._angle == pytest.approx(60.0, abs=0.5)
+    gear.hover(False)
+    _pump(app, 0.8)
+    assert gear._angle == pytest.approx(0.0, abs=0.5)
+    bars.close()
+    gear.close()
+
+
+def test_locked_combo_click_jiggles_and_flashes_the_caption(app, motion):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from stream_denoiser.gui.widgets.model_selector import ModelSelector
+    selector = ModelSelector()
+    selector.resize(420, 140)
+    selector.show()
+    _pump(app, 0.1)
+    selector.set_locked(True)
+    _pump(app, 0.4)
+    assert selector._combo._lock.value == pytest.approx(1.0)
+    QTest.mouseClick(selector, Qt.MouseButton.LeftButton,
+                     pos=selector._combo.geometry().center())
+    assert selector._combo._jiggle_ms() is not None
+    assert "color" in selector._subtitle.styleSheet()
+    _pump(app, 1.7)
+    assert selector._subtitle.styleSheet() == ""     # back to its own colour
+    selector.set_locked(False)
+    _pump(app, 0.4)
+    assert selector._combo._lock.value == pytest.approx(0.0)
+    selector.close()
+
+
+def test_status_halo_runs_only_while_isolating(app, motion):
+    from stream_denoiser.gui.widgets.stats_bar import StatsBar
+    bar = StatsBar()
+    bar.show()
+    bar.set_state("processing", "loading GTCRN…")
+    assert bar._halo_at is None
+    bar.set_state("processing")                   # "isolating"
+    assert bar._halo_at is not None and bar._halo.isActive()
+    bar.grab()
+    bar.set_state("ready")
+    assert bar._halo_at is None and not bar._halo.isActive()
+    bar.close()

@@ -12,7 +12,9 @@ from PyQt6.QtCore import pyqtSignal
 
 from .chip import IconChip
 from .combo import BLURB_ROLE, AnimatedComboBox
+from ..animations import flash_colour
 from ..scaling import sp
+from ..themes import current as current_theme
 from ...constants import MODEL_INFO
 
 
@@ -93,6 +95,18 @@ class ModelSelector(QWidget):
     @property
     def is_locked(self) -> bool:
         return not self._combo.isEnabled()
+
+    def enterEvent(self, event):  # noqa: N802 (Qt override)
+        self._chip.play()   # the chip's die squeezes
+        super().enterEvent(event)
+
+    def mousePressEvent(self, event):  # noqa: N802 (Qt override)
+        # A click on the locked (disabled) combo arrives here: say why.
+        if self.is_locked and self._combo.geometry().contains(
+                event.position().toPoint()):
+            self._combo.jiggle()
+            flash_colour(self._subtitle, current_theme()["secondary"])
+        super().mousePressEvent(event)
 
     def refresh_theme(self) -> None:
         self._chip.refresh_theme()

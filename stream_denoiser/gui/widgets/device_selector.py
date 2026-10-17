@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from .phosphor import PhosphorIcon
+from .phosphor import MotionIcon
+from ..animations import flash_colour
 from ..themes import current as current_theme
 from .chip import IconChip
 from .combo import BLURB_ROLE, TITLE_ROLE, AnimatedComboBox
@@ -102,7 +103,7 @@ class DeviceSelector(QWidget):
 
         self._refresh_btn = QPushButton()
         self._refresh_btn.setObjectName("icon-btn")
-        self._refresh_icon = PhosphorIcon(
+        self._refresh_icon = MotionIcon(
             "refresh", color=current_theme()["secondary"], size=15)
         # Let the button (not the icon) own hover so its wash paints.
         self._refresh_icon.setAttribute(
@@ -118,6 +119,7 @@ class DeviceSelector(QWidget):
         refresh_layout.addWidget(self._refresh_icon,
                                  alignment=Qt.AlignmentFlag.AlignCenter)
         self._refresh_btn.setToolTip("Rescan audio devices")
+        self._refresh_btn.clicked.connect(self._refresh_icon.spin)
         self._refresh_btn.clicked.connect(self.refresh_devices)
         # Hidden while locked (its icon can't grey out); keeps its room.
         policy = self._refresh_btn.sizePolicy()
@@ -256,6 +258,18 @@ class DeviceSelector(QWidget):
     @property
     def is_locked(self) -> bool:
         return not self._combo.isEnabled()
+
+    def enterEvent(self, event):  # noqa: N802 (Qt override)
+        self._chip.play()   # the speaker's waves emit
+        super().enterEvent(event)
+
+    def mousePressEvent(self, event):  # noqa: N802 (Qt override)
+        # A click on the locked (disabled) combo arrives here: say why.
+        if self.is_locked and self._combo.geometry().contains(
+                event.position().toPoint()):
+            self._combo.jiggle()
+            flash_colour(self._subtitle, current_theme()["secondary"])
+        super().mousePressEvent(event)
 
     def refresh_theme(self) -> None:
         self._chip.refresh_theme()

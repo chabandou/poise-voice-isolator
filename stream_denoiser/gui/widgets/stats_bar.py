@@ -21,11 +21,15 @@ silence skipping is turned off (the processor then sends no aad_* keys).
 """
 import time
 
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QStyle, QStyleOption, QWidget,
+)
+from PyQt6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter
 
-from ..animations import TextSwap
+from ..animations import TextSwap, ease_out, motion_ok, stagger_in
 from ..scaling import sp
+from ..themes import current as current_theme
 
 STATE_WORDS = {
     "ready": "ready",
@@ -41,6 +45,10 @@ STATUS_MAX_W = 440
 #: How many messages may wait behind a step (oldest steps drop first).
 QUEUE_MAX = 3
 LOG_HINT = "Click to open the log."
+#: While isolating a halo leaves the status dot this often (ms)...
+HALO_MS = 2400
+#: ...growing to this many dot sizes as it fades.
+HALO_GROWTH = 2.8
 
 
 def _bar_voice(text: str) -> str:
@@ -112,9 +120,13 @@ class StatsBar(QWidget):
         self._state.setObjectName("sb-status")
         self._state.setProperty("state", "ready")
         state_box.addWidget(self._state)
-        self._state_swap = TextSwap(self._state)
+        self._state_swap = TextSwap(self._state, rise=sp(6))
         self._status.setToolTip(LOG_HINT)
         layout.addWidget(self._status)
+        self._halo_at = None
+        self._halo = QTimer(self)
+        self._halo.setInterval(33)
+        self._halo.timeout.connect(self._halo_frame)
 
         # Steps waiting their turn (see show_status).
         self._queue = []            # (state, text)
@@ -223,6 +235,62 @@ class StatsBar(QWidget):
         self._dot.setProperty("state", state)
         self._dot.style().unpolish(self._dot)
         self._dot.style().polish(self._dot)
+        self._set_halo(state == "processing"
+                       and text == STATE_WORDS["processing"])
+
+    # -- the live halo -------------------------------------------------------
+    def _set_halo(self, on: bool) -> None:
+        """While isolating, a halo leaves the dot every HALO_MS."""
+        if on and motion_ok():
+            if self._halo_at is None:
+                self._halo_at = time.monotonic()
+                self._halo.start()
+        elif self._halo_at is not None:
+            self._halo_at = None
+            self._halo.stop()
+            self.update(self._halo_rect())
+
+    def _halo_rect(self) -> QRect:
+        centre = self._dot.mapTo(self, self._dot.rect().center())
+        reach = int(self._dot.width() * HALO_GROWTH / 2) + 2
+        return QRect(centre.x() - reach, centre.y() - reach,
+                     2 * reach + 1, 2 * reach + 1)
+
+    def _halo_frame(self) -> None:
+        if self.isVisible():
+            self.update(self._halo_rect())
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        if self._halo_at is not None:
+            self._halo.start()
+
+    def hideEvent(self, event):  # noqa: N802 (Qt override)
+        self._halo.stop()   # e.g. hidden to the tray: no wake-ups
+        super().hideEvent(event)
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        p = QPainter(self)
+        opt = QStyleOption()
+        opt.initFrom(self)
+        self.style().drawPrimitive(
+            QStyle.PrimitiveElement.PE_Widget, opt, p, self)
+        if self._halo_at is not None:
+            phase = ((time.monotonic() - self._halo_at) * 1000.0
+                     % HALO_MS) / HALO_MS
+            if phase < 0.7:
+                u = phase / 0.7
+                colour = QColor(current_theme()["accent"])
+                colour.setAlphaF(0.6 * (1.0 - u))
+                half = self._dot.width() / 2.0
+                centre = (QPointF(self._dot.mapTo(self, QPoint(0, 0)))
+                          + QPointF(half, self._dot.height() / 2.0))
+                radius = half * (1.0 + (HALO_GROWTH - 1.0) * ease_out(u))
+                p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(colour)
+                p.drawEllipse(centre, radius, radius)
+        p.end()
 
     def _sync_hint(self) -> None:
         """"stats appear when running" only while idle (not beside a
@@ -252,6 +320,9 @@ class StatsBar(QWidget):
             self._live = True
             self._stats.setVisible(True)
             self._sync_hint()
+            # The readouts arrive one after another.
+            stagger_in(list(self._pairs.values()), step_ms=60,
+                       duration_ms=360)
         rtf = stats.get("rtf", 0)
         load = self._values["load"]
         load.setText(f"{rtf:.2f}x")

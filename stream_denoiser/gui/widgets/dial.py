@@ -8,20 +8,49 @@ is the theme's secondary colour; while isolating it turns to the accent.
 
 Evolves PowerButton and keeps its API (toggled_state / set_active /
 set_transitioning / set_error / is_active), so MainWindow wiring is
-unchanged. Press squash, success pop and the breathing loop come from
-PowerButton; the transitioning spin becomes a highlight that travels
-over the ticks. All motion respects POISE_NO_ANIM / POISE_REDUCE_MOTION.
+unchanged. The press squash comes from PowerButton; everything else runs
+on the dial's own clock. All motion respects POISE_NO_ANIM /
+POISE_REDUCE_MOTION (the dial then shows each state's resting look).
+
+Motion, phase by phase:
+- hover: ticks near the pointer lift outward and the head needle fades
+  in; over the disc its rim warms and the power stem lifts;
+- drag: the needle glides tick to tick and plucks (harder every 10 dB,
+  when the readout bumps too); the readout's digits roll like an
+  odometer; past either end the ring stretches up to OVERSHOOT_MAX
+  degrees and springs back on release, which snaps to the nearest
+  SNAP_DB step when within SNAP_WITHIN dB of it;
+- starting: lit ticks dim and a comet laps the ring once a second; the
+  label's three dots light up in step with it;
+- live: ticks ignite one after another; when the sweep closes the needle
+  flashes, the disc pops, a ripple leaves it and `ignited` fires (the
+  lattice pings follow it, see PatternCard). A slow brightness crest
+  then flows over the lit ticks, and the disc charges up (glow and rim)
+  in the second before each later ping;
+- stopping: the accent drains back from the head; the dots settle;
+- error: lit ticks flash white then settle red and the disc shakes.
 
 Geometry is authored in a 300-unit square and scaled to the widget, so
 the dial stays crisp at any UI scale.
 """
 import math
+import time
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtCore import (
+    QEasingCurve, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation,
+    pyqtSignal,
+)
+from PyQt6.QtGui import (
+    QColor, QFont, QFontMetricsF, QPainter, QPen, QRadialGradient,
+)
 
+from .pattern_card import PING_PERIOD_MS
 from .power_button import PowerButton
-from ..animations import Blend
+from ..animations import (
+    Blend, mix_rgba, motion_ok,
+    ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
+    ease_out as _ease_out, rise_fall as _rise_fall,
+)
 from ..fonts import heading_family
 from ..scaling import sp
 from ..themes import current as current_theme
@@ -35,6 +64,8 @@ ATTEN_GENTLE = -10   # least reduction -> ring empty
 ATTEN_DEFAULT = ATTEN_STRONG   # out of the box: full reduction
 WHEEL_STEP = 2          # dB per wheel notch
 WHEEL_STEP_COARSE = 10  # with Ctrl held
+SNAP_DB = 5             # a released drag snaps to these steps...
+SNAP_WITHIN = 1         # ...when this close to one
 
 REF = 300.0          # design square
 TICKS = 55           # ticks on the arc
@@ -48,6 +79,42 @@ DISC_R = 88.0
 RING_HIT_MIN = 102.0  # ring zone (drag) vs disc zone (click)
 RING_HIT_MAX = 150.0
 DISC_HIT = 100.0
+
+# -- motion (ms unless noted) ---------------------------------------------------
+SWEEP_DELAY_MS = 300      # first show: the ring sweeps on from the gentle end
+SWEEP_MS = 900
+SWELL_PX = 3.4            # hover lift of the ticks nearest the pointer
+SWELL_DEG = 13.0          # ...and how far it spreads
+OVERSHOOT_MAX = 4.0       # degrees the ring stretches past an end
+COMET_MS = 990            # starting: one lap of the comet
+COMET_STEP = 18           # ...the delay between neighbouring ticks
+DOT_STEP = 330            # the label's dots, a third of a lap apart
+IGNITE_STEP = 14          # live: between ticks igniting
+IGNITE_MS = 520           # one tick's ignition
+IGNITE_TAIL = 100         # the sweep "closes" this long after the last tick
+FLOW_MS = 3190            # live: the brightness crest's lap
+FLOW_STEP = 58
+NEEDLE_IN_MS = 460
+POP_MS = 480
+RIPPLE_MS = 1050
+CHARGE_LEAD_MS = 1144     # the disc charges this long before each later ping
+CHARGE_FADE_MS = 624
+DRAIN_STEP = 9            # stopping: between ticks draining back
+DRAIN_MS = 320
+DOTS_OUT_MS = 520
+GLYPH_MS = 420
+ERROR_FLASH_MS = 640
+SHAKE_MS = 480
+SHAKE = (0, -2, 4, -7, 7, -7, 7, -7, 4, -2, 0)   # design px, evenly spaced
+PLUCK_MS = 230
+PLUCK_BIG_MS = 420
+BUMP_MS = 340
+FRAME_MS = 16             # transitions
+LOOP_FRAME_MS = 33        # steady loops (the live crest and charge)
+
+LABELS = ("Start", "...", "Stop", "Retry")   # "..." is drawn as three dots
+LABEL_OF_PHASE = {"idle": 0, "starting": 1, "stopping": 1, "live": 2,
+                  "error": 3}
 
 
 def clamp_db(db) -> int:
@@ -67,6 +134,11 @@ def db_from_fraction(frac: float) -> int:
     return clamp_db(ATTEN_GENTLE - frac * (ATTEN_GENTLE - ATTEN_STRONG))
 
 
+def lit_count(db) -> int:
+    """How many ticks are lit at a strength."""
+    return int(round(TICKS * strength_fraction(db)))
+
+
 def angle_to_fraction(angle_deg: float, previous: float = None) -> float:
     """Map a pointer angle (degrees, y-down, 0 = 3 o'clock) to 0..1.
 
@@ -83,6 +155,22 @@ def angle_to_fraction(angle_deg: float, previous: float = None) -> float:
     return frac
 
 
+def overshoot_degrees(angle_deg: float, frac: float) -> float:
+    """How far the ring stretches (signed degrees) for a pointer at
+    `angle_deg` while the value sits at `frac`: 0 inside the arc, easing
+    toward OVERSHOOT_MAX past the end the value is pinned to."""
+    rel = (angle_deg - ARC_START) % 360.0
+    if frac >= 1.0:
+        past = rel - ARC_SPAN if rel >= ARC_SPAN else 45.0
+    elif frac <= 0.0:
+        past = rel - 360.0 if rel > ARC_SPAN else (-45.0 if rel > 0 else 0.0)
+    else:
+        return 0.0
+    past = max(-45.0, min(45.0, past))
+    return math.copysign(
+        OVERSHOOT_MAX * (1.0 - math.exp(-abs(past) / 16.0)), past)
+
+
 def tick_geometry(index: int, count: int = TICKS):
     """(angle in degrees, inner radius, outer radius) of one tick."""
     angle = ARC_START + ARC_SPAN * index / (count - 1)
@@ -90,10 +178,21 @@ def tick_geometry(index: int, count: int = TICKS):
     return angle, inner, R_OUT
 
 
+def _clamp(v: float) -> float:
+    return max(0.0, min(1.0, v))
+
+
+def _spring_curve(overshoot: float) -> QEasingCurve:
+    curve = QEasingCurve(QEasingCurve.Type.OutBack)
+    curve.setOvershoot(overshoot)
+    return curve
+
+
 class DialButton(PowerButton):
     """Tick-ring Start/Stop dial that also sets the reduction strength."""
 
     strength_changed = pyqtSignal(int)   # new dB value, user-driven only
+    ignited = pyqtSignal()               # the live sweep closed
 
     _dial_px = 0   # 0 -> sp(300); set by set_dial_size()
 
@@ -106,10 +205,43 @@ class DialButton(PowerButton):
         self._strength_db = ATTEN_DEFAULT
         self._dragging = False
         self._drag_frac = 0.0
+        self._drag_dir = 0                # -1 gentler, +1 stronger
         self._key_focus = False
         self._hot = False
         self._hot_blend = Blend(self, self.update, 140)  # head needle glow
         self._wheel_acc = 0
+
+        # One clock drives every timed effect; the phase says which.
+        self._phase = "idle"
+        self._phase_at = time.monotonic()
+        self._ignite_lit = 0              # lit ticks when the sweep began
+        self._ignited = False
+        self._drain_at = None             # stopping began (outlasts it)
+        self._sweep_at = None             # first show: the ring sweeps on
+        self._swept = False
+        self._pluck_at = None
+        self._pluck_big = False
+        self._bump_at = None
+        self._clock = QTimer(self)
+        self._clock.setInterval(FRAME_MS)
+        self._clock.timeout.connect(self._tick)
+
+        # Eased states.
+        self._swell = Blend(self, self.update, 220)
+        self._swell_angle = 0.0
+        self._disc_hot = Blend(self, self.update, 220)
+        self._gentle_hot = Blend(self, self.update, 200)
+        self._strong_hot = Blend(self, self.update, 200)
+        self._label = Blend(self, self.update, 400, _spring_curve(1.3))
+        tens, ones = divmod(-self._strength_db, 10)
+        self._tens = Blend(self, self.update, 400, _spring_curve(1.2), tens)
+        self._ones = Blend(self, self.update, 400, _spring_curve(1.2), ones)
+        self._over = 0.0                  # ring stretch, degrees
+        self._over_anim = QVariantAnimation(self)
+        self._over_anim.setDuration(560)
+        self._over_anim.setEasingCurve(_spring_curve(2.2))
+        self._over_anim.valueChanged.connect(self._set_over)
+
         self.setAccessibleName("Start isolating")
         self.setToolTip(
             "Press to start or stop. Drag the ring to set the reduction "
@@ -139,23 +271,53 @@ class DialButton(PowerButton):
         db = clamp_db(db)
         if db != self._strength_db:
             self._strength_db = db
+            self._roll_digits()
             self.update()
 
     def _user_set_strength(self, db) -> None:
         db = clamp_db(db)
-        if db != self._strength_db:
-            self._strength_db = db
-            self.update()
-            self.strength_changed.emit(db)
+        if db == self._strength_db:
+            return
+        old = self._strength_db
+        self._strength_db = db
+        if self._dragging:
+            now = time.monotonic()
+            if lit_count(db) != lit_count(old):
+                self._pluck_at = now
+                self._pluck_big = db % 10 == 0
+            if db % 10 == 0:
+                self._bump_at = now
+            self._drag_dir = 1 if db < old else -1
+            self._sync_ends()
+            self._run_clock()
+        self._roll_digits()
+        self.update()
+        self.strength_changed.emit(db)
 
-    # -- state overrides: keep the accessible name honest ------------------------
+    def _roll_digits(self) -> None:
+        tens, ones = divmod(-self._strength_db, 10)
+        animated = self.isVisible()
+        self._tens.set_target(tens, animated)
+        self._ones.set_target(ones, animated)
+
+    # -- state overrides: keep the accessible name and phase honest ------------
     def set_active(self, active: bool):
         super().set_active(active)
         self._sync_accessible()
+        self._sync_phase()
+
+    def set_transitioning(self, transitioning: bool):
+        super().set_transitioning(transitioning)
+        self._sync_phase()
+
+    def set_error(self, error: bool = True):
+        super().set_error(error)
+        self._sync_phase()
 
     def _on_clicked(self):
         super()._on_clicked()
         self._sync_accessible()
+        self._sync_phase()
 
     def _sync_accessible(self) -> None:
         self.setAccessibleName(
@@ -167,6 +329,127 @@ class DialButton(PowerButton):
         if self._has_error and not self._is_active:
             return "Retry"
         return "Stop" if self._is_active else "Start"
+
+    # PowerButton's own loops are replaced by the phase clock, and its
+    # success pop by the one that lands when the live sweep closes.
+    def _start_breathe(self) -> None:
+        self._run_clock()
+
+    def _stop_breathe(self) -> None:
+        pass
+
+    def _start_spin(self) -> None:
+        self._run_clock()
+
+    def _stop_spin(self) -> None:
+        pass
+
+    def _play_pop(self) -> None:
+        pass
+
+    # -- phases ---------------------------------------------------------------------
+    def _phase_now(self) -> str:
+        if self._is_transitioning:
+            return "starting" if self._is_active else "stopping"
+        if self._has_error:
+            return "error"
+        return "live" if self._is_active else "idle"
+
+    def _sync_phase(self) -> None:
+        phase = self._phase_now()
+        if phase == self._phase:
+            return
+        self._phase = phase
+        self._phase_at = time.monotonic()
+        if phase == "stopping":
+            self._drain_at = self._phase_at
+        elif phase != "idle":
+            self._drain_at = None
+        if phase == "live":
+            self._ignite_lit = lit_count(self._strength_db)
+            self._ignited = False
+            if not motion_ok():
+                self._ignite()
+        self._label.set_target(LABEL_OF_PHASE[phase], self.isVisible())
+        self._run_clock()
+        self.update()
+
+    def phase(self) -> str:
+        """idle | starting | live | stopping | error"""
+        return self._phase
+
+    def _ms(self) -> float:
+        """Milliseconds into the phase (settled when motion is reduced)."""
+        if not motion_ok():
+            return 1e9
+        return (time.monotonic() - self._phase_at) * 1000.0
+
+    @staticmethod
+    def _since(stamp) -> float:
+        """Milliseconds since a monotonic stamp (None: long ago)."""
+        if stamp is None or not motion_ok():
+            return 1e9
+        return (time.monotonic() - stamp) * 1000.0
+
+    def _ignite_end(self) -> float:
+        """When the live sweep closes (ms into the live phase)."""
+        return self._ignite_lit * IGNITE_STEP + IGNITE_TAIL
+
+    def _ignite(self) -> None:
+        if not self._ignited:
+            self._ignited = True
+            self.ignited.emit()
+
+    # -- the clock ------------------------------------------------------------------
+    def _run_clock(self) -> None:
+        if motion_ok() and not self._clock.isActive() and self._animating():
+            self._clock.setInterval(FRAME_MS)
+            self._clock.start()
+
+    def _animating(self) -> bool:
+        if self._phase in ("starting", "live", "stopping"):
+            return True
+        if self._since(self._drain_at) < (TICKS - 1) * DRAIN_STEP + DRAIN_MS:
+            return True
+        if self._phase == "error" and self._ms() < ERROR_FLASH_MS:
+            return True
+        return (self._since(self._pluck_at) < PLUCK_BIG_MS
+                or self._since(self._bump_at) < BUMP_MS
+                or self._sweeping())
+
+    def _sweeping(self) -> bool:
+        return (self._sweep_at is not None
+                and self._since(self._sweep_at) < SWEEP_MS)
+
+    def _tick(self) -> None:
+        if (self._phase == "live" and not self._ignited
+                and self._ms() >= self._ignite_end()):
+            self._ignite()
+        if not self._animating():
+            self._clock.stop()
+        else:
+            # Once the live sweep has settled only slow loops are left.
+            settled = (self._phase == "live"
+                       and self._ms() > self._ignite_end() + RIPPLE_MS
+                       and self._since(self._pluck_at) >= PLUCK_BIG_MS
+                       and self._since(self._bump_at) >= BUMP_MS)
+            interval = LOOP_FRAME_MS if settled else FRAME_MS
+            if self._clock.interval() != interval:
+                self._clock.setInterval(interval)
+        if self.isVisible():
+            self.update()
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        if not self._swept:
+            self._swept = True
+            if motion_ok():
+                self._sweep_at = time.monotonic() + SWEEP_DELAY_MS / 1000.0
+        self._run_clock()
+
+    def hideEvent(self, event):  # noqa: N802 (Qt override)
+        self._clock.stop()   # nothing to see (e.g. hidden to the tray)
+        super().hideEvent(event)
 
     # -- geometry helpers -----------------------------------------------------------
     def _ref_point(self, pos):
@@ -193,12 +476,34 @@ class DialButton(PowerButton):
         angle = math.degrees(math.atan2(dy, dx))
         frac = angle_to_fraction(angle, self._drag_frac)  # None: no pinning
         self._drag_frac = frac
+        self._over_anim.stop()
+        self._set_over(overshoot_degrees(angle, frac))
         self._user_set_strength(db_from_fraction(frac))
+
+    def _set_over(self, value) -> None:
+        self._over = float(value)
+        self.update()
+
+    def _spring_back(self) -> None:
+        """Let a stretched ring go."""
+        if abs(self._over) < 0.01 or not motion_ok():
+            self._set_over(0.0)
+            return
+        self._over_anim.stop()
+        self._over_anim.setStartValue(self._over)
+        self._over_anim.setEndValue(0.0)
+        self._over_anim.start()
 
     def _update_hover_cursor(self, pos) -> None:
         zone = self._zone(pos)
         self._hot = zone in ("ring", "disc")   # head needle lights on both
         self._sync_hot()
+        if zone == "ring" and not self._dragging:
+            dx, dy = self._ref_point(pos)
+            self._swell_angle = math.degrees(math.atan2(dy, dx))
+        self._swell.set_target(
+            1.0 if (zone == "ring" or self._dragging) else 0.0)
+        self._disc_hot.set_target(1.0 if zone == "disc" else 0.0)
         if self._dragging:
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
         elif zone == "ring":
@@ -213,7 +518,9 @@ class DialButton(PowerButton):
         if (event.button() == Qt.MouseButton.LeftButton and self.isEnabled()
                 and self._zone(event.position()) == "ring"):
             self._dragging = True
+            self._drag_dir = 0
             self._sync_hot()
+            self._swell.set_target(1.0)
             # No gap-pinning on the press itself: it lands wherever it is
             # clicked (from a full ring, a click on the first half used to
             # read as a jump across the bottom gap and be ignored).
@@ -235,6 +542,14 @@ class DialButton(PowerButton):
     def mouseReleaseEvent(self, event):  # noqa: N802 (Qt override)
         if self._dragging:
             self._dragging = False
+            # A release just off a SNAP_DB step lands on it.
+            db = self._strength_db
+            step = int(round(db / SNAP_DB)) * SNAP_DB
+            if step != db and abs(step - db) <= SNAP_WITHIN:
+                self._user_set_strength(step)
+            self._drag_dir = 0
+            self._sync_ends()
+            self._spring_back()
             self._update_hover_cursor(event.position())   # re-syncs the glow
             event.accept()
             return
@@ -244,9 +559,17 @@ class DialButton(PowerButton):
         self._hot_blend.set_target(1.0 if (self._hot or self._dragging)
                                    else 0.0)
 
+    def _sync_ends(self) -> None:
+        """"gentle" / "strong" light up on the side a drag is heading."""
+        self._gentle_hot.set_target(1.0 if self._drag_dir < 0 else 0.0)
+        self._strong_hot.set_target(1.0 if self._drag_dir > 0 else 0.0)
+
     def leaveEvent(self, event):  # noqa: N802 (Qt override)
         self._hot = False
         self._sync_hot()
+        if not self._dragging:
+            self._swell.set_target(0.0)
+        self._disc_hot.set_target(0.0)
         self.update()
         super().leaveEvent(event)
 
@@ -295,118 +618,409 @@ class DialButton(PowerButton):
         super().focusOutEvent(event)
         self.update()
 
+    # -- what each part looks like now ----------------------------------------------
+    @staticmethod
+    def _colours(palette) -> dict:
+        white = QColor("#ffffff")
+        gold = QColor(palette["secondary"])
+        unlit = QColor(palette["muted"])
+        unlit.setAlpha(80)
+        dim = QColor(gold)
+        dim.setAlphaF(0.36)
+        return {
+            "gold": gold, "accent": QColor(palette["accent"]),
+            "unlit": unlit, "dim": dim, "white": white,
+            "text": QColor(palette["text"]), "muted": QColor(palette["muted"]),
+            "error": QColor(palette["error"]),
+            "comet": mix_rgba(gold, white, 0.75),
+            "flash": mix_rgba(QColor(palette["accent_light"]), white, 0.6),
+            "groove": QColor(palette["groove"]),
+            "pill": QColor(palette["pill"]),
+            "focus": QColor(palette["accent_light"]),
+        }
+
+    def _comet_look(self, i: int, base: QColor, col: dict, t: float):
+        """Starting: (colour, radial scale) of tick i as the comet laps."""
+        u = t - i * COMET_STEP
+        if u < 0 or not motion_ok():
+            return base, 1.0
+        ph = (u % COMET_MS) / COMET_MS
+        if ph < 0.07:
+            return (mix_rgba(col["comet"], col["gold"], ph / 0.07),
+                    1.0 + 0.05 * (1 - ph / 0.07))
+        if ph < 0.18:
+            return mix_rgba(col["gold"], base, (ph - 0.07) / 0.11), 1.0
+        return base, 1.0
+
+    def _lit_look(self, i: int, col: dict, t: float):
+        """(colour, alpha factor, radial scale) of lit tick i."""
+        phase = self._phase
+        if phase == "starting":
+            colour, scale = self._comet_look(i, col["dim"], col, t)
+            return colour, 1.0, scale
+        if phase == "live":
+            u = (t - i * IGNITE_STEP) / IGNITE_MS
+            if u < 0:
+                colour, scale = col["gold"], 1.0
+            elif u < 0.35:
+                colour = mix_rgba(col["gold"], col["flash"], u / 0.35)
+                scale = 1.0 + 0.07 * _ease_out(u / 0.35)
+            elif u < 1:
+                v = _ease_out((u - 0.35) / 0.65)
+                colour = mix_rgba(col["flash"], col["accent"], v)
+                scale = 1.07 - 0.07 * v
+            else:
+                colour, scale = col["accent"], 1.0
+            # A brightness crest flows clockwise over the lit ticks.
+            ph = ((t + (TICKS - 1 - i) * FLOW_STEP) % FLOW_MS) / FLOW_MS
+            crest = (_ease_in_out(_rise_fall(ph / 0.32, 0.375))
+                     if ph < 0.32 else 0.0)
+            return colour, 0.78 + 0.22 * crest, scale
+        if phase == "error":
+            return (mix_rgba(col["white"], col["error"],
+                             _ease_out(t / ERROR_FLASH_MS)), 1.0, 1.0)
+        # idle / stopping: gold, or still draining back from the accent.
+        if self._drain_at is not None:
+            d = self._since(self._drain_at) - (TICKS - 1 - i) * DRAIN_STEP
+            if d < DRAIN_MS:
+                return (mix_rgba(col["accent"], col["gold"],
+                                 _ease_out(max(0.0, d) / DRAIN_MS)), 1.0, 1.0)
+        return col["gold"], 1.0, 1.0
+
+    def _sweep_visibility(self, i: int) -> float:
+        """First show: how much of tick i the entrance sweep has drawn."""
+        if self._sweep_at is None:
+            return 1.0
+        u = self._since(self._sweep_at) / SWEEP_MS
+        if u >= 1.0:
+            return 1.0
+        if u < 0:
+            return 0.0
+        edge = -16.0 + 316.0 * _ease_out(u)
+        return _clamp((edge + 16.0 - ARC_SPAN * i / (TICKS - 1)) / 16.0)
+
+    def _swell_px(self, angle: float, head_angle: float) -> float:
+        amount = self._swell.value
+        if amount <= 0.01:
+            return 0.0
+        centre = head_angle if self._dragging else self._swell_angle
+        d = abs(((angle - centre) + 180.0) % 360.0 - 180.0)
+        return amount * SWELL_PX * math.exp(-(d / SWELL_DEG) ** 2)
+
+    def _needle(self, t: float):
+        """(alpha, glow, radial scale) of the head needle."""
+        live = self._phase == "live"
+        if live and not self._dragging:
+            u = (t - (self._ignite_end() - 60)) / NEEDLE_IN_MS
+            alpha = _ease_out(u / 0.4)
+            glow = _rise_fall(u, 0.4)
+        elif self._phase in ("idle", "live"):
+            alpha = 1.0 if (self._dragging or live) else self._hot_blend.value
+            glow = 0.0
+        else:
+            return 0.0, 0.0, 1.0
+        scale = 1.0
+        if self._dragging and self._pluck_at is not None:
+            span = PLUCK_BIG_MS if self._pluck_big else PLUCK_MS
+            hit = _rise_fall(self._since(self._pluck_at) / span, 0.38)
+            scale += (0.1 if self._pluck_big else 0.045) * hit
+            if self._pluck_big:
+                glow = max(glow, hit)
+        return alpha, glow, scale
+
+    def _pop_scale(self, t: float) -> float:
+        if self._phase != "live":
+            return 1.0
+        u = (t - self._ignite_end()) / POP_MS
+        if u < 0 or u >= 1:
+            return 1.0
+        if u < 0.3:
+            return 1.0 - 0.1 * _ease_out(u / 0.3)
+        return 0.9 + 0.1 * _back((u - 0.3) / 0.7)
+
+    def _charge(self, t: float) -> float:
+        """Live: 0..1 glow of the disc around each later lattice ping."""
+        if self._phase != "live" or not motion_ok():
+            return 0.0
+        rel = t - self._ignite_end()
+        k = max(1, round(rel / PING_PERIOD_MS))
+        d = rel - k * PING_PERIOD_MS
+        if -CHARGE_LEAD_MS <= d < 0:
+            return _ease_in(1.0 + d / CHARGE_LEAD_MS)
+        if 0 <= d < CHARGE_FADE_MS:
+            return 1.0 - _ease_out(d / CHARGE_FADE_MS)
+        return 0.0
+
+    def _shake_px(self, t: float) -> float:
+        if self._phase != "error" or t >= SHAKE_MS:
+            return 0.0
+        pos = t / SHAKE_MS * (len(SHAKE) - 1)
+        i = int(pos)
+        nxt = SHAKE[min(i + 1, len(SHAKE) - 1)]
+        return SHAKE[i] + (nxt - SHAKE[i]) * (pos - i)
+
+    def _glyph_colour(self, col: dict, t: float) -> QColor:
+        phase = self._phase
+        if phase == "error":
+            return col["error"]
+        if phase == "live":
+            start = self._ignite_end() - 120
+            return mix_rgba(col["gold"], col["accent"],
+                            _ease_out((t - start) / GLYPH_MS))
+        if phase == "stopping":
+            return mix_rgba(col["accent"], col["gold"], _ease_out(t / GLYPH_MS))
+        return col["gold"]
+
     # -- painting ------------------------------------------------------------------------
     @staticmethod
-    def _blend(a: QColor, b: QColor, t: float) -> QColor:
-        t = max(0.0, min(1.0, t))
-        return QColor(
-            int(a.red() + (b.red() - a.red()) * t),
-            int(a.green() + (b.green() - a.green()) * t),
-            int(a.blue() + (b.blue() - a.blue()) * t),
-            int(a.alpha() + (b.alpha() - a.alpha()) * t))
-
-    @staticmethod
     def _centered_text(p, text, cx, baseline, font, color) -> None:
-        from PyQt6.QtGui import QFontMetricsF
         p.setFont(font)
         p.setPen(color)
         width = QFontMetricsF(font).horizontalAdvance(text)
         p.drawText(QPointF(cx - width / 2, baseline), text)
 
+    @staticmethod
+    def _line(p, angle, r0, r1, colour, width) -> None:
+        c = REF / 2
+        pen = QPen(colour, width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        rad = math.radians(angle)
+        cs, sn = math.cos(rad), math.sin(rad)
+        p.drawLine(QPointF(c + r0 * cs, c + r0 * sn),
+                   QPointF(c + r1 * cs, c + r1 * sn))
+
     def paintEvent(self, event):  # noqa: N802 (Qt override)
         w, h = self.width(), self.height()
         k = min(w, h) / REF
-        palette = current_theme()
-        active, error = self._is_active, self._has_error
-        accent = QColor(palette["accent"])
-        text = QColor(palette["text"])
-        muted = QColor(palette["muted"])
-        if error and not active:
-            live = QColor(palette["error"])
-        elif active:
-            live = accent
-        else:
-            live = QColor(palette["secondary"])
-        unlit = QColor(muted)
-        unlit.setAlpha(80)
-
-        press = max(0.0, min(1.0, self._press))
-        pop = max(0.0, min(1.0, self._pop))
-        scale = (1.0 - 0.07 * press) * (0.86 + 0.14 * pop)
+        col = self._colours(current_theme())
+        t = self._ms()
+        c = REF / 2
 
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.translate(w / 2, h / 2)
-        p.scale(k * scale, k * scale)
-        p.translate(-REF / 2, -REF / 2)
+        p.scale(k, k)
+        p.translate(-c, -c)
+        self._paint_ring(p, col, t)
+        self._paint_core(p, col, t)
+        self._paint_readout(p, col)
+        p.end()
+
+    def _paint_ring(self, p, col, t) -> None:
+        """The ticks (lit ones show the strength) and the head needle."""
         c = REF / 2
-
-        # Tick ring: lit ticks show the reduction strength.
-        lit = int(round(TICKS * strength_fraction(self._strength_db)))
-        # Head needle: always bright while running, otherwise it fades up
-        # on hover/drag and back down on leave.
-        head_t = 1.0 if active else (
-            1.0 if self._dragging else self._hot_blend.value)
+        lit = lit_count(self._strength_db)
+        head_angle = ARC_START + ARC_SPAN * max(0, lit - 1) / (TICKS - 1)
+        p.save()
+        p.translate(c, c)
+        p.rotate(self._over)          # stretched past an end
+        p.translate(-c, -c)
         for i in range(TICKS):
+            visible = self._sweep_visibility(i)
+            if visible <= 0.0:
+                continue
             angle, r_in, r_out = tick_geometry(i)
-            width = 4.0
             if i < lit:
-                col = QColor(live)
-                if active and not error:
-                    col.setAlpha(int(205 + 50 * self._breathe))
+                colour, alpha, scale = self._lit_look(i, col, t)
+            elif self._phase == "starting":
+                colour, scale = self._comet_look(i, col["unlit"], col, t)
+                alpha = 1.0
             else:
-                col = QColor(unlit)
-            if i == lit - 1 and lit > 0 and head_t > 0.01:
-                col = self._blend(col, QColor(text), head_t)
-                width = 4.0 + head_t
-            if self._is_transitioning:
-                d = abs(((angle - self._spin) + 180.0) % 360.0 - 180.0)
-                if d < 28.0:
-                    col = self._blend(col, QColor(palette["accent_light"]),
-                                      1.0 - d / 28.0)
-                    width = 5.0
-            pen = QPen(col, width)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            p.setPen(pen)
-            rad = math.radians(angle)
-            cs, sn = math.cos(rad), math.sin(rad)
-            p.drawLine(QPointF(c + r_in * cs, c + r_in * sn),
-                       QPointF(c + r_out * cs, c + r_out * sn))
+                colour, alpha, scale = col["unlit"], 1.0, 1.0
+            colour = QColor(colour)
+            colour.setAlphaF(colour.alphaF() * alpha * visible)
+            lift = self._swell_px(angle, head_angle)
+            self._line(p, angle, (r_in + lift) * scale,
+                       (r_out + lift) * scale, colour, 4.0)
 
-        # Disc.
-        p.setPen(QPen(QColor(palette["groove"]), 2.0))
-        p.setBrush(QColor(palette["pill"]))
+        # The head needle: white over the last lit tick.
+        if lit > 0:
+            alpha, glow, scale = self._needle(t)
+            alpha *= self._sweep_visibility(lit - 1)
+            if alpha > 0.01:
+                _, r_in, r_out = tick_geometry(lit - 1)
+                lift = self._swell_px(head_angle, head_angle)
+                r0, r1 = (r_in + lift) * scale, (r_out + lift) * scale
+                halo = QColor(col["white"])
+                halo.setAlphaF(alpha * (0.12 + 0.4 * glow))
+                self._line(p, head_angle, r0, r1, halo, 8.0 + 8.0 * glow)
+                needle = QColor(col["text"])
+                needle.setAlphaF(alpha)
+                self._line(p, head_angle, r0, r1, needle, 5.0)
+        p.restore()
+
+    def _paint_core(self, p, col, t) -> None:
+        """Ripple, disc, charge glow, power glyph and the rolling label."""
+        c = REF / 2
+        live = self._phase == "live"
+
+        # The ripple leaving the disc as the live sweep closes.
+        if live:
+            u = (t - self._ignite_end()) / RIPPLE_MS
+            if 0 <= u < 1:
+                ring = QColor(col["accent"])
+                ring.setAlphaF(0.8 * (1 - u))
+                p.setPen(QPen(ring, 2.0))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                radius = DISC_R * (1 + 0.64 * (1 - (1 - u) ** 4))
+                p.drawEllipse(QPointF(c, c), radius, radius)
+
+        press = max(0.0, min(1.0, self._press))
+        scale = (1.0 - 0.07 * press) * self._pop_scale(t)
+        p.save()
+        p.translate(c + self._shake_px(t), c)
+        p.scale(scale, scale)
+        p.translate(-c, -c)
+
+        charge = self._charge(t)
+        if charge > 0.01:   # soft light just outside the rim
+            glow = QRadialGradient(QPointF(c, c), DISC_R + 26)
+            outer, clear = QColor(col["accent"]), QColor(col["accent"])
+            outer.setAlphaF(0.18 * charge)
+            clear.setAlphaF(0.0)
+            glow.setColorAt(DISC_R / (DISC_R + 26), outer)
+            glow.setColorAt(1.0, clear)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(glow)
+            p.drawEllipse(QPointF(c, c), DISC_R + 26, DISC_R + 26)
+
+        # Disc: the rim warms under the pointer (gold idle, accent live).
+        hot = self._disc_hot.value
+        tint = QColor(col["accent"] if live else col["gold"])
+        tint.setAlphaF(0.45)
+        p.setPen(QPen(mix_rgba(col["groove"], tint, hot), 2.0))
+        p.setBrush(col["pill"].lighter(100 + int(8 * hot)))
         p.drawEllipse(QPointF(c, c), DISC_R, DISC_R)
+        if charge > 0.01:   # glow inside the rim, and the rim itself
+            inner = QRadialGradient(QPointF(c, c), DISC_R)
+            edge, clear = QColor(col["accent"]), QColor(col["accent"])
+            edge.setAlphaF(0.3 * charge)
+            clear.setAlphaF(0.0)
+            inner.setColorAt(0.62, clear)
+            inner.setColorAt(1.0, edge)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(inner)
+            p.drawEllipse(QPointF(c, c), DISC_R - 1, DISC_R - 1)
+            rim = QColor(col["accent"])
+            rim.setAlphaF(0.9 * charge)
+            p.setPen(QPen(rim, 2.5))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(c, c), DISC_R - 0.5, DISC_R - 0.5)
         if self._key_focus and self.hasFocus():
-            focus = QColor(palette["accent_light"])
-            p.setPen(QPen(focus, 2.0))
+            p.setPen(QPen(col["focus"], 2.0))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(c, c), DISC_R + 6.0, DISC_R + 6.0)
 
-        # Power glyph + state label, centred together in the disc.
-        glyph = QPen(live, 5.5)
+        # Power glyph: the stem sinks under a press and lifts on hover.
+        glyph = QPen(self._glyph_colour(col, t), 5.5)
         glyph.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(glyph)
         p.setBrush(Qt.BrushStyle.NoBrush)
         gy, gr = 137.75, 20.0
-        p.drawLine(QPointF(c, gy - 26.0), QPointF(c, gy - 6.0))
+        stem = 3.0 * press - 1.5 * hot
+        p.drawLine(QPointF(c, gy - 26.0 + stem), QPointF(c, gy - 6.0 + stem))
         p.drawArc(QRectF(c - gr, gy - gr, 2 * gr, 2 * gr), 130 * 16, 280 * 16)
 
+        self._paint_label(p, col, t)
+        p.restore()
+
+    def _paint_label(self, p, col, t) -> None:
+        """Start / dots / Stop / Retry, rolled through like a drum."""
+        c = REF / 2
+        top, step = 173.0, 26.0
+        p.save()
+        p.setClipRect(QRectF(c - 60, top, 120, step))
         head = QFont(heading_family())
         head.setPixelSize(21)
         head.setWeight(QFont.Weight.Bold)
-        label_color = QColor(palette["error"]) if (error and not active) else text
-        self._centered_text(p, self.state_label(), c, 191.0, head, label_color)
+        pos = self._label.value
+        for index, text in enumerate(LABELS):
+            y = top + step * (index - pos)
+            if y <= top - step or y >= top + step:
+                continue
+            if index == 1:
+                self._paint_dots(p, col, t, y + step / 2)
+            else:
+                colour = col["error"] if index == 3 else col["text"]
+                self._centered_text(p, text, c, y + 18.0, head, colour)
+        p.restore()
 
-        # Reduction readout below the disc, inside the ring's open end.
+    def _paint_dots(self, p, col, t, cy) -> None:
+        """The "..." label: lit in step with the comet while starting,
+        settling right to left while stopping."""
+        c = REF / 2
+        p.setPen(Qt.PenStyle.NoPen)
+        for j in range(3):
+            colour, alpha, lift, scale = QColor(col["text"]), 0.35, 0.0, 1.0
+            if self._phase == "starting" and motion_ok():
+                colour, alpha = QColor(col["gold"]), 0.3
+                u = t - j * DOT_STEP
+                if u >= 0:
+                    ph = (u % COMET_MS) / COMET_MS
+                    if ph < 0.33:
+                        v = ph / 0.33
+                        lift, scale = -4.0 * (1 - v), 1.25 - 0.25 * v
+                        if ph < 0.12:
+                            colour = mix_rgba(col["comet"], col["gold"],
+                                              ph / 0.12)
+                            alpha = 1.0
+                        else:
+                            alpha = 1.0 - 0.7 * (ph - 0.12) / 0.21
+            elif self._phase == "stopping":
+                q = _ease_in((t - (2 - j) * 110) / DOTS_OUT_MS)
+                colour = mix_rgba(col["accent"], col["gold"], q)
+                alpha, lift, scale = 1.0 - 0.75 * q, 3.0 * q, 1.0 - 0.3 * q
+            colour.setAlphaF(colour.alphaF() * alpha)
+            p.setBrush(colour)
+            r = 3.0 * scale
+            p.drawEllipse(QPointF(c + (j - 1) * 13.0, cy + lift), r, r)
+
+    def _paint_readout(self, p, col) -> None:
+        """"-50 dB" with rolling digits, its caption and the end labels."""
+        c = REF / 2
         big = QFont(heading_family())
         big.setPixelSize(30)
         big.setWeight(QFont.Weight.Bold)
-        self._centered_text(p, f"{self._strength_db} dB", c, 276.0, big, text)
+        metrics = QFontMetricsF(big)
+        digit_w = max(metrics.horizontalAdvance(str(d)) for d in range(10))
+        minus_w = metrics.horizontalAdvance("-")
+        unit_w = metrics.horizontalAdvance("dB")
+        total = minus_w + 2 * digit_w + 6.0 + unit_w
+        baseline, step = 276.0, 32.0
+
+        p.save()
+        bump = _rise_fall(self._since(self._bump_at) / BUMP_MS, 0.4)
+        if bump > 0:
+            p.translate(c, baseline - 11)
+            p.scale(1 + 0.08 * bump, 1 + 0.08 * bump)
+            p.translate(-c, -(baseline - 11))
+        x = c - total / 2
+        p.setFont(big)
+        p.setPen(col["text"])
+        p.drawText(QPointF(x, baseline), "-")
+        x += minus_w
+        for column in (self._tens.value, self._ones.value):
+            p.save()
+            p.setClipRect(QRectF(x, baseline - 28, digit_w, 34))
+            first = max(0, int(math.floor(column)) - 1)
+            for d in range(first, min(10, first + 3)):
+                width = metrics.horizontalAdvance(str(d))
+                p.drawText(QPointF(x + (digit_w - width) / 2,
+                                   baseline + step * (d - column)), str(d))
+            p.restore()
+            x += digit_w
+        p.drawText(QPointF(x + 6.0, baseline), "dB")
+        p.restore()
+
         small = QFont(self.font())
         small.setPixelSize(12)
-        self._centered_text(p, "reduction strength", c, 294.0, small, muted)
-        self._centered_text(p, "gentle", 52.0, 278.0, small, muted)
-        self._centered_text(p, "strong", 248.0, 278.0, small, muted)
-        p.end()
+        self._centered_text(p, "reduction strength", c, 294.0, small,
+                            col["muted"])
+        for label, x, blend, shift in (
+                ("gentle", 52.0, self._gentle_hot, -3.0),
+                ("strong", 248.0, self._strong_hot, 3.0)):
+            tone = mix_rgba(col["muted"], col["text"], blend.value)
+            self._centered_text(p, label, x + shift * blend.value, 278.0,
+                                small, tone)

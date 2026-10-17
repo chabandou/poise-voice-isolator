@@ -313,3 +313,27 @@ def test_text_swap_is_instant_when_hidden_reduced_or_effect_taken(
     monkeypatch.setenv("POISE_NO_ANIM", "1")
     swap.set_text("instant")
     assert shown_label.text() == "instant"
+
+
+def test_text_swap_can_roll_and_still_drops_its_effect(app, shown_label, monkeypatch):
+    from PyQt6.QtWidgets import QGraphicsOpacityEffect
+    from stream_denoiser.gui.animations import TextSwap, _RollEffect
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    swap = TextSwap(shown_label, rise=12)
+    swap.set_text("rolled")
+    eff = shown_label.graphicsEffect()
+    assert isinstance(eff, _RollEffect) and isinstance(eff, QGraphicsOpacityEffect)
+    _pump(app, 0.5)
+    assert shown_label.text() == "rolled"
+    assert shown_label.graphicsEffect() is None
+
+
+def test_rise_in_lands_and_removes_its_effect(app, shown_label, monkeypatch):
+    from stream_denoiser.gui.animations import rise_in
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    rise_in(shown_label, delay_ms=0, duration_ms=120, rise=10)
+    assert shown_label.graphicsEffect() is not None
+    _pump(app, 0.4)
+    assert shown_label.graphicsEffect() is None

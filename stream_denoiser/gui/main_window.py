@@ -76,6 +76,7 @@ ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
 VB_AUDIO_URL = "https://vb-audio.com/"
 # Where the About page's Donate button goes. Empty hides the button.
 DONATE_URL = ""
+QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's "no maximum" for widget sizes
 
 
 class MainWindow(QMainWindow):
@@ -352,16 +353,20 @@ class MainWindow(QMainWindow):
         self.status_label.setWordWrap(True)
         self.status_label.setVisible(False)
         stage_layout.addWidget(self.status_label)
-        # Headline changes fade instead of snapping (several can arrive in
-        # quick succession while starting; only the newest fades in).
+        # Headline changes roll instead of snapping (several can arrive in
+        # quick succession while starting; only the newest rolls in).
         from .animations import TextSwap
-        self._title_swap = TextSwap(self.home_title)
+        self._title_swap = TextSwap(self.home_title, out_ms=120, in_ms=240,
+                                    rise=sp(14))
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()
         self.power_btn.toggled_state.connect(self.toggle_processing)
         self.power_btn.set_strength_db(self._saved_atten_db())
         self.power_btn.strength_changed.connect(self._on_atten_changed)
+        # The lattice pings out from the dial once its live sweep closes.
+        stage.set_ping_origin(self.power_btn)
+        self.power_btn.ignited.connect(stage.start_pings)
         stage_layout.addWidget(
             self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         stage_layout.addStretch(1)
@@ -379,6 +384,7 @@ class MainWindow(QMainWindow):
         cards.setSpacing(sp(16))
         self._cards_layout = cards
         self._home_card_layouts = []
+        self._home_cards = []
 
         # Input is always VB-Cable (named in the status bar); only the
         # output is picked here.
@@ -397,6 +403,7 @@ class MainWindow(QMainWindow):
             card_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
             card_layout.addWidget(content)
             self._home_card_layouts.append(card_layout)
+            self._home_cards.append(card)
             cards.addWidget(card, stretch=1)
         layout.addLayout(cards)
         return page
@@ -861,6 +868,13 @@ class MainWindow(QMainWindow):
                     self._window_fade = anim  # keep alive
                 except Exception:
                     pass
+            # Home's cards rise into place one after another (the dial
+            # sweeps its ring on by itself).
+            if self.stack.currentIndex() == 0:
+                from .animations import rise_in
+                for i, card in enumerate([self._stage] + self._home_cards):
+                    rise_in(card, delay_ms=60 + 90 * i, duration_ms=520,
+                            rise=sp(14))
         except Exception:
             pass
 
@@ -1194,8 +1208,34 @@ class MainWindow(QMainWindow):
         text = message.strip()
         if text.lower().startswith("error:"):
             text = text[len("error:"):].strip()
-        self.status_label.setText(text)
-        self.status_label.setVisible(bool(text))
+        label = self.status_label
+        opening = bool(text) and label.isHidden()
+        label.setText(text)
+        label.setVisible(bool(text))
+        if opening:
+            self._open_error_line()
+        elif not text:
+            label.setMaximumHeight(QWIDGETSIZE_MAX)
+
+    def _open_error_line(self) -> None:
+        """The error line opens (the dial glides down to make room) and
+        its text rises in, instead of both jumping into place."""
+        from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
+        from .animations import motion_ok, rise_in
+        label = self.status_label
+        if not motion_ok() or not label.isVisible():
+            return
+        width = label.width() or label.sizeHint().width()
+        full = max(1, label.heightForWidth(width), label.sizeHint().height())
+        anim = QPropertyAnimation(label, b"maximumHeight", label)
+        anim.setDuration(340)
+        anim.setStartValue(0)
+        anim.setEndValue(full)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: label.setMaximumHeight(QWIDGETSIZE_MAX))
+        self._error_line_anim = anim
+        anim.start()
+        rise_in(label, delay_ms=100, duration_ms=300, rise=sp(4))
 
     def handle_error(self, message: str):
         """Handle error from worker."""

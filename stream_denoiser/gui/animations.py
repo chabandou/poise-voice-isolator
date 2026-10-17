@@ -324,6 +324,106 @@ def fade_in(widget: QWidget, delay_ms: int = 0, duration_ms: int = D_OUT,
         return None
 
 
+def rise_in(widget: QWidget, delay_ms: int = 0, duration_ms: int = 520,
+            rise: float = 14.0) -> None:
+    """Entrance: fade in while rising `rise` px into place. The offset is
+    drawn (an effect), so the layout never moves; same safety rules as
+    fade_in, and the effect is removed once the widget has landed."""
+    if not motion_ok():
+        return
+    try:
+        cancel_fade(widget)
+        gen = int(getattr(widget, "_apple_fade_gen", 0) or 0)
+        eff = _RollEffect(widget)
+        eff.setOpacity(0.0)
+        eff.set_dy(rise)
+        widget.setGraphicsEffect(eff)
+    except Exception:
+        return
+
+    def _start() -> None:
+        try:
+            if widget.graphicsEffect() is not eff:
+                return  # someone else's effect now
+            if int(getattr(widget, "_apple_fade_gen", 0) or 0) != gen:
+                widget.setGraphicsEffect(None)   # superseded: land at once
+                return
+            anim = QVariantAnimation(widget)
+            anim.setDuration(max(1, int(duration_ms)))
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            anim.setEasingCurve(EASE_OUT)
+
+            def _step(v) -> None:
+                eff.setOpacity(float(v))
+                eff.set_dy(rise * (1.0 - float(v)))
+
+            def _done() -> None:
+                try:
+                    if getattr(widget, "_apple_fade", None) is anim:
+                        widget._apple_fade = None  # type: ignore[attr-defined]
+                    if widget.graphicsEffect() is eff:
+                        widget.setGraphicsEffect(None)
+                except RuntimeError:
+                    pass
+
+            anim.valueChanged.connect(_step)
+            anim.finished.connect(_done)
+            widget._apple_fade = anim  # type: ignore[attr-defined]
+            _keep(widget, anim)
+            anim.start()
+        except Exception:
+            pass
+
+    if delay_ms > 0:
+        QTimer.singleShot(int(delay_ms), _start)
+    else:
+        _start()
+
+
+def flash_colour(label: QWidget, colour: str, duration_ms: int = 1500,
+                 hold: float = 0.35) -> None:
+    """Draw attention to a label: its text takes `colour`, holds it for
+    the first `hold` of the time, then fades back to its own colour. A
+    widget-local sheet carries the colour while it runs and is dropped
+    at the end (the label must not have a local sheet of its own)."""
+    if not motion_ok():
+        return
+    try:
+        from PyQt6.QtGui import QPalette
+        old = getattr(label, "_flash_anim", None)
+        if old is not None:          # re-flash: keep the true resting colour
+            old.stop()
+            base = label._flash_base  # type: ignore[attr-defined]
+        else:
+            base = label.palette().color(QPalette.ColorRole.WindowText)
+            label._flash_base = base  # type: ignore[attr-defined]
+        target = QColor(colour)
+        anim = QVariantAnimation(label)
+        anim.setDuration(max(1, int(duration_ms)))
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+
+        def _step(v) -> None:
+            t = max(0.0, (float(v) - hold) / (1.0 - hold))
+            label.setStyleSheet(f"color: {mix_rgba(target, base, t).name()};")
+
+        def _done() -> None:
+            try:
+                label.setStyleSheet("")
+                label._flash_anim = None  # type: ignore[attr-defined]
+            except RuntimeError:
+                pass
+
+        anim.valueChanged.connect(_step)
+        anim.finished.connect(_done)
+        label._flash_anim = anim  # type: ignore[attr-defined]
+        _step(0.0)
+        anim.start()
+    except Exception:
+        pass
+
+
 def stagger_in(widgets, base_delay_ms: int = 0, step_ms: int = 55,
                duration_ms: int = 220) -> None:
     """Apple-style staggered card entrance: fade cascade, no layout shift."""
@@ -711,6 +811,42 @@ def tween_float(target: QObject, prop: bytes, end: float,
 
 
 # -- eased state blends --------------------------------------------------------
+# -- easing for painted, clock-driven motion (t clamped to 0..1) ---------------
+def _unit(t: float) -> float:
+    return max(0.0, min(1.0, float(t)))
+
+
+def ease_out(t: float) -> float:
+    """Cubic ease-out."""
+    t = _unit(t)
+    return 1.0 - (1.0 - t) ** 3
+
+
+def ease_in(t: float) -> float:
+    """Quadratic ease-in."""
+    t = _unit(t)
+    return t * t
+
+
+def ease_in_out(t: float) -> float:
+    """Smoothstep."""
+    t = _unit(t)
+    return 3 * t * t - 2 * t * t * t
+
+
+def ease_back(t: float, overshoot: float = 1.7) -> float:
+    """Out-back: past 1, then settles (a spring)."""
+    t = _unit(t) - 1.0
+    return t * t * ((overshoot + 1.0) * t + overshoot) + 1.0
+
+
+def rise_fall(u: float, peak: float) -> float:
+    """0 -> 1 at `peak` -> 0 at 1, linear (0 outside 0..1)."""
+    if u <= 0.0 or u >= 1.0:
+        return 0.0
+    return u / peak if u < peak else 1.0 - (u - peak) / (1.0 - peak)
+
+
 def mix_rgba(a: QColor, b: QColor, t: float) -> QColor:
     """Linear blend of two colours including alpha (t clamped to 0..1)."""
     t = max(0.0, min(1.0, t))
@@ -925,10 +1061,36 @@ def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260):
         return None
 
 
+class _RollEffect(QGraphicsOpacityEffect):
+    """Opacity plus a vertical offset, drawn (not laid out): TextSwap's
+    roll. The bounding rect grows with the offset so nothing clips."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._dy = 0.0
+
+    def set_dy(self, dy: float) -> None:
+        self._dy = float(dy)
+        self.updateBoundingRect()
+        self.update()
+
+    def boundingRectFor(self, rect):  # noqa: N802 (Qt override)
+        pad = abs(self._dy) + 1.0
+        return super().boundingRectFor(rect).adjusted(0, -pad, 0, pad)
+
+    def draw(self, painter):
+        painter.save()
+        painter.translate(0, self._dy)
+        super().draw(painter)
+        painter.restore()
+
+
 class TextSwap(QObject):
     """Change a label's text with a quick fade out, then fade in.
 
     Opacity only (layout-safe), and the effect is removed once settled.
+    With `rise` (px) the text also rolls: the old one leaves upward and
+    the new one rises into place, still without touching the layout.
     Updates coalesce: text that arrives while the old text is fading out
     replaces the pending one, so a burst of status messages shows only the
     newest instead of flashing through each. Hidden labels and reduced
@@ -945,9 +1107,11 @@ class TextSwap(QObject):
     OUT_MS = 90
     IN_MS = 170
 
-    def __init__(self, label, out_ms: int = OUT_MS, in_ms: int = IN_MS):
+    def __init__(self, label, out_ms: int = OUT_MS, in_ms: int = IN_MS,
+                 rise: float = 0.0):
         super().__init__(label)
         self._label = label
+        self._rise = float(rise)
         self._out_ms, self._in_ms = out_ms, in_ms
         self._text = label.text()
         self._eff = None
@@ -994,19 +1158,30 @@ class TextSwap(QObject):
         if self._anim is not None:
             self._anim.stop()
         if self._eff is None or self._label.graphicsEffect() is not self._eff:
-            self._eff = QGraphicsOpacityEffect(self._label)
+            self._eff = (_RollEffect(self._label) if self._rise
+                         else QGraphicsOpacityEffect(self._label))
             self._label.setGraphicsEffect(self._eff)
         self._eff.setOpacity(start)
         self._phase = phase
+        self._roll(start)
         anim = QPropertyAnimation(self._eff, b"opacity", self)
         anim.setDuration(max(1, int(ms * abs(start - end))) if phase == "out"
                          else ms)
         anim.setStartValue(start)
         anim.setEndValue(end)
         anim.setEasingCurve(EASE_OUT)
+        if self._rise:
+            anim.valueChanged.connect(self._roll)
         anim.finished.connect(self._step)
         self._anim = anim
         anim.start()
+
+    def _roll(self, opacity) -> None:
+        """Offset in step with the fade: up and out, then up into place."""
+        if not isinstance(self._eff, _RollEffect):
+            return
+        away = self._rise * (1.0 - float(opacity))
+        self._eff.set_dy(-away if self._phase == "out" else away)
 
     def _show_text(self) -> None:
         apply, self._apply = self._apply, None

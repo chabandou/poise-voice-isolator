@@ -218,3 +218,93 @@ def test_transition_does_not_hand_focus_to_the_next_widget(app):
     _pump(app)
     assert btn.hasFocus()                 # keyboard users keep their place
     host.close()
+
+
+# -- motion: phases, ignition, snap, stretch ------------------------------------
+@pytest.fixture
+def motion(monkeypatch):
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+
+
+def test_phases_follow_the_state_api(app, motion):
+    btn = _make(app)
+    assert btn.phase() == "idle"
+    btn._is_active = True                 # a click flips it first
+    btn.set_transitioning(True)
+    assert btn.phase() == "starting"
+    btn.set_transitioning(False)
+    assert btn.phase() == "live"
+    btn._is_active = False
+    btn.set_transitioning(True)
+    assert btn.phase() == "stopping"
+    btn.set_transitioning(False)
+    assert btn.phase() == "idle"
+    btn.set_error(True)
+    assert btn.phase() == "error"
+    btn.close()
+
+
+def test_live_sweep_closes_once_with_ignited(app, motion):
+    btn = _make(app)
+    fired = []
+    btn.ignited.connect(lambda: fired.append(1))
+    btn.set_active(True)
+    assert btn.phase() == "live" and fired == []
+    _pump(app, btn._ignite_end() / 1000.0 + 0.25)
+    assert fired == [1]
+    _pump(app, 0.2)
+    assert fired == [1]                   # once per start
+    btn.close()
+
+
+def test_reduced_motion_ignites_at_once_and_keeps_still(app, monkeypatch):
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    btn = _make(app)
+    fired = []
+    btn.ignited.connect(lambda: fired.append(1))
+    btn.set_active(True)
+    assert fired == [1]
+    assert not btn._clock.isActive()
+    btn.close()
+
+
+def test_release_just_off_a_step_snaps_to_it(app, motion):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    btn = _make(app)
+    seen = []
+    btn.strength_changed.connect(seen.append)
+    pos = _ring_pos(btn, 4.5)             # 0.85 of the arc: -44 dB
+    QTest.mousePress(btn, Qt.MouseButton.LeftButton, pos=pos)
+    assert btn.strength_db() == -44
+    QTest.mouseRelease(btn, Qt.MouseButton.LeftButton, pos=pos)
+    assert btn.strength_db() == -45 and seen[-1] == -45
+    btn.close()
+
+
+def test_ring_stretches_past_an_end_and_springs_back(app, motion):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from stream_denoiser.gui.widgets import dial
+    assert dial.overshoot_degrees(270.0, 0.5) == 0.0
+    past_strong = dial.overshoot_degrees(65.0, 1.0)      # into the gap
+    assert 0 < past_strong <= dial.OVERSHOOT_MAX
+    assert dial.overshoot_degrees(120.0, 0.0) < 0         # before gentle
+    btn = _make(app)
+    start = _ring_pos(btn, 30)
+    QTest.mousePress(btn, Qt.MouseButton.LeftButton, pos=start)
+    QTest.mouseMove(btn, _ring_pos(btn, 60))              # past "strong"
+    assert btn._over > 0 and btn.strength_db() == dial.ATTEN_STRONG
+    QTest.mouseRelease(btn, Qt.MouseButton.LeftButton, pos=_ring_pos(btn, 60))
+    _pump(app, 0.8)
+    assert btn._over == pytest.approx(0.0, abs=0.05)
+    btn.close()
+
+
+def test_readout_digits_roll_to_the_value(app, motion):
+    btn = _make(app)
+    btn.set_strength_db(-37)
+    _pump(app, 0.6)
+    assert btn._tens.value == pytest.approx(3) and btn._ones.value == pytest.approx(7)
+    btn.close()

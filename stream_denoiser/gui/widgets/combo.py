@@ -50,6 +50,9 @@ Flicker guards (each one was a visible flash, measured on Windows):
 
 The wheel scrolls the page, not the choice (see wheelEvent).
 """
+import math
+import time
+
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QScrollArea, QStyle, QStyleOptionComboBox,
     QVBoxLayout, QWidget,
@@ -893,9 +896,13 @@ class CardPopup(QWidget):
 # -- the combo ----------------------------------------------------------------
 class AnimatedComboBox(QComboBox):
     """QComboBox that opens CardPopup and paints its ring and a turning
-    chevron."""
+    chevron. Disabled (locked while running), the chevron turns into a
+    padlock; jiggle() shakes it and flashes the ring, for a click on the
+    locked box (its owner catches those: a disabled widget gets none)."""
 
     RING_MS = 150
+    LOCK_MS = 260
+    JIGGLE_MS = 560
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -903,6 +910,11 @@ class AnimatedComboBox(QComboBox):
         self._ghost = None
         self._chevron = Blend(self, self.update, OPEN_MS)
         self._ring = Blend(self, self.update, self.RING_MS)
+        self._lock = Blend(self, self.update, self.LOCK_MS)
+        self._jiggle_at = None
+        self._jiggle_timer = QTimer(self)
+        self._jiggle_timer.setInterval(16)
+        self._jiggle_timer.timeout.connect(self._jiggle_frame)
         self._hovered = False
         # After a close, Qt sends no Enter until the mouse moves (and so
         # no Leave either): poll the pointer until it has left.
@@ -1025,6 +1037,28 @@ class AnimatedComboBox(QComboBox):
         super().changeEvent(event)
         if event.type() == QEvent.Type.EnabledChange:
             self._sync_ring()
+            self._lock.set_target(0.0 if self.isEnabled() else 1.0,
+                                  animated=motion_ok() and self.isVisible())
+
+    # -- the padlock (disabled) --------------------------------------------
+    def jiggle(self) -> None:
+        """Shake the padlock and flash the ring: "locked while running"."""
+        if not motion_ok():
+            return
+        self._jiggle_at = time.monotonic()
+        self._jiggle_timer.start()
+
+    def _jiggle_ms(self):
+        if self._jiggle_at is None:
+            return None
+        t = (time.monotonic() - self._jiggle_at) * 1000.0
+        return t if t < self.JIGGLE_MS else None
+
+    def _jiggle_frame(self) -> None:
+        if self._jiggle_ms() is None:
+            self._jiggle_timer.stop()
+            self._jiggle_at = None
+        self.update()
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
         self._hover_watch.stop()
@@ -1040,6 +1074,9 @@ class AnimatedComboBox(QComboBox):
     def _paint_ring(self) -> None:
         """Gold over the QSS rest border (same box: 1px, 10px radius)."""
         lit = self._ring.value
+        jiggle = self._jiggle_ms()
+        if jiggle is not None:   # a locked click flashes it
+            lit = max(lit, 1.0 - jiggle / self.JIGGLE_MS)
         if lit <= 0.01:
             return
         color = QColor(current_theme()["secondary"])
@@ -1067,22 +1104,52 @@ class AnimatedComboBox(QComboBox):
             return
         palette = current_theme()
         t = self._chevron.value
+        locked = self._lock.value
         color = mix_rgba(QColor(palette["muted"]),
                          QColor(palette["secondary"]), t)
         if not self.isEnabled():
             color.setAlphaF(color.alphaF() * 0.45)
-        half_w, half_h = 5.0 * ui_scale(), 2.5 * ui_scale()   # 12x8 glyph
+        u = ui_scale()
+        half_w, half_h = 5.0 * u, 2.5 * u   # 12x8 glyph
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.translate(QRectF(area).center())
-        p.rotate(180.0 * t)
         pen = QPen(color, max(1.5, sp(2)))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        p.setPen(pen)
-        path = QPainterPath()
-        path.moveTo(-half_w, -half_h)
-        path.lineTo(0, half_h)
-        path.lineTo(half_w, -half_h)
-        p.drawPath(path)
+        if locked < 0.99:                   # the chevron shrinks away...
+            p.save()
+            p.rotate(180.0 * t)
+            p.scale(1.0 - 0.5 * locked, 1.0 - 0.5 * locked)
+            color.setAlphaF(color.alphaF() * (1.0 - locked))
+            pen.setColor(color)
+            p.setPen(pen)
+            path = QPainterPath()
+            path.moveTo(-half_w, -half_h)
+            path.lineTo(0, half_h)
+            path.lineTo(half_w, -half_h)
+            p.drawPath(path)
+            p.restore()
+        if locked > 0.01:                   # ...as the padlock grows in
+            jiggle = self._jiggle_ms()
+            if jiggle is not None:
+                v = jiggle / self.JIGGLE_MS
+                p.rotate(14.0 * math.sin(v * math.pi * 5.0) * (1.0 - v))
+            size = 0.5 + 0.5 * locked
+            p.scale(size, size)
+            gold = QColor(palette["secondary"])
+            gold.setAlphaF(0.85 * locked)
+            pen.setColor(gold)
+            pen.setWidthF(max(1.4, 1.6 * u))
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(-5 * u, -1 * u, 10 * u, 7.5 * u),
+                              1.5 * u, 1.5 * u)
+            shackle = QPainterPath()
+            shackle.moveTo(-3.2 * u, -1 * u)
+            shackle.lineTo(-3.2 * u, -3.5 * u)
+            shackle.arcTo(QRectF(-3.2 * u, -6.7 * u, 6.4 * u, 6.4 * u),
+                          180.0, -180.0)
+            shackle.lineTo(3.2 * u, -1 * u)
+            p.drawPath(shackle)
         p.end()
