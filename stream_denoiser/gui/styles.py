@@ -328,12 +328,6 @@ QLabel#stat-good { font-size: 20px; font-weight: 700; color: {success}; }
 QLabel#stat-warning { font-size: 20px; font-weight: 700; color: {warning}; }
 QLabel#stat-bad { font-size: 20px; font-weight: 700; color: {error}; }
 
-QLabel#thresh-value {
-    font-size: 15px;
-    font-weight: 600;
-    color: {accent};
-}
-
 /* =================================================================================
    DEVICE DROPDOWNS (underline style)
    ================================================================================= */

@@ -47,6 +47,7 @@ from .widgets.dial import ATTEN_DEFAULT, DialButton, clamp_db
 from .widgets.donate_button import DonateButton
 from .widgets.switch import ToggleSwitch
 from .widgets.slider import HoverSlider
+from .widgets.rolling_number import RollingNumber
 from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
 from .widgets.chip import IconChip
@@ -451,10 +452,11 @@ class MainWindow(QMainWindow):
         self.thresh_slider.setEnabled(self.settings.aad_enabled)
         self.thresh_slider.setMinimumWidth(sp(230))
         thresh_layout.addWidget(self.thresh_slider, stretch=1)
-        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
+        # Digits roll like the dial's strength readout on Home.
+        self.thresh_val_label = RollingNumber(
+            int(self.settings.aad_threshold), " dB")
         self.thresh_val_label.setObjectName("thresh-value")
         self.thresh_val_label.setFixedWidth(sp(64))
-        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         thresh_layout.addWidget(self.thresh_val_label)
         thresh_row = SettingsRow(
             "Silence threshold", "Anything quieter counts as silence.",
@@ -1134,7 +1136,7 @@ class MainWindow(QMainWindow):
 
     def _on_threshold_changed(self, value):
         """Persist the AAD threshold and apply it to a running worker."""
-        self.thresh_val_label.setText(f"{value} dB")
+        self.thresh_val_label.set_value(value)
         self.settings.aad_threshold = float(value)
         if self.worker is not None:
             self.worker.set_aad_threshold(float(value))
