@@ -2,7 +2,8 @@
 Windows Platform Audio Utilities
 
 Windows-specific audio functionality:
-- VB Cable switching via PowerShell
+- VB Cable switching via PowerShell, with CABLE Input's volume control
+  mirrored onto the output device
 - WASAPI loopback device detection
 
 This module is EXCLUDED from Linux builds via PyInstaller spec.
@@ -83,6 +84,7 @@ class VBCableSwitcher:
         self.original_device: Optional[str] = None
         self.auto_switch = auto_switch
         self._status_cb = status_cb
+        self._volume_mirror = None
         self._powershell_available = self._check_powershell_available()
         
         if auto_switch and self._powershell_available:
@@ -351,8 +353,35 @@ class VBCableSwitcher:
             _logger.warning("Make sure VB Cable is installed and AudioDeviceCmdlets module is available")
         return success
     
+    def mirror_volume(self, output_device: str) -> bool:
+        """Make CABLE Input's volume control drive ``output_device``, the
+        device Poise plays to, until restore_original_device().
+
+        VB-Cable ignores CABLE Input's level and mute, so while it is the
+        default device the volume keys and the taskbar slider would do
+        nothing. Best effort: False (and a warning) when the mirror
+        cannot start.
+        """
+        self.stop_volume_mirror()
+        try:
+            from ..wasapi_node import VolumeMirror
+            self._volume_mirror = VolumeMirror(self.vb_cable_name,
+                                               output_device)
+        except Exception as e:
+            _logger.warning(f"Volume keys will not reach {output_device}: {e}")
+            return False
+        _logger.info(f"CABLE Input's volume control drives {output_device}")
+        return True
+
+    def stop_volume_mirror(self) -> None:
+        """End mirror_volume(); the output device keeps its level."""
+        mirror, self._volume_mirror = self._volume_mirror, None
+        if mirror is not None:
+            mirror.close()
+
     def restore_original_device(self) -> bool:
         """Restore original default playback device."""
+        self.stop_volume_mirror()
         if not self._powershell_available or self.original_device is None:
             return False
         

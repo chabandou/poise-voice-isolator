@@ -6,9 +6,10 @@ communication to the GUI.
 
 The audio itself runs in the audio process (audio_host): its own GIL and
 garbage collector, so the GUI redrawing cannot hold up inference. This
-thread switches the default playback to VB-Cable (undone here, even if
-the audio process dies), checks the devices, runs the session and relays
-its status, errors and stats as signals.
+thread switches the default playback to VB-Cable and mirrors its volume
+control onto the output device (both undone here, even if the audio
+process dies), checks the devices, runs the session and relays its
+status, errors and stats as signals.
 """
 import time
 import traceback
@@ -167,6 +168,10 @@ class AudioWorker(QThread):
             name = self._device_name(devices[1])
             if name:
                 self.status_changed.emit(f"Output: {name}")
+                if self._vb_cable_switcher is not None:
+                    # The volume keys now move CABLE Input's slider, which
+                    # VB-Cable ignores: pass it on to where Poise plays.
+                    self._vb_cable_switcher.mirror_volume(name)
             self._run_session(*devices)
 
         except Exception as e:

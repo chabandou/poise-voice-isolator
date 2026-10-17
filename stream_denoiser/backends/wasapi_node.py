@@ -9,11 +9,14 @@ native/core/), and node_loop runs inference for it.
 ``ClockBridge`` is the capture-to-speakers clock bridge alone, driven by
 hand; the tests use it to check drift handling exactly, and with a
 ``HoleFilter`` the taking out of VB-Cable's holes.
+
+``VolumeMirror`` makes CABLE Input's volume control, which VB-Cable
+ignores, drive the device Poise plays to.
 """
 import ctypes
 import os
 import sys
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -94,6 +97,13 @@ def _bind(lib) -> None:
         "poise_holes_free": ([vp], None),
         "poise_holes_push": ([vp, vp, fp, u32, ctypes.c_double, u32], u32),
         "poise_holes_get_stats": ([vp, ctypes.POINTER(u64), u32], None),
+        "poise_volmirror_new": ([cp, cp, cp, ctypes.c_size_t], vp),
+        "poise_volmirror_free": ([vp], None),
+        "poise_volume_get": ([cp, ctypes.POINTER(ctypes.c_float),
+                              ctypes.POINTER(ctypes.c_int), cp,
+                              ctypes.c_size_t], ctypes.c_int),
+        "poise_volume_set": ([cp, ctypes.c_float, ctypes.c_int, cp,
+                              ctypes.c_size_t], ctypes.c_int),
     })
 
 
@@ -282,3 +292,66 @@ class HoleFilter:
             self.close()
         except Exception:
             pass
+
+
+class VolumeMirror:
+    """CABLE Input's level and mute and the output device's kept equal,
+    both ways, while it lives; starts from the output device's.
+
+    VB-Cable ignores CABLE Input's volume control, which the volume keys
+    move while it is the default device (see "volume mirror" in
+    poise_wasapi.c). Names as for ``WasapiNode``.
+    """
+
+    def __init__(self, cable: str, output: str):
+        self._lib = load_library()
+        err = ctypes.create_string_buffer(512)
+        self._m = self._lib.poise_volmirror_new(
+            cable.encode(), output.encode(), err, len(err))
+        if not self._m:
+            raise WasapiError(
+                err.value.decode(errors="replace") or "unknown error")
+
+    def close(self) -> None:
+        """Stop mirroring; both keep the level they have. Idempotent."""
+        if self._m:
+            self._lib.poise_volmirror_free(self._m)
+            self._m = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
+def endpoint_volume(name: str) -> Tuple[float, bool]:
+    """(level, muted) of a playback device's volume control; the level is
+    the 0..1 Windows shows as a percentage. Raises WasapiError."""
+    lib = load_library()
+    level, mute = ctypes.c_float(), ctypes.c_int()
+    err = ctypes.create_string_buffer(512)
+    if lib.poise_volume_get(name.encode(), ctypes.byref(level),
+                            ctypes.byref(mute), err, len(err)):
+        raise WasapiError(err.value.decode(errors="replace"))
+    return float(level.value), bool(mute.value)
+
+
+def set_endpoint_volume(name: str, level: Optional[float] = None,
+                        muted: Optional[bool] = None) -> None:
+    """Set a playback device's level (0..1) and/or mute, as the volume
+    keys would; None leaves that one as it is. Raises WasapiError."""
+    lib = load_library()
+    err = ctypes.create_string_buffer(512)
+    if lib.poise_volume_set(name.encode(),
+                            -1.0 if level is None else float(level),
+                            -1 if muted is None else int(bool(muted)),
+                            err, len(err)):
+        raise WasapiError(err.value.decode(errors="replace"))

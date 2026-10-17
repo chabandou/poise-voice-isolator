@@ -173,20 +173,23 @@ def process_system_audio_realtime(engine: DenoiseEngine,
             raise RuntimeError("No suitable audio backend available")
         from .backends.wasapi_backend import windows_backend_preference
         config["backend"] = windows_backend_preference(backend)
-        _run_session(engine, config, devices=(input_device, output_device))
+        _run_session(engine, config, devices=(input_device, output_device),
+                     vb_cable=vb_cable_switcher)
     finally:
-        # Restore original audio device
+        # Restore original audio device (and stop the volume mirror)
         if vb_cable_switcher is not None:
             vb_cable_switcher.restore_original_device()
 
 
 def _run_session(engine: DenoiseEngine, config: dict,
-                 devices: Optional[tuple] = None) -> None:
+                 devices: Optional[tuple] = None, vb_cable=None) -> None:
     """One session until Ctrl+C, its stats printed as it runs.
 
     ``devices``: the (input, output) PortAudio IDs asked for (Windows),
     resolved the way the PortAudio loop resolves them: CABLE Output and
-    an output on its host API.
+    an output on its host API. ``vb_cable``: the VBCableSwitcher that
+    made CABLE Input the default, whose volume control then drives the
+    output device.
     """
     from .device_utils import print_stats, print_final_stats
     from .session import build_processor, run_session
@@ -199,6 +202,9 @@ def _run_session(engine: DenoiseEngine, config: dict,
             from .backends.sounddevice_backend import select_devices
             config["input_device"], config["output_device"] = \
                 select_devices(processor, *devices)
+            if vb_cable is not None:
+                vb_cable.mirror_volume(
+                    str(sd.query_devices(config["output_device"])['name']))
         run_session(processor, config, on_stats=print_stats,
                     on_started=_print_started(config, processor))
     except KeyboardInterrupt:
