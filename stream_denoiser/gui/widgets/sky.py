@@ -20,7 +20,7 @@ card and sized in px.
 """
 import math
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainterPath, QPen, QRadialGradient
 
 from ..animations import cubic_bezier_fn, mix_rgba
@@ -247,6 +247,30 @@ def _alpha(colour: QColor, alpha: float) -> QColor:
     return c
 
 
+def _square_outline(half: float, pen: QPen):
+    """A square's outline (centred, `half` across), as stroking it with
+    `pen` would draw it, in pieces Qt rasterizes far faster when rotated
+    (about a third of a drawRect): (flat pen, brush, edges, corners). The
+    edges are flat-capped lines, the sides stopping short of the corners
+    by half the pen; the corners fill the rest of the bevel join, so
+    nothing is drawn twice."""
+    e = pen.widthF() / 2
+    flat = QPen(pen)
+    flat.setCapStyle(Qt.PenCapStyle.FlatCap)
+    edges = [QLineF(-half, -half, half, -half),
+             QLineF(-half, half, half, half),
+             QLineF(half, -half + e, half, half - e),
+             QLineF(-half, -half + e, -half, half - e)]
+    corners = QPainterPath()
+    for sx, sy in ((1, -1), (1, 1), (-1, 1), (-1, -1)):
+        corners.moveTo(sx * half, sy * (half + e))
+        corners.lineTo(sx * (half + e), sy * half)
+        corners.lineTo(sx * (half + e), sy * (half - e))
+        corners.lineTo(sx * half, sy * (half - e))
+        corners.closeSubpath()
+    return flat, pen.color(), edges, corners
+
+
 class NightSky:
     """Paints the sky; the card owns the clock and passes the moment in."""
 
@@ -460,11 +484,16 @@ class NightSky:
                 (STAR2_HALF, STAR2_TURN_MS, -1.0, STAR2_ALPHA,
                  (22.5, 67.5))):
             a = (idle_a + (live_a - idle_a) * live) * opacity * reveal
-            p.setPen(QPen(_alpha(colour, a), 1.0 / scale))
+            pen, brush, edges, corners = _square_outline(
+                half, QPen(_alpha(colour, a), 1.0 / scale))
             for angle in angles:
                 p.save()
                 p.rotate(angle + sense * 360.0 * now / period)
-                p.drawRect(QRectF(-half, -half, 2 * half, 2 * half))
+                p.setPen(pen)
+                p.drawLines(edges)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(brush)
+                p.drawPath(corners)
                 p.restore()
         p.restore()
 

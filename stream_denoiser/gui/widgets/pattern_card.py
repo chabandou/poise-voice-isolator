@@ -23,10 +23,10 @@ dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
 
 A theme whose backdrop is "sky" (Vigil) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
-shown (SKY_FRAME_MS, faster while isolating). Its pulses follow the same
-calls, on the dial's breathing cycle (BREATH_MS) rather than
-PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to draw
-in while starting.
+shown (SKY_FRAME_MS, faster while starting and isolating). Its pulses
+follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
+than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
+draw in while starting.
 """
 import time
 
@@ -63,8 +63,8 @@ PING_CORE = 22.0            # full strength this far inside it
 PING_FRAME_MS = 33
 PING_FADE_MS = 420          # a ring in flight when pings stop fades out
 
-SKY_FRAME_MS = 40           # the night sky's slow loops...
-SKY_LIVE_FRAME_MS = 33      # ...and its pulses
+SKY_FRAME_MS = 60           # the night sky's slow loops, at rest...
+SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in
 SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
@@ -253,12 +253,14 @@ class PatternCard(QFrame):
         self._reveal.set_target(1.0, self.isVisible())
 
     def _run_sky(self) -> None:
-        """Run the sky's clock while it is shown (faster while it pulses)."""
+        """Run the sky's clock while it is shown (faster while it pulses
+        or draws in)."""
         if not (self._sky_on() and motion_ok() and self.isVisible()):
             self._sky_timer.stop()
             return
         busy = (self._ping_at is not None or self._live.target > 0
-                or self._live.value > 0.001)
+                or self._live.value > 0.001 or self._phase == "starting"
+                or self._gather.value > 0.001)
         interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
         if self._sky_timer.interval() != interval:
             self._sky_timer.setInterval(interval)

@@ -59,7 +59,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QFontMetricsF, QPainter, QPen, QRadialGradient,
+    QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QRadialGradient,
 )
 
 from .pattern_card import PING_PERIOD_MS
@@ -302,6 +302,7 @@ class DialButton(PowerButton):
         self._clock = QTimer(self)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)
+        self._ring = self._ring_key = None   # see _paint_ring
 
         # Eased states.
         self._swell = Blend(self, self.update, 220)
@@ -1149,18 +1150,57 @@ class DialButton(PowerButton):
         p.end()
 
     def _paint_ring(self, p, col, t) -> None:
-        """The ticks (lit ones show the strength) and the head needle."""
+        """The ticks and the head needle, from an image redrawn only when
+        a stroke changes: the dial repaints with every frame of the sky
+        behind it, and these strokes are most of what it costs, yet they
+        often hold still (between breaths, or while a slow breath's
+        alpha stays on the same 8-bit step)."""
+        w, h = self.width(), self.height()
+        dpr = self.devicePixelRatioF()
+        strokes = self._ring_strokes(col, t)
+        key = (w, h, dpr, self._over, strokes)
+        if key != self._ring_key:
+            self._ring_key = key
+            self._ring = self._draw_ring(w, h, dpr, strokes)
+        p.save()
+        p.resetTransform()
+        p.drawImage(QPointF(0, 0), self._ring)
+        p.restore()
+
+    def _draw_ring(self, w, h, dpr, strokes) -> QImage:
+        """The strokes, painted as paintEvent would, into a transparent
+        image the widget's size (the last one is reused)."""
+        size = (math.ceil(w * dpr), math.ceil(h * dpr))
+        image = self._ring
+        if (image is None or (image.width(), image.height()) != size
+                or image.devicePixelRatio() != dpr):
+            image = QImage(*size, QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+        image.fill(Qt.GlobalColor.transparent)
+        k = min(w, h) / REF
         c = REF / 2
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.translate(w / 2, h / 2)
+        p.scale(k, k)
+        p.rotate(self._over)          # stretched past an end
+        p.translate(-c, -c)
+        for angle, r0, r1, rgba, width in strokes:
+            self._line(p, angle, r0, r1, QColor.fromRgba(rgba), width)
+        p.end()
+        return image
+
+    def _ring_strokes(self, col, t) -> tuple:
+        """The ticks (lit ones show the strength) and the head needle, as
+        the strokes that draw them, in order: (angle, r0, r1, rgba,
+        width)."""
         # The needle (and the lit edge) follow its glide on wheel steps.
         pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
         head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
         now = time.monotonic()
         breath = breathing()
-        p.save()
-        p.translate(c, c)
-        p.rotate(self._over)          # stretched past an end
-        p.translate(-c, -c)
+        strokes = []
         for i in range(TICKS):
             visible = self._sweep_visibility(i)
             if visible <= 0.0:
@@ -1180,8 +1220,9 @@ class DialButton(PowerButton):
                 halo = QColor(colour)
                 halo.setAlphaF(GLOW_ALPHA * glow * alpha * visible)
                 lift = self._swell_px(angle, head_angle)
-                self._line(p, angle, (r_in + lift - 1.5) * scale,
-                           (r_out + lift + 1.5) * scale, halo, 10.0)
+                strokes.append((angle, (r_in + lift - 1.5) * scale,
+                                (r_out + lift + 1.5) * scale, halo.rgba(),
+                                10.0))
             flash = self._trail_glow(i, now)
             if flash > 0.0:   # passed by a stepped needle: a comet flash
                 tone = col["flash"] if self._phase == "live" else col["comet"]
@@ -1191,8 +1232,8 @@ class DialButton(PowerButton):
             colour = QColor(colour)
             colour.setAlphaF(colour.alphaF() * alpha * visible)
             lift = self._swell_px(angle, head_angle)
-            self._line(p, angle, (r_in + lift) * scale,
-                       (r_out + lift) * scale, colour, 4.0)
+            strokes.append((angle, (r_in + lift) * scale,
+                            (r_out + lift) * scale, colour.rgba(), 4.0))
 
         # The head needle: white over the last lit tick.
         if lit > 0:
@@ -1210,11 +1251,12 @@ class DialButton(PowerButton):
                 r0, r1 = (r_in + lift) * scale, (r_out + lift) * scale
                 halo = QColor(col["white"])
                 halo.setAlphaF(alpha * (0.12 + 0.4 * glow))
-                self._line(p, head_angle, r0, r1, halo, 8.0 + 8.0 * glow)
+                strokes.append((head_angle, r0, r1, halo.rgba(),
+                                8.0 + 8.0 * glow))
                 needle = QColor(col["text"])
                 needle.setAlphaF(alpha)
-                self._line(p, head_angle, r0, r1, needle, 5.0)
-        p.restore()
+                strokes.append((head_angle, r0, r1, needle.rgba(), 5.0))
+        return tuple(strokes)
 
     def _paint_core(self, p, col, t) -> None:
         """Ripple, disc, charge glow, power glyph and the rolling label."""
