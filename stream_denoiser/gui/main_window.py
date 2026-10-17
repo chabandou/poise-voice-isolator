@@ -372,12 +372,6 @@ class MainWindow(QMainWindow):
             self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         stage_layout.addStretch(1)
 
-        hint = QLabel("Drag the ring to set the reduction strength. "
-                      "Changes apply right away.")
-        hint.setObjectName("row-sub")
-        hint.setAlignment(center)
-        hint.setWordWrap(True)
-        stage_layout.addWidget(hint)
         layout.addWidget(stage, stretch=1)
 
         # --- Below: output device and model, side by side ---
