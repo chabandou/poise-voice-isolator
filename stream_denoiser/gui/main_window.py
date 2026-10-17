@@ -359,15 +359,18 @@ class MainWindow(QMainWindow):
         from .animations import TextSwap
         self._title_swap = TextSwap(self.home_title, out_ms=120, in_ms=240,
                                     rise=sp(14))
+        self._sync_home_pace()
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()
         self.power_btn.toggled_state.connect(self.toggle_processing)
         self.power_btn.set_strength_db(self._saved_atten_db())
         self.power_btn.strength_changed.connect(self._on_atten_changed)
-        # The lattice pings out from the dial once its live sweep closes.
+        # The lattice pings out from the dial once its live sweep closes
+        # (a night sky breathes with it, drawing in while starting).
         stage.set_ping_origin(self.power_btn)
         self.power_btn.ignited.connect(stage.start_pings)
+        self.power_btn.phase_changed.connect(stage.set_phase)
         stage_layout.addWidget(
             self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         stage_layout.addStretch(1)
@@ -946,12 +949,31 @@ class MainWindow(QMainWindow):
         self._refresh_credits()
         self._tint_icon_buttons()
         self._refresh_logs()   # re-colour warnings/errors for the new palette
+        self._stage.refresh_theme()   # lattice or night sky
+        self._sync_home_pace()
         self.power_btn.update()
         self.stats_bar.update()
         self.update()
         if snapshot is not None:
             from .animations import crossfade_from
             crossfade_from(self, snapshot)
+
+    def _sync_home_pace(self) -> None:
+        """A breathing theme (Vigil) mists the headline slowly from one
+        state to the next and tracks it wider; the others roll it."""
+        from PyQt6.QtGui import QFont
+        from .animations import EASE_BREATHE, EASE_OUT
+        breath = theme_store.breathing()
+        if breath:
+            self._title_swap.set_timing(420, 760, rise=sp(6),
+                                        easing=EASE_BREATHE)
+        else:
+            self._title_swap.set_timing(120, 240, rise=sp(14),
+                                        easing=EASE_OUT)
+        font = self.home_title.font()
+        font.setLetterSpacing(QFont.SpacingType.PercentageSpacing,
+                              108.0 if breath else 100.0)
+        self.home_title.setFont(font)
 
     def _refresh_app_icon(self):
         """Reload window, taskbar, tray, and About icons for the theme."""

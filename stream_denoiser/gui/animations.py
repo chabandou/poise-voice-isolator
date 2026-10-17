@@ -1123,11 +1123,21 @@ class TextSwap(QObject):
         self._label = label
         self._rise = float(rise)
         self._out_ms, self._in_ms = out_ms, in_ms
+        self._easing = EASE_OUT
         self._text = label.text()
         self._eff = None
         self._anim = None
         self._phase = None   # None | "out" | "in"
         self._apply = None   # pending styling for the new text
+
+    def set_timing(self, out_ms: int, in_ms: int, rise: float = None,
+                   easing=EASE_OUT) -> None:
+        """Change the swap's pace (e.g. a theme with a slower rhythm);
+        applies from the next swap."""
+        self._out_ms, self._in_ms = out_ms, in_ms
+        self._easing = easing
+        if rise is not None and (rise > 0) == (self._rise > 0):
+            self._rise = float(rise)   # (a roll stays a roll)
 
     @property
     def busy(self) -> bool:
@@ -1179,7 +1189,7 @@ class TextSwap(QObject):
                          else ms)
         anim.setStartValue(start)
         anim.setEndValue(end)
-        anim.setEasingCurve(EASE_OUT)
+        anim.setEasingCurve(self._easing)
         if self._rise:
             anim.valueChanged.connect(self._roll)
         anim.finished.connect(self._step)

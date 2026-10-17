@@ -240,7 +240,7 @@ class ThemeTile(QAbstractButton):
         # Name (bottom-left) in the theme's text colour.
         font = QFont(heading_family())
         font.setWeight(QFont.Weight.Bold)
-        # Longest names ("Ultraviolet") must fit narrow tiles: step the
+        # Long names must fit narrow tiles: step the
         # size down until the label fits the text box.
         avail = body.width() - 2 * pad
         size = sp(15)

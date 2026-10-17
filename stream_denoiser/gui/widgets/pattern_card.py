@@ -20,6 +20,13 @@ PING_FADE_MS rather than vanishing.
 Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
+
+A theme whose backdrop is "sky" (Vigil) gets the night sky instead (see
+widgets/sky.py): always gently moving, so it runs its own clock while
+shown (SKY_FRAME_MS, faster while isolating). Its pulses follow the same
+calls, on the dial's breathing cycle (BREATH_MS) rather than
+PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to draw
+in while starting.
 """
 import time
 
@@ -30,7 +37,8 @@ from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
 
 from ..animations import Blend, EASE_BREATHE, motion_ok
 from ..scaling import ui_scale
-from ..themes import current as current_theme
+from ..themes import current as current_theme, style as theme_style
+from .sky import BREATH_MS, PULSE_FADE_MS, NightSky
 
 TILE = 64.0                 # design px per tile
 TILE_OFFSET = (-14.0, -6.0)  # pattern x/y: where the first tile starts
@@ -54,6 +62,13 @@ PING_BAND = 80.0            # the ring: clear this far inside its edge,
 PING_CORE = 22.0            # full strength this far inside it
 PING_FRAME_MS = 33
 PING_FADE_MS = 420          # a ring in flight when pings stop fades out
+
+SKY_FRAME_MS = 40           # the night sky's slow loops...
+SKY_LIVE_FRAME_MS = 33      # ...and its pulses
+SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
+SKY_GATHER_MS = 600         # into and out of the starting draw-in
+SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
+SKY_REVEAL_MS = 2400        # ...slowly
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -110,11 +125,59 @@ class PatternCard(QFrame):
         self._ping_timer.setInterval(PING_FRAME_MS)
         self._ping_timer.timeout.connect(self._ping_tick)
 
+        # The night sky (sky backdrop only; built on first use).
+        self._sky = None
+        self._phase = "idle"
+        self._gather_at = time.monotonic()   # the starting draw-in began
+        self._gather = Blend(self, self.update, SKY_GATHER_MS, EASE_BREATHE)
+        self._error = Blend(self, self.update, SKY_LIVE_FADE_MS, EASE_BREATHE)
+        self._reveal = Blend(self, self.update, SKY_REVEAL_MS)
+        self._revealed = False
+        self._sky_timer = QTimer(self)
+        self._sky_timer.setInterval(SKY_FRAME_MS)
+        self._sky_timer.timeout.connect(self._sky_tick)
+
+    def _sky_on(self) -> bool:
+        return theme_style("backdrop") == "sky"
+
     def set_live(self, live: bool, animated: bool = True) -> None:
         """Secondary colour when idle, the accent while isolating."""
-        self._live.set_target(1.0 if live else 0.0, animated)
+        self._live.set_target(
+            1.0 if live else 0.0, animated,
+            duration_ms=SKY_LIVE_FADE_MS if self._sky_on() else LIVE_FADE_MS)
         if not live:
             self.stop_pings(fade=animated)
+        self._run_sky()
+
+    def set_phase(self, phase: str) -> None:
+        """The dial's phase (idle | starting | live | stopping | error):
+        the sky draws in while starting and dims its aura on an error."""
+        if phase == self._phase:
+            return
+        self._phase = phase
+        if phase == "starting":
+            self._gather_at = time.monotonic()
+        animated = self.isVisible()
+        self._gather.set_target(1.0 if phase == "starting" else 0.0, animated)
+        self._error.set_target(1.0 if phase == "error" else 0.0, animated)
+        self._run_sky()
+
+    def refresh_theme(self) -> None:
+        """The theme changed: switch backdrops (and their clocks)."""
+        if self._sky_on():
+            self._reveal.snap(1.0)
+            self._revealed = True
+            self._ping_timer.stop()
+            if self._ping_at is not None and self._ping_end is None:
+                # Mid-isolation: carry on breathing from now.
+                self._ping_at = time.monotonic()
+        else:
+            self._sky_timer.stop()
+            if self._ping_at is not None and self.isVisible():
+                self._ping_timer.start()
+        self._live.snap(self._live.target)
+        self._run_sky()
+        self.update()
 
     # -- pings ------------------------------------------------------------------
     def set_ping_origin(self, widget) -> None:
@@ -127,7 +190,10 @@ class PatternCard(QFrame):
             return
         self._ping_at = time.monotonic()
         self._ping_end = None
-        self._ping_timer.start()
+        if self._sky_on():
+            self._run_sky()                    # a breath starts now
+        else:
+            self._ping_timer.start()
         self.update()
 
     def stop_pings(self, fade: bool = True) -> None:
@@ -137,6 +203,15 @@ class PatternCard(QFrame):
             return
         if fade and self._ping_end is not None:
             return                             # already fading out
+        if self._sky_on():
+            # The sky keeps its rhythm while it fades back to gold; only
+            # the pulse in flight fades and no new one leaves.
+            if fade and motion_ok():
+                self._ping_end = time.monotonic()
+                self._run_sky()
+            else:
+                self._clear_pings()
+            return
         if fade and motion_ok() and self._ping_frame() is not None:
             self._ping_end = time.monotonic()
             if self.isVisible():
@@ -158,12 +233,56 @@ class PatternCard(QFrame):
 
     def showEvent(self, event):  # noqa: N802 (Qt override)
         super().showEvent(event)
-        if self._ping_at is not None:
+        if not self._revealed:
+            self._revealed = True
+            if self._sky_on() and motion_ok():
+                QTimer.singleShot(SKY_REVEAL_DELAY_MS, self._begin_reveal)
+            else:
+                self._reveal.snap(1.0)
+        if self._ping_at is not None and not self._sky_on():
             self._ping_timer.start()
+        self._run_sky()
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
         self._ping_timer.stop()   # e.g. hidden to the tray: no wake-ups
+        self._sky_timer.stop()
         super().hideEvent(event)
+
+    # -- the night sky's clock -----------------------------------------------------
+    def _begin_reveal(self) -> None:
+        self._reveal.set_target(1.0, self.isVisible())
+
+    def _run_sky(self) -> None:
+        """Run the sky's clock while it is shown (faster while it pulses)."""
+        if not (self._sky_on() and motion_ok() and self.isVisible()):
+            self._sky_timer.stop()
+            return
+        busy = (self._ping_at is not None or self._live.target > 0
+                or self._live.value > 0.001)
+        interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
+        if self._sky_timer.interval() != interval:
+            self._sky_timer.setInterval(interval)
+        if not self._sky_timer.isActive():
+            self._sky_timer.start()
+
+    def _sky_tick(self) -> None:
+        if (self._ping_end is not None and self._live.value <= 0.001
+                and (time.monotonic() - self._ping_end) * 1000.0
+                >= PULSE_FADE_MS):
+            self._clear_pings()   # faded back to gold: the breath ends
+        self._run_sky()
+        self.update()
+
+    def _pulse_gain(self, index: int, now: float) -> float:
+        """How much of breath `index`'s pulse to show: all of it while
+        isolating; after Stop the one in flight fades and none follow."""
+        if self._ping_end is None:
+            return 1.0
+        stopped = (self._ping_end - self._ping_at) * 1000.0
+        if index * BREATH_MS > stopped:
+            return 0.0
+        u = (now - self._ping_end) * 1000.0 / PULSE_FADE_MS
+        return 0.0 if u >= 1.0 else (1.0 - u) ** 2
 
     def _ping_tick(self) -> None:
         if not self.isVisible():
@@ -212,6 +331,9 @@ class PatternCard(QFrame):
         w, h = self.width(), self.height()
         if w < 40 or h < 40:
             return
+        if self._sky_on():
+            self._paint_sky(w, h)
+            return
         palette = current_theme()
         color = _mix(QColor(palette["secondary"]), QColor(palette["accent"]),
                      self._live.value)
@@ -223,6 +345,44 @@ class PatternCard(QFrame):
         centre = self._ping_centre() if frame is not None else None
         if centre is not None:
             self._paint_ping(p, w, h, centre, *frame)
+        p.end()
+
+    def _paint_sky(self, w: int, h: int) -> None:
+        """The night sky, centred on the dial and clipped to the card."""
+        from ..styles import _card_border_width
+        ui = ui_scale()
+        b = float(_card_border_width(ui))
+        box = QRectF(b, b, w - 2 * b, h - 2 * b)
+        radius = max(0.0, CARD_RADIUS * ui - b)
+        clip = QPainterPath()
+        clip.addRoundedRect(box, radius, radius)
+        centre = self._ping_centre() or QPointF(w / 2, h * 0.55)
+        origin = self._origin
+        k = (min(origin.width(), origin.height()) / 300.0
+             if origin is not None else ui)
+        if self._sky is None:
+            self._sky = NightSky()
+        palette = current_theme()
+        moving = motion_ok()
+        now = time.monotonic()
+        cycle = None
+        if moving and self._ping_at is not None:
+            cycle = (now - self._ping_at) * 1000.0
+        look = {
+            "live": self._live.value, "gather": self._gather.value,
+            "error": self._error.value, "reveal": self._reveal.value,
+            # Reduced motion: every loop holds still.
+            "gather_ms": (now - self._gather_at) * 1000.0 if moving else 0.0,
+            "cycle": cycle,
+            "gain": lambda index: self._pulse_gain(index, now),
+            "secondary": QColor(palette["secondary"]),
+            "accent": QColor(palette["accent"]),
+            "accent_light": QColor(palette["accent_light"]),
+        }
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._sky.paint(p, box, clip, centre, k, ui,
+                        now * 1000.0 if moving else 0.0, look)
         p.end()
 
     def _paint_ping(self, p, w, h, centre, radius, alpha) -> None:

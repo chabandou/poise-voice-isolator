@@ -29,7 +29,7 @@ from PyQt6.QtGui import QColor, QPainter
 
 from ..animations import TextSwap, ease_out, motion_ok, stagger_in
 from ..scaling import sp
-from ..themes import current as current_theme
+from ..themes import breathing, current as current_theme
 
 STATE_WORDS = {
     "ready": "ready",
@@ -45,8 +45,10 @@ STATUS_MAX_W = 440
 #: How many messages may wait behind a step (oldest steps drop first).
 QUEUE_MAX = 3
 LOG_HINT = "Click to open the log."
-#: While isolating a halo leaves the status dot this often (ms)...
+#: While isolating a halo leaves the status dot this often (ms; half a
+#: breath on a breathing theme, see widgets/sky.py)...
 HALO_MS = 2400
+HALO_BREATH_MS = 4000
 #: ...growing to this many dot sizes as it fades.
 HALO_GROWTH = 2.8
 
@@ -276,8 +278,9 @@ class StatsBar(QWidget):
         self.style().drawPrimitive(
             QStyle.PrimitiveElement.PE_Widget, opt, p, self)
         if self._halo_at is not None:
+            period = HALO_BREATH_MS if breathing() else HALO_MS
             phase = ((time.monotonic() - self._halo_at) * 1000.0
-                     % HALO_MS) / HALO_MS
+                     % period) / period
             if phase < 0.7:
                 u = phase / 0.7
                 colour = QColor(current_theme()["accent"])

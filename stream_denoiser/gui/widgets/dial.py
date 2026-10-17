@@ -38,6 +38,16 @@ Motion, phase by phase:
   cutting off, and no new charge starts;
 - error: lit ticks flash white then settle red and the disc shakes.
 
+A theme whose motion is "breath" (Vigil) moves the same phases slower
+and softer, on the night sky's rhythm (widgets/sky.py): idle, the lit
+ticks breathe; starting, light gathers from the ends of the lit arc
+inward; live, it blooms from the middle out, the disc swells (no pop),
+and then the ticks and the disc's charge (glow and rim) breathe on one
+BREATH_MS cycle, a pulse leaving the dial as each breath begins (the
+halos and band are the sky's); stopping, the ends settle back first; an
+error trembles. The label and the readout mist from one value to the
+next instead of rolling.
+
 Geometry is authored in a 300-unit square and scaled to the widget, so
 the dial stays crisp at any UI scale.
 """
@@ -54,14 +64,19 @@ from PyQt6.QtGui import (
 
 from .pattern_card import PING_PERIOD_MS
 from .power_button import PowerButton
+from .sky import (
+    BREATH as _breath, BREATH_MS, CHARGE, EASE_IN_OUT as _css_in_out,
+    GATHER_MS, IDLE_BREATH_MS, SOFT as _soft, TICKS_IDLE, TICKS_LIVE,
+    breath_pos, keyframes,
+)
 from ..animations import (
-    Blend, mix_rgba, motion_ok,
+    Blend, EASE_BREATHE, mix_rgba, motion_ok,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
 from ..fonts import heading_family
 from ..scaling import sp
-from ..themes import current as current_theme
+from ..themes import breathing, current as current_theme
 
 # dB limits of the reduction ring. The engines mix f = 10**(dB/20) of the
 # original signal back in, so past about -50 dB the leftover noise is
@@ -126,6 +141,40 @@ PLUCK_BIG_MS = 420
 BUMP_MS = 340
 FRAME_MS = 16             # transitions
 LOOP_FRAME_MS = 33        # steady loops (the live crest and charge)
+
+# -- the breathing rhythm (themes whose motion is "breath") --------------------
+BLOOM_STEP = 18           # live: between ticks, outward from the middle
+BLOOM_MS = 900            # one tick's bloom...
+BLOOM_PEAK = 0.45         # ...brightest this far in
+BLOOM_CLOSE = 520         # the bloom closes this long after the middle's
+GATHER_STEP = 24          # starting: between ticks, inward from the ends
+GATHER_FLASH = 0.26       # ...each flash fading over this much of a lap
+SETTLE_STEP = 14          # stopping: the ends settle back first
+SETTLE_MS = 700
+SWELL_LEAD = 200          # the disc swells (and the needle rises) this
+BREATH_SWELL_MS = 1300    # ...long before the bloom closes
+BREATH_NEEDLE_MS = 1000
+BREATH_GLYPH_LEAD = 400
+BREATH_GLYPH_MS = 1200
+BREATH_SWEEP_DELAY_MS = 500
+BREATH_SWEEP_MS = 1800
+CHARGE_RAMP_MS = 400      # live begins part-way into a breath: ease it in
+DOT_BREATH_STEP = 300     # starting: the dots breathe a beat apart
+DOT_SETTLE_STEP = 240     # stopping: and settle
+DOT_SETTLE_MS = 900
+MIST_MS = 600             # label: the old one mists away as the new rises
+NUMBER_MIST_MS = 520      # readout: the same, quicker while dragging
+NUMBER_DRIFT_MS = 700
+DRAG_MIST_MS = 260
+DRAG_DRIFT_MS = 360
+NUMBER_DRIFT = 5.0        # design px the values drift as they change
+ERROR_PULSE_MS = 1100     # error: lit ticks dim and return, twice...
+TREMBLE_MS = 700          # ...and the disc trembles
+TREMBLE = ((0, 0.0, _css_in_out), (0.15, -2.0, _css_in_out),
+           (0.35, 2.0, _css_in_out), (0.55, -2.0, _css_in_out),
+           (0.75, 2.0, _css_in_out), (1, 0.0, _css_in_out))
+GLOW_ALPHA = 0.32         # a lit tick's glow at full strength
+GLOW_IDLE, GLOW_LIVE = 0.3, 0.55
 
 LABELS = ("Start", "...", "Stop", "Retry")   # "..." is drawn as three dots
 LABEL_OF_PHASE = {"idle": 0, "starting": 1, "stopping": 1, "live": 2,
@@ -208,6 +257,7 @@ class DialButton(PowerButton):
 
     strength_changed = pyqtSignal(int)   # new dB value, user-driven only
     ignited = pyqtSignal()               # the live sweep closed
+    phase_changed = pyqtSignal(str)      # idle | starting | live | ...
 
     _dial_px = 0   # 0 -> sp(300); set by set_dial_size()
 
@@ -263,6 +313,12 @@ class DialButton(PowerButton):
         tens, ones = divmod(-self._strength_db, 10)
         self._tens = Blend(self, self.update, 400, _spring_curve(1.2), tens)
         self._ones = Blend(self, self.update, 400, _spring_curve(1.2), ones)
+        # Breath: the label mists from one to the next, and so do the
+        # readout's values (value -> [alpha from, to, monotonic start]).
+        self._label_from = self._label_to = 0
+        self._label_mist = Blend(self, self.update, MIST_MS, EASE_BREATHE,
+                                 1.0)
+        self._mists = {self._strength_db: [1.0, 1.0, 0.0]}
         self._over = 0.0                  # ring stretch, degrees
         self._over_anim = QVariantAnimation(self)
         self._over_anim.setDuration(560)
@@ -331,6 +387,43 @@ class DialButton(PowerButton):
         animated = self.isVisible()
         self._tens.set_target(tens, animated)
         self._ones.set_target(ones, animated)
+        self._mist_number(animated and motion_ok())
+
+    # -- breath: misting values ----------------------------------------------------
+    def _mist_ms(self):
+        """(fade, drift) durations of a readout change."""
+        if self._dragging:
+            return DRAG_MIST_MS, DRAG_DRIFT_MS
+        return NUMBER_MIST_MS, NUMBER_DRIFT_MS
+
+    def _mist_alpha(self, entry, now: float) -> float:
+        start, end, at = entry
+        u = (now - at) * 1000.0 / self._mist_ms()[0]
+        return start + (end - start) * _breath(min(1.0, max(0.0, u)))
+
+    def _mist_number(self, animated: bool) -> None:
+        """The shown value mists away as the new one surfaces."""
+        db = self._strength_db
+        if not animated:
+            self._mists = {db: [1.0, 1.0, 0.0]}
+            return
+        now = time.monotonic()
+        mists = {}
+        for value, entry in self._mists.items():
+            alpha = self._mist_alpha(entry, now)
+            if value != db and alpha > 0.005:
+                mists[value] = [alpha, 0.0, now]
+        old = self._mists.get(db)
+        mists[db] = [self._mist_alpha(old, now) if old else 0.0, 1.0, now]
+        self._mists = mists
+        if breathing():
+            self._run_clock()
+
+    def _misting(self) -> bool:
+        now = time.monotonic()
+        fade, drift = self._mist_ms()
+        return any((now - at) * 1000.0 < max(fade, drift)
+                   for _, _, at in self._mists.values())
 
     # -- state overrides: keep the accessible name and phase honest ------------
     def set_active(self, active: bool):
@@ -408,9 +501,23 @@ class DialButton(PowerButton):
             self._ignited = False
             if not motion_ok():
                 self._ignite()
-        self._label.set_target(LABEL_OF_PHASE[phase], self.isVisible())
+        label = LABEL_OF_PHASE[phase]
+        self._label.set_target(label, self.isVisible())
+        if label != self._label_to:
+            # Breath: the old label mists away as the new one surfaces.
+            mist = self._label_mist.value
+            if label == self._label_from:      # back before it had gone
+                self._label_from, self._label_to = self._label_to, label
+                self._label_mist.snap(1.0 - mist)
+            else:
+                if mist >= 0.5:
+                    self._label_from = self._label_to
+                self._label_to = label
+                self._label_mist.snap(0.0)
+            self._label_mist.set_target(1.0, self.isVisible())
         self._run_clock()
         self.update()
+        self.phase_changed.emit(phase)
 
     def phase(self) -> str:
         """idle | starting | live | stopping | error"""
@@ -430,8 +537,21 @@ class DialButton(PowerButton):
         return (time.monotonic() - stamp) * 1000.0
 
     def _ignite_end(self) -> float:
-        """When the live sweep closes (ms into the live phase)."""
+        """When the live sweep (breath: the bloom) closes, in ms into the
+        live phase."""
+        if breathing():
+            return self._bloom_mid() * BLOOM_STEP + BLOOM_CLOSE
         return self._ignite_lit * IGNITE_STEP + IGNITE_TAIL
+
+    def _bloom_mid(self) -> float:
+        """Breath: the middle of the arc lit when isolating began."""
+        return max(0.0, (self._ignite_lit - 1) / 2.0)
+
+    def _sweep_ms(self):
+        """(delay, duration) of the first show's ring sweep."""
+        if breathing():
+            return BREATH_SWEEP_DELAY_MS, BREATH_SWEEP_MS
+        return SWEEP_DELAY_MS, SWEEP_MS
 
     def _ignite(self) -> None:
         if not self._ignited:
@@ -447,9 +567,15 @@ class DialButton(PowerButton):
     def _animating(self) -> bool:
         if self._phase in ("starting", "live", "stopping"):
             return True
-        if self._since(self._drain_at) < (TICKS - 1) * DRAIN_STEP + DRAIN_MS:
+        breath = breathing()
+        drain = ((TICKS - 1) / 2.0 * SETTLE_STEP + SETTLE_MS if breath
+                 else (TICKS - 1) * DRAIN_STEP + DRAIN_MS)
+        if self._since(self._drain_at) < drain:
             return True
-        if self._phase == "error" and self._ms() < ERROR_FLASH_MS:
+        error_ms = 2 * ERROR_PULSE_MS if breath else ERROR_FLASH_MS
+        if self._phase == "error" and self._ms() < error_ms:
+            return True
+        if breath and (self._misting() or self._label_mist.running):
             return True
         if (self._charge_from > 0.01
                 and self._since(self._charge_drop_at) < CHARGE_DROP_MS):
@@ -462,9 +588,13 @@ class DialButton(PowerButton):
 
     def _sweeping(self) -> bool:
         return (self._sweep_at is not None
-                and self._since(self._sweep_at) < SWEEP_MS)
+                and self._since(self._sweep_at) < self._sweep_ms()[1])
 
     def _tick(self) -> None:
+        if len(self._mists) > 1:   # drop readout values that have misted out
+            now = time.monotonic()
+            self._mists = {v: e for v, e in self._mists.items()
+                           if e[1] > 0.0 or self._mist_alpha(e, now) > 0.005}
         if self._trail:
             now = time.monotonic()
             gone = TRAIL_MS / 1000.0
@@ -477,9 +607,10 @@ class DialButton(PowerButton):
             self._clock.stop()
         else:
             # Once the live sweep has settled only slow loops are left.
+            closing = BREATH_SWELL_MS if breathing() else RIPPLE_MS
             settled = (self._phase == "live"
                        and not self._trail and not self._nudging()
-                       and self._ms() > self._ignite_end() + RIPPLE_MS
+                       and self._ms() > self._ignite_end() + closing
                        and self._since(self._pluck_at) >= PLUCK_BIG_MS
                        and self._since(self._bump_at) >= BUMP_MS)
             interval = LOOP_FRAME_MS if settled else FRAME_MS
@@ -493,7 +624,8 @@ class DialButton(PowerButton):
         if not self._swept:
             self._swept = True
             if motion_ok():
-                self._sweep_at = time.monotonic() + SWEEP_DELAY_MS / 1000.0
+                delay = self._sweep_ms()[0]
+                self._sweep_at = time.monotonic() + delay / 1000.0
         self._run_clock()
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
@@ -795,11 +927,66 @@ class DialButton(PowerButton):
                                  _ease_out(max(0.0, d) / DRAIN_MS)), 1.0, 1.0)
         return col["gold"], 1.0, 1.0
 
+    def _breath_look(self, i: int, lit: int, col: dict, t: float):
+        """Breath: (colour, alpha, radial scale, glow 0..1) of tick i."""
+        if i >= lit:
+            return col["unlit"], 1.0, 1.0, 0.0
+        phase = self._phase
+        mid = (lit - 1) / 2.0
+        inward = max(0.0, mid - abs(i - mid))   # 0 at the ends of the arc
+        if phase == "starting":
+            # Light gathers from the ends of the lit arc inward, each lap.
+            flash = 0.0
+            u = t - inward * GATHER_STEP
+            if u >= 0 and motion_ok():
+                ph = (u % GATHER_MS) / GATHER_MS
+                if ph < GATHER_FLASH:
+                    flash = 1.0 - _breath(ph / GATHER_FLASH)
+            return mix_rgba(col["dim"], col["comet"], flash), 1.0, 1.0, flash
+        if phase == "live":
+            # Blooms from the middle out, then breathes with the cycle.
+            u = (t - abs(i - self._bloom_mid()) * BLOOM_STEP) / BLOOM_MS
+            if u < 0:
+                colour, scale, glow = col["gold"], 1.0, GLOW_IDLE
+            elif u < BLOOM_PEAK:
+                v = _soft(u / BLOOM_PEAK)
+                colour = mix_rgba(col["gold"], col["flash"], v)
+                scale, glow = 1.0 + 0.03 * v, GLOW_IDLE + (1 - GLOW_IDLE) * v
+            elif u < 1:
+                v = _soft((u - BLOOM_PEAK) / (1 - BLOOM_PEAK))
+                colour = mix_rgba(col["flash"], col["accent"], v)
+                scale, glow = 1.03 - 0.03 * v, 1.0 - (1 - GLOW_LIVE) * v
+            else:
+                colour, scale, glow = col["accent"], 1.0, GLOW_LIVE
+            alpha = keyframes(
+                breath_pos(t - self._ignite_end(), BREATH_MS), TICKS_LIVE)
+            return colour, alpha, scale, glow
+        if phase == "error":
+            alpha = 1.0
+            if t < 2 * ERROR_PULSE_MS:
+                dim = math.sin(math.pi * t / ERROR_PULSE_MS) ** 2
+                alpha = 1.0 - 0.55 * dim
+            return col["error"], alpha, 1.0, GLOW_IDLE
+        # Idle / stopping: gold, breathing slowly once settled; stopping
+        # settles the ends back first.
+        colour, glow = col["gold"], GLOW_IDLE
+        if self._drain_at is not None:
+            d = self._since(self._drain_at) - inward * SETTLE_STEP
+            if d < SETTLE_MS:
+                v = _breath(max(0.0, d) / SETTLE_MS)
+                colour = mix_rgba(col["accent"], col["gold"], v)
+                glow = GLOW_LIVE + (GLOW_IDLE - GLOW_LIVE) * v
+        alpha = 1.0
+        if phase == "idle" and motion_ok():
+            alpha = keyframes(breath_pos(time.monotonic() * 1000.0,
+                                         IDLE_BREATH_MS), TICKS_IDLE)
+        return colour, alpha, 1.0, glow
+
     def _sweep_visibility(self, i: int) -> float:
         """First show: how much of tick i the entrance sweep has drawn."""
         if self._sweep_at is None:
             return 1.0
-        u = self._since(self._sweep_at) / SWEEP_MS
+        u = self._since(self._sweep_at) / self._sweep_ms()[1]
         if u >= 1.0:
             return 1.0
         if u < 0:
@@ -826,7 +1013,12 @@ class DialButton(PowerButton):
     def _needle(self, t: float):
         """(alpha, glow, radial scale) of the head needle."""
         live = self._phase == "live"
-        if live and not self._dragging:
+        if live and not self._dragging and breathing():
+            # Rises with the disc's swell, glowing as it arrives.
+            u = (t - (self._ignite_end() - SWELL_LEAD)) / BREATH_NEEDLE_MS
+            alpha = _soft(_clamp(u / 0.45))
+            glow = _rise_fall(u, 0.45)
+        elif live and not self._dragging:
             u = (t - (self._ignite_end() - 60)) / NEEDLE_IN_MS
             alpha = _ease_out(u / 0.4)
             glow = _rise_fall(u, 0.4)
@@ -848,6 +1040,13 @@ class DialButton(PowerButton):
     def _pop_scale(self, t: float) -> float:
         if self._phase != "live":
             return 1.0
+        if breathing():   # a slow swell as the bloom closes, not a pop
+            u = (t - (self._ignite_end() - SWELL_LEAD)) / BREATH_SWELL_MS
+            if u <= 0 or u >= 1:
+                return 1.0
+            if u < 0.4:
+                return 1.0 + 0.04 * _soft(u / 0.4)
+            return 1.04 - 0.04 * _soft((u - 0.4) / 0.6)
         u = (t - self._ignite_end()) / POP_MS
         if u < 0 or u >= 1:
             return 1.0
@@ -865,6 +1064,12 @@ class DialButton(PowerButton):
             if self._charge_from <= 0.0 or u >= 1.0:
                 return 0.0
             return self._charge_from * (1.0 - _ease_out(u))
+        if breathing():
+            # Full as each breath's pulse leaves, gone by an eighth of the
+            # way, gathering again over the last quarter.
+            level = keyframes(breath_pos(t - self._ignite_end(), BREATH_MS),
+                              CHARGE)
+            return max(0.0, level) * min(1.0, t / CHARGE_RAMP_MS)
         rel = t - self._ignite_end()
         k = max(1, round(rel / PING_PERIOD_MS))
         d = rel - k * PING_PERIOD_MS
@@ -875,6 +1080,10 @@ class DialButton(PowerButton):
         return 0.0
 
     def _shake_px(self, t: float) -> float:
+        if self._phase == "error" and breathing():
+            if t >= TREMBLE_MS:
+                return 0.0
+            return keyframes(t / TREMBLE_MS, TREMBLE)
         if self._phase != "error" or t >= SHAKE_MS:
             return 0.0
         pos = t / SHAKE_MS * (len(SHAKE) - 1)
@@ -886,6 +1095,14 @@ class DialButton(PowerButton):
         phase = self._phase
         if phase == "error":
             return col["error"]
+        if breathing() and phase in ("live", "stopping"):
+            if phase == "live":
+                u = (t - (self._ignite_end() - BREATH_GLYPH_LEAD)) \
+                    / BREATH_GLYPH_MS
+                return mix_rgba(col["gold"], col["accent"],
+                                _breath(_clamp(u)))
+            return mix_rgba(col["accent"], col["gold"],
+                            _breath(_clamp(t / BREATH_GLYPH_MS)))
         if phase == "live":
             start = self._ignite_end() - 120
             return mix_rgba(col["gold"], col["accent"],
@@ -939,6 +1156,7 @@ class DialButton(PowerButton):
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
         head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
         now = time.monotonic()
+        breath = breathing()
         p.save()
         p.translate(c, c)
         p.rotate(self._over)          # stretched past an end
@@ -948,13 +1166,22 @@ class DialButton(PowerButton):
             if visible <= 0.0:
                 continue
             angle, r_in, r_out = tick_geometry(i)
-            if i < lit:
+            glow = 0.0
+            if breath:
+                colour, alpha, scale, glow = self._breath_look(i, lit, col, t)
+            elif i < lit:
                 colour, alpha, scale = self._lit_look(i, col, t)
             elif self._phase == "starting":
                 colour, scale = self._comet_look(i, col["unlit"], col, t)
                 alpha = 1.0
             else:
                 colour, alpha, scale = col["unlit"], 1.0, 1.0
+            if glow > 0.01:           # breath: lit ticks glow softly
+                halo = QColor(colour)
+                halo.setAlphaF(GLOW_ALPHA * glow * alpha * visible)
+                lift = self._swell_px(angle, head_angle)
+                self._line(p, angle, (r_in + lift - 1.5) * scale,
+                           (r_out + lift + 1.5) * scale, halo, 10.0)
             flash = self._trail_glow(i, now)
             if flash > 0.0:   # passed by a stepped needle: a comet flash
                 tone = col["flash"] if self._phase == "live" else col["comet"]
@@ -993,9 +1220,11 @@ class DialButton(PowerButton):
         """Ripple, disc, charge glow, power glyph and the rolling label."""
         c = REF / 2
         live = self._phase == "live"
+        breath = breathing()
 
-        # The ripple leaving the disc as the live sweep closes.
-        if live:
+        # The ripple leaving the disc as the live sweep closes (breath:
+        # the sky's halos do this, see widgets/sky.py).
+        if live and not breath:
             u = (t - self._ignite_end()) / RIPPLE_MS
             if 0 <= u < 1:
                 ring = QColor(col["accent"])
@@ -1013,6 +1242,36 @@ class DialButton(PowerButton):
         p.translate(-c, -c)
 
         charge = self._charge(t)
+        hot = self._disc_hot.value
+        if breath:
+            self._paint_disc_breath(p, col, charge, hot)
+        else:
+            self._paint_disc(p, col, charge, hot)
+        if self._key_focus and self.hasFocus():
+            p.setPen(QPen(col["focus"], 2.0))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(c, c), DISC_R + 6.0, DISC_R + 6.0)
+
+        # Power glyph: the stem sinks under a press and lifts on hover.
+        glyph = QPen(self._glyph_colour(col, t), 5.5)
+        glyph.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(glyph)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        gy, gr = 137.75, 20.0
+        stem = 3.0 * press - 1.5 * hot
+        p.drawLine(QPointF(c, gy - 26.0 + stem), QPointF(c, gy - 6.0 + stem))
+        p.drawArc(QRectF(c - gr, gy - gr, 2 * gr, 2 * gr), 130 * 16, 280 * 16)
+
+        if breath:
+            self._paint_label_breath(p, col, t)
+        else:
+            self._paint_label(p, col, t)
+        p.restore()
+
+    def _paint_disc(self, p, col, charge, hot) -> None:
+        """The disc, and its charge before each ping."""
+        c = REF / 2
+        live = self._phase == "live"
         if charge > 0.01:   # soft light just outside the rim
             glow = QRadialGradient(QPointF(c, c), DISC_R + 26)
             outer, clear = QColor(col["accent"]), QColor(col["accent"])
@@ -1025,7 +1284,6 @@ class DialButton(PowerButton):
             p.drawEllipse(QPointF(c, c), DISC_R + 26, DISC_R + 26)
 
         # Disc: the rim warms under the pointer (gold idle, accent live).
-        hot = self._disc_hot.value
         tint = QColor(col["accent"] if live else col["gold"])
         tint.setAlphaF(0.45)
         p.setPen(QPen(mix_rgba(col["groove"], tint, hot), 2.0))
@@ -1046,23 +1304,53 @@ class DialButton(PowerButton):
             p.setPen(QPen(rim, 2.5))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(c, c), DISC_R - 0.5, DISC_R - 0.5)
-        if self._key_focus and self.hasFocus():
-            p.setPen(QPen(col["focus"], 2.0))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(QPointF(c, c), DISC_R + 6.0, DISC_R + 6.0)
 
-        # Power glyph: the stem sinks under a press and lifts on hover.
-        glyph = QPen(self._glyph_colour(col, t), 5.5)
-        glyph.setCapStyle(Qt.PenCapStyle.RoundCap)
-        p.setPen(glyph)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        gy, gr = 137.75, 20.0
-        stem = 3.0 * press - 1.5 * hot
-        p.drawLine(QPointF(c, gy - 26.0 + stem), QPointF(c, gy - 6.0 + stem))
-        p.drawArc(QRectF(c - gr, gy - gr, 2 * gr, 2 * gr), 130 * 16, 280 * 16)
+    def _paint_disc_breath(self, p, col, charge, hot) -> None:
+        """Breath: a deeper disc whose glow (inside and out) and rim
+        gather before each pulse and fade with it."""
+        c = REF / 2
+        centre = QPointF(c, c)
+        live = self._phase == "live"
+        accent = col["accent"]
+        p.setPen(Qt.PenStyle.NoPen)
+        if charge > 0.01:   # light around the disc
+            glow = QRadialGradient(centre, DISC_R + 34)
+            glow.setColorAt(DISC_R / (DISC_R + 34),
+                            self._tone(accent, 0.26 * charge))
+            glow.setColorAt(1.0, self._tone(accent, 0.0))
+            p.setBrush(glow)
+            p.drawEllipse(centre, DISC_R + 34, DISC_R + 34)
+        tint = QColor(accent if live else col["gold"])
+        tint.setAlphaF(0.45)
+        edge = QColor(accent)
+        edge.setAlphaF(0.2)
+        face = QRadialGradient(QPointF(c, c - 0.1 * DISC_R), DISC_R)
+        face.setColorAt(0.0, col["pill"].lighter(132 + int(10 * hot)))
+        face.setColorAt(0.7, col["pill"].lighter(100 + int(8 * hot)))
+        p.setPen(QPen(mix_rgba(edge, tint, hot), 1.5))
+        p.setBrush(face)
+        p.drawEllipse(centre, DISC_R, DISC_R)
+        if charge > 0.01:   # glow inside the disc, and the rim's band
+            p.setPen(Qt.PenStyle.NoPen)
+            inner = QRadialGradient(centre, DISC_R)
+            inner.setColorAt(0.5, self._tone(accent, 0.0))
+            inner.setColorAt(1.0, self._tone(accent, 0.34 * charge))
+            p.setBrush(inner)
+            p.drawEllipse(centre, DISC_R - 0.75, DISC_R - 0.75)
+            band = QRadialGradient(centre, DISC_R)
+            band.setColorAt((DISC_R - 7) / DISC_R,
+                            self._tone(col["focus"], 0.0))
+            band.setColorAt((DISC_R - 1) / DISC_R,
+                            self._tone(col["focus"], 0.8 * charge))
+            band.setColorAt(1.0, self._tone(col["focus"], 0.8 * charge))
+            p.setBrush(band)
+            p.drawEllipse(centre, DISC_R, DISC_R)
 
-        self._paint_label(p, col, t)
-        p.restore()
+    @staticmethod
+    def _tone(colour: QColor, alpha: float) -> QColor:
+        c = QColor(colour)
+        c.setAlphaF(max(0.0, min(1.0, alpha)))
+        return c
 
     def _paint_label(self, p, col, t) -> None:
         """Start / dots / Stop / Retry, rolled through like a drum."""
@@ -1085,14 +1373,87 @@ class DialButton(PowerButton):
                 self._centered_text(p, text, c, y + 18.0, head, colour)
         p.restore()
 
-    def _paint_dots(self, p, col, t, cy) -> None:
+    @staticmethod
+    def _heading(size: int, letter_spacing: float = 100.0) -> QFont:
+        """Breath: the lighter, widely tracked heading face."""
+        font = QFont(heading_family())
+        font.setPixelSize(size)
+        font.setWeight(QFont.Weight.DemiBold)
+        font.setLetterSpacing(QFont.SpacingType.PercentageSpacing,
+                              letter_spacing)
+        return font
+
+    def _misted_text(self, p, text, cx, baseline, font, colour,
+                     alpha: float, right: float = None) -> None:
+        """Text that mists in and out: as it fades it also softens (drawn
+        a few times, slightly spread), the CSS blur's stand-in. Centred on
+        cx, or right-aligned to `right`."""
+        if alpha <= 0.01:
+            return
+        width = QFontMetricsF(font).horizontalAdvance(text)
+        x = right - width if right is not None else cx - width / 2
+        p.setFont(font)
+        blur = 1.0 - alpha
+        if blur < 0.05:
+            p.setPen(self._tone(colour, colour.alphaF() * alpha))
+            p.drawText(QPointF(x, baseline), text)
+            return
+        spread = 3.5 * blur
+        p.setPen(self._tone(colour, colour.alphaF() * alpha
+                            * (1.0 - 0.6 * blur)))
+        p.drawText(QPointF(x, baseline), text)
+        p.setPen(self._tone(colour, colour.alphaF() * alpha * 0.1 * blur))
+        for k in range(8):
+            a = k * math.pi / 4
+            p.drawText(QPointF(x + spread * math.cos(a),
+                               baseline + spread * math.sin(a)), text)
+
+    def _paint_label_breath(self, p, col, t) -> None:
+        """Breath: the old label mists away as the new one surfaces."""
+        c = REF / 2
+        head = self._heading(20, 114.0)
+        mist = self._label_mist.value
+        # The old one is mostly gone before the new one surfaces, so the
+        # two never read on top of each other.
+        leaving = 1.0 - _clamp(mist / 0.6)
+        arriving = _clamp((mist - 0.35) / 0.65)
+        for index, alpha in ((self._label_from, leaving),
+                             (self._label_to, arriving)):
+            if alpha <= 0.01:
+                continue
+            if index == 1:
+                self._paint_dots(p, col, t, 186.0, alpha)
+            else:
+                colour = col["error"] if index == 3 else col["text"]
+                self._misted_text(p, LABELS[index], c, 193.0, head, colour,
+                                  alpha)
+
+    def _paint_dots(self, p, col, t, cy, fade: float = 1.0) -> None:
         """The "..." label: lit in step with the comet while starting,
-        settling right to left while stopping."""
+        settling right to left while stopping. (Breath: they breathe a
+        beat apart, then settle.)"""
         c = REF / 2
         p.setPen(Qt.PenStyle.NoPen)
+        breath = breathing()
         for j in range(3):
             colour, alpha, lift, scale = QColor(col["text"]), 0.35, 0.0, 1.0
-            if self._phase == "starting" and motion_ok():
+            if breath and self._phase == "starting" and motion_ok():
+                colour, alpha, scale = QColor(col["gold"]), 0.25, 0.8
+                u = t - j * DOT_BREATH_STEP
+                if u >= 0:
+                    ph = breath_pos(u, GATHER_MS)
+                    v = (_breath(ph / 0.35) if ph < 0.35
+                         else 1.0 - _breath((ph - 0.35) / 0.65))
+                    alpha, scale = 0.25 + 0.75 * v, 0.8 + 0.4 * v
+                    if v > 0.01:   # its glow at the top of the breath
+                        p.setBrush(self._tone(col["gold"], 0.3 * v * fade))
+                        p.drawEllipse(QPointF(c + (j - 1) * 13.0, cy),
+                                      6.0 * scale, 6.0 * scale)
+            elif breath and self._phase == "stopping":
+                q = _breath(_clamp((t - j * DOT_SETTLE_STEP) / DOT_SETTLE_MS))
+                colour = mix_rgba(col["accent"], col["gold"], q)
+                alpha, scale = 1.0 - 0.75 * q, 1.0 - 0.3 * q
+            elif self._phase == "starting" and motion_ok():
                 colour, alpha = QColor(col["gold"]), 0.3
                 u = t - j * DOT_STEP
                 if u >= 0:
@@ -1110,13 +1471,67 @@ class DialButton(PowerButton):
                 q = _ease_in((t - (2 - j) * 110) / DOTS_OUT_MS)
                 colour = mix_rgba(col["accent"], col["gold"], q)
                 alpha, lift, scale = 1.0 - 0.75 * q, 3.0 * q, 1.0 - 0.3 * q
-            colour.setAlphaF(colour.alphaF() * alpha)
+            colour.setAlphaF(colour.alphaF() * alpha * fade)
             p.setBrush(colour)
             r = 3.0 * scale
             p.drawEllipse(QPointF(c + (j - 1) * 13.0, cy + lift), r, r)
 
     def _paint_readout(self, p, col) -> None:
         """"-50 dB" with rolling digits, its caption and the end labels."""
+        if breathing():
+            self._paint_readout_breath(p, col)
+        else:
+            self._paint_digits(p, col)
+        c = REF / 2
+        small = QFont(self.font())
+        small.setPixelSize(12)
+        self._centered_text(p, "reduction strength", c, 294.0, small,
+                            col["muted"])
+        for label, x, blend, shift in (
+                ("gentle", 52.0, self._gentle_hot, -3.0),
+                ("strong", 248.0, self._strong_hot, 3.0)):
+            tone = mix_rgba(col["muted"], col["text"], blend.value)
+            self._centered_text(p, label, x + shift * blend.value, 278.0,
+                                small, tone)
+
+    def _paint_readout_breath(self, p, col) -> None:
+        """Breath: each value mists out drifting up as the next surfaces
+        from below (no mechanical roll)."""
+        c = REF / 2
+        big = self._heading(30, 104.0)
+        metrics = QFontMetricsF(big)
+        num_w = metrics.horizontalAdvance("-50")
+        unit_w = metrics.horizontalAdvance("dB")
+        gap = 7.0
+        right = c - (num_w + gap + unit_w) / 2 + num_w
+        baseline = 276.0
+        p.save()
+        bump = _rise_fall(self._since(self._bump_at) / BUMP_MS, 0.4)
+        if bump > 0:
+            p.translate(c, baseline - 11)
+            p.scale(1 + 0.04 * bump, 1 + 0.04 * bump)
+            p.translate(-c, -(baseline - 11))
+        now = time.monotonic()
+        drift_ms = self._mist_ms()[1]
+        for value, entry in sorted(self._mists.items()):
+            alpha = self._mist_alpha(entry, now)
+            start, end, at = entry
+            moved = _soft(_clamp((now - at) * 1000.0 / drift_ms))
+            if end > 0.0:      # surfacing from below
+                dy = NUMBER_DRIFT * (1.0 - moved) * (1.0 - start)
+            else:              # drifting up and away
+                dy = -NUMBER_DRIFT * moved
+            if not motion_ok():
+                dy = 0.0
+            self._misted_text(p, str(value), c, baseline + dy, big,
+                              col["text"], alpha, right=right)
+        p.setFont(big)
+        p.setPen(col["text"])
+        p.drawText(QPointF(right + gap, baseline), "dB")
+        p.restore()
+
+    def _paint_digits(self, p, col) -> None:
+        """"-50 dB" with odometer digits."""
         c = REF / 2
         big = QFont(heading_family())
         big.setPixelSize(30)
@@ -1151,14 +1566,3 @@ class DialButton(PowerButton):
             x += digit_w
         p.drawText(QPointF(x + 6.0, baseline), "dB")
         p.restore()
-
-        small = QFont(self.font())
-        small.setPixelSize(12)
-        self._centered_text(p, "reduction strength", c, 294.0, small,
-                            col["muted"])
-        for label, x, blend, shift in (
-                ("gentle", 52.0, self._gentle_hot, -3.0),
-                ("strong", 248.0, self._strong_hot, 3.0)):
-            tone = mix_rgba(col["muted"], col["text"], blend.value)
-            self._centered_text(p, label, x + shift * blend.value, 278.0,
-                                small, tone)
