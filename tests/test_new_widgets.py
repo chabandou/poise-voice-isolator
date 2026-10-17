@@ -58,37 +58,92 @@ def test_stats_bar_state_dot(app):
     from stream_denoiser.gui.widgets.stats_bar import StatsBar
     bar = StatsBar()
     assert bar._state.text() == "ready"
-    bar.set_state("processing", "loading model…")
+    bar.set_state("processing", "loading GTCRN…")
     assert bar._dot.property("state") == "processing"
-    assert bar._state.text() == "loading model…"
+    assert bar._state.text() == "loading GTCRN…"
     bar.set_state("processing")
-    assert bar._state.text() == "processing"
+    assert bar._state.text() == "isolating"
     bar.set_state("error")
     assert bar._state.text() == "error"
+    assert bar._state.property("state") == "error"   # red text
 
 
-@pytest.mark.parametrize("state,message,word", [
+@pytest.mark.parametrize("state,message,text", [
     ("ready", "Ready", "ready"),
     ("ready", "Stopped", "ready"),
-    ("error", "Error: boom", "error"),
-    ("processing", "Initializing...", "starting…"),
+    ("error", "Error: boom", "error: boom"),
+    ("error", "Error: boom\nTraceback (most recent call last):", "error: boom"),
+    ("processing", "Initializing...", "initializing…"),
     ("processing", "Starting...", "starting…"),
-    ("processing", "Starting audio streams...", "starting…"),
-    ("processing", "Switching to 44100Hz output...", "starting…"),
-    ("processing", "Loading model...", "loading model…"),
-    ("processing", "Downloading audio tools... First time may take a few seconds...",
-     "downloading…"),
-    ("processing", "Installing AudioDeviceCmdlets... First time may take a few seconds...",
-     "installing…"),
-    ("processing", "Switching audio device...", "switching device…"),
-    ("processing", "Switched to VB-Cable (CABLE Input)", "switching device…"),
-    ("processing", "Isolating audio", "processing"),
-    ("processing", "Processing", "processing"),
+    ("processing", "Loading GTCRN...", "loading GTCRN…"),
+    ("processing", "Output: Speakers (Realtek(R) Audio)",
+     "output: Speakers (Realtek(R) Audio)"),
+    ("processing", "Switching audio device...", "switching audio device…"),
+    ("processing", "Switched to VB-Cable (CABLE Input)",
+     "switched to VB-Cable (CABLE Input)"),
+    ("processing", "Installing AudioDeviceCmdlets... First time may take a "
+     "few seconds...", "installing AudioDeviceCmdlets… First time may "
+     "take a few seconds…"),
+    ("processing", "VB-CABLE: odd", "VB-CABLE: odd"),     # acronym kept
+    ("processing", "Isolating audio", "isolating"),
+    ("processing", "Processing", "isolating"),
     ("processing", "Stopping...", "stopping…"),
+    ("processing", "Restored playback to Speakers",
+     "restored playback to Speakers"),
 ])
-def test_status_word_names_the_current_step(state, message, word):
-    from stream_denoiser.gui.widgets.stats_bar import status_word
-    assert status_word(state, message) == word
+def test_status_text_tells_the_step_in_full(state, message, text):
+    from stream_denoiser.gui.widgets.stats_bar import status_text
+    assert status_text(state, message) == text
+
+
+def test_quick_steps_stay_up_long_enough_to_read(app):
+    """Each step is up at least STEP_MIN_MS; later ones queue behind it.
+    An error doesn't wait (and drops what's queued)."""
+    from stream_denoiser.gui.widgets import stats_bar
+    bar = stats_bar.StatsBar()
+    bar.show_status("processing", "Switching audio device...")
+    bar.show_status("processing", "Loading GTCRN...")
+    bar.show_status("processing", "Isolating audio")
+    assert bar.status_shown == "switching audio device…"
+    _pump(app, stats_bar.STEP_MIN_MS / 1000.0 + 0.15)
+    assert bar.status_shown == "loading GTCRN…"
+    _pump(app, stats_bar.STEP_MIN_MS / 1000.0 + 0.15)
+    assert bar.status_shown == "isolating"
+    bar.show_status("processing", "Stopping...")
+    bar.show_status("ready", "Ready")
+    bar.show_status("error", "Error: boom")
+    assert bar.status_shown == "error: boom" and not bar._queue
+    bar.close()
+
+
+def test_stats_hint_only_while_idle(app):
+    """"stats appear when running" is noise beside a step or an error."""
+    from stream_denoiser.gui.widgets.stats_bar import StatsBar
+    bar = StatsBar()
+    bar.show()
+    _pump(app)
+    assert bar._hint.isVisible()
+    bar.set_state("processing", "loading GTCRN…")
+    assert not bar._hint.isVisible()
+    bar.set_state("error", "error: boom")
+    bar.reset()                         # the worker stopped after the error
+    assert not bar._hint.isVisible()
+    bar.set_state("ready")
+    assert bar._hint.isVisible()
+    bar.close()
+
+
+def test_long_status_is_cut_short_with_the_full_text_on_hover(app):
+    from stream_denoiser.gui.widgets.stats_bar import LOG_HINT, StatsBar
+    bar = StatsBar()
+    long = "Error: " + "VB-CABLE: default playback is still somewhere " * 4
+    bar.show_status("error", long)
+    _pump(app, 0.4)
+    assert bar._state.text().endswith("…")
+    assert len(bar._state.text()) < len(bar.status_shown)
+    assert bar.status_shown in bar._status.toolTip()
+    assert LOG_HINT in bar._status.toolTip()
+    bar.close()
 
 
 def test_stats_bar_skip_is_live_and_hidden_without_aad(app):

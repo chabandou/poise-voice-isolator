@@ -272,6 +272,7 @@ QStatusBar::item {
 
 QLabel#sb-text,
 QLabel#sb-value,
+QLabel#sb-status,
 QLabel#sb-good,
 QLabel#sb-warn,
 QLabel#sb-bad {
@@ -282,6 +283,8 @@ QLabel#sb-bad {
 
 QLabel#sb-text { color: {muted}; }
 QLabel#sb-value { color: {text}; }
+QLabel#sb-status { color: {text}; }
+QLabel#sb-status[state="error"] { color: {error}; }
 QLabel#sb-good { color: {success}; }
 QLabel#sb-warn { color: {warning}; }
 QLabel#sb-bad { color: {error}; }

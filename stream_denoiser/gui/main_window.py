@@ -53,7 +53,7 @@ from .widgets.chip import IconChip
 from .widgets.model_cards import ModelCards
 from .widgets.settings_row import SettingsRow
 from .widgets.model_selector import ModelSelector
-from .widgets.stats_bar import StatsBar, status_word
+from .widgets.stats_bar import StatsBar
 from .widgets.emblem import Emblem
 from .widgets.pattern_card import PatternCard
 from ..logging_config import (
@@ -70,8 +70,6 @@ HOME_TITLES = {
     "stopping": "Stopping...",
     "error": "Couldn't start",
 }
-HOME_READY_SUB = "Press the dial to start."
-HOME_ISOLATING_SUB = "Processing"
 
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
@@ -127,8 +125,6 @@ class MainWindow(QMainWindow):
         self.restore_state()
 
         # Apple-style juice: window fade + staggered home entrance.
-        self._status_pulse = None
-        self._status_pulse_eff = None
         self._shown_once = False
         try:
             from .animations import install_press_fade
@@ -307,6 +303,7 @@ class MainWindow(QMainWindow):
         bar.setSizeGripEnabled(False)
         bar.setContentsMargins(0, 0, 0, 0)
         self.stats_bar = StatsBar()
+        self.stats_bar.open_log.connect(lambda: self._on_page_requested(2))
         bar.addWidget(self.stats_bar, 1)
 
     # -- Home page ----------------------------------------------------------
@@ -346,19 +343,19 @@ class MainWindow(QMainWindow):
         self.home_title.setWordWrap(True)
         stage_layout.addWidget(self.home_title)
 
-        self.status_label = QLabel(HOME_READY_SUB)
+        # Only errors get a line under the headline (they need reading in
+        # full); every other step is told in the status bar.
+        self.status_label = QLabel("")
         self.status_label.setObjectName("status-line")
-        self.status_label.setProperty("state", "ready")
+        self.status_label.setProperty("state", "error")
         self.status_label.setAlignment(center)
         self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
         stage_layout.addWidget(self.status_label)
-        # Status changes fade instead of snapping (several can arrive in
+        # Headline changes fade instead of snapping (several can arrive in
         # quick succession while starting; only the newest fades in).
         from .animations import TextSwap
         self._title_swap = TextSwap(self.home_title)
-        self._status_swap = TextSwap(self.status_label)
-        self._status_swap.settled.connect(self._on_status_settled)
-        self._pulse_wanted = False   # start the pulse once the text settles
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()
@@ -876,7 +873,7 @@ class MainWindow(QMainWindow):
         self.worker.started_processing.connect(self._on_worker_started)
         self.worker.stopped_processing.connect(self._on_worker_stopped)
         self.worker.stats_updated.connect(self.stats_bar.update_stats)
-        self.worker.status_changed.connect(self.update_status)
+        self.worker.status_changed.connect(self._on_worker_status)
         self.worker.error_occurred.connect(self.handle_error)
 
         # Initial config
@@ -1088,7 +1085,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.update_status("Isolating audio")
-        self._start_status_pulse()
 
         # Disable controls while running
         self._set_controls_enabled(False)
@@ -1108,7 +1104,6 @@ class MainWindow(QMainWindow):
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(False)
         self._stage.set_live(False)
-        self._stop_status_pulse()
 
         # Re-enable controls
         self._set_controls_enabled(True)
@@ -1135,8 +1130,23 @@ class MainWindow(QMainWindow):
         self.thresh_slider.setEnabled(checked)
         self.settings.aad_enabled = checked
 
+    def _on_worker_status(self, message: str) -> None:
+        """Worker steps, except after an error: its cleanup ("Restored
+        playback...", "Stopped") must not replace the error until the
+        next start."""
+        if self._error_state:
+            _logger.info(f"Status update (after error): {message}")
+            return
+        self.update_status(message)
+
+    #: Messages that mean "idle" (anything else that isn't an error is a
+    #: step of starting, running or stopping).
+    READY_MESSAGES = ("", "ready", "stopped")
+
     def update_status(self, message: str):
-        """Update status line message."""
+        """A status message: Home's headline follows the state, the
+        status bar tells the step, and errors also get a line under the
+        headline."""
         # First-ever switch needs the AudioDeviceCmdlets one-time
         # install, which can take a few seconds with no other feedback.
         # Expand only that message, and only until the first successful
@@ -1147,121 +1157,50 @@ class MainWindow(QMainWindow):
                 message = MSG_DEVICE_SWITCHING_FIRST_TIME
         except Exception:
             pass
-        # Update status state
-        state = "ready"
-        if "Error" in message:
-            state = "error"
-        elif any(word in message for word in
-                 ("Starting", "Stopping", "Loading", "Isolating", "Processing",
-                  "Switching", "Switched", "Initializing", "Downloading",
-                  "Installing", "Setting up")):
-            state = "processing"
-
-        title_key, sub = self._home_copy(message, state)
-        self._title_swap.set_text(HOME_TITLES[title_key])
-        if sub != self._status_swap.text():
-            # The swap needs the label's effect; the isolating pulse only
-            # belongs to the isolating line anyway.
-            self._stop_status_pulse()
-
-        def restyle(label=self.status_label, state=state):
-            label.setProperty("state", state)
-            label.style().unpolish(label)
-            label.style().polish(label)
-
-        self._status_swap.set_text(sub, on_apply=restyle)
-        self.stats_bar.set_state(state, status_word(state, message))
+        state = self._status_state(message)
+        self._title_swap.set_text(HOME_TITLES[self._home_title_key(
+            message, state)])
+        self._show_error_line(message if state == "error" else "")
+        self.stats_bar.show_status(state, message)
 
         _logger.info(f"Status update: {message}")
 
+    @classmethod
+    def _status_state(cls, message: str) -> str:
+        """ready | processing | error for a worker/GUI status message."""
+        if "Error" in message:
+            return "error"
+        if message.strip().rstrip(".").lower() in cls.READY_MESSAGES:
+            return "ready"
+        return "processing"
+
     @staticmethod
-    def _home_copy(message: str, state: str):
-        """(HOME_TITLES key, subtitle) for a worker status message."""
-        if state == "error":
-            return "error", message
-        if state == "ready":
-            return "ready", (
-                HOME_READY_SUB if message.strip() in ("", "Ready") else message)
+    def _home_title_key(message: str, state: str) -> str:
+        """HOME_TITLES key for a status message."""
+        if state in ("error", "ready"):
+            return state
         lowered = message.lower()
         # "Processing" comes from the worker's loop, after the GUI already
         # said "Isolating audio" (it used to flip Home back to the
         # starting headline).
         if lowered.startswith(("isolating", "processing")):
-            return "isolating", HOME_ISOLATING_SUB
-        if lowered.startswith("stopping"):
-            return "stopping", message
-        return "starting", message
+            return "isolating"
+        if lowered.startswith(("stopping", "restored")):
+            return "stopping"
+        return "starting"
 
-    def _start_status_pulse(self) -> None:
-        """Breathe the status line while isolating (live-indicator feel).
-
-        Waits for a running text swap to settle: the swap and the pulse
-        each need the label's opacity effect, and fades must not nest.
-        """
-        self._pulse_wanted = True
-        if not self._status_swap.busy:
-            self._begin_status_pulse()
-
-    def _on_status_settled(self) -> None:
-        if self._pulse_wanted and self._status_pulse is None:
-            self._begin_status_pulse()
-
-    def _begin_status_pulse(self) -> None:
-        try:
-            from .animations import cancel_fade, motion_ok
-            from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
-            from PyQt6.QtWidgets import QGraphicsOpacityEffect
-            self._stop_status_pulse()
-            self._pulse_wanted = True
-            if not motion_ok():
-                return
-            # The pulse owns the label's effect exclusively: void any
-            # entrance fade first so two animations never fight over it
-            # (that replaces the effect mid-paint -> QPainter errors).
-            cancel_fade(self.status_label)
-            eff = QGraphicsOpacityEffect(self.status_label)
-            self.status_label.setGraphicsEffect(eff)
-            self._status_pulse_eff = eff
-            eff.setOpacity(1.0)
-            anim = QPropertyAnimation(eff, b"opacity", self)
-            anim.setDuration(1400)
-            anim.setStartValue(1.0)
-            anim.setKeyValueAt(0.5, 0.55)
-            anim.setEndValue(1.0)
-            anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-            anim.setLoopCount(-1)
-            anim.start()
-            self._status_pulse = anim
-        except Exception:
-            pass
-
-    def _stop_status_pulse(self) -> None:
-        self._pulse_wanted = False
-        try:
-            if self._status_pulse is not None:
-                try:
-                    self._status_pulse.stop()
-                except Exception:
-                    pass
-                self._status_pulse = None
-            # Remove only the pulse's own effect: a text swap may own the
-            # label's effect right now.
-            eff = getattr(self, "_status_pulse_eff", None)
-            self._status_pulse_eff = None
-            if eff is not None and hasattr(self, "status_label"):
-                try:
-                    if self.status_label.graphicsEffect() is eff:
-                        self.status_label.setGraphicsEffect(None)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    def _show_error_line(self, message: str) -> None:
+        """The error under "Couldn't start" (hidden otherwise)."""
+        text = message.strip()
+        if text.lower().startswith("error:"):
+            text = text[len("error:"):].strip()
+        self.status_label.setText(text)
+        self.status_label.setVisible(bool(text))
 
     def handle_error(self, message: str):
         """Handle error from worker."""
         self._error_state = True
         self.power_btn.set_error(True)
-        self._stop_status_pulse()
         self.update_status(f"Error: {message}")
         if self._is_vb_cable_error(message):
             # Blocking modal: processing cannot start without VB-Cable

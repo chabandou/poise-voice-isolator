@@ -153,32 +153,85 @@ def test_controls_lock_while_running(window):
     assert model._subtitle.text() == model.CAPTION
 
 
-def test_status_messages_drive_headline_and_status_bar(window, monkeypatch):
+@pytest.fixture()
+def no_dwell(monkeypatch):
+    """Status-bar steps show at once (wording, not pacing)."""
+    from stream_denoiser.gui.widgets import stats_bar
+    monkeypatch.setattr(stats_bar, "STEP_MIN_MS", 0)
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+
+
+def test_status_messages_drive_headline_and_status_bar(window, no_dwell):
+    """Home keeps only the headline; the status bar tells each step in
+    full. Errors also get a line under the headline."""
     from stream_denoiser.gui.main_window import HOME_TITLES
-    monkeypatch.setenv("POISE_NO_ANIM", "1")       # wording, not motion
+    bar = window.stats_bar
     window.update_status("Starting...")
     assert window.home_title.text() == HOME_TITLES["starting"]
-    assert window.stats_bar._state.text() == "starting…"
-    window.update_status("Loading model...")
-    assert window.stats_bar._state.text() == "loading model…"
+    assert bar.status_shown == "starting…"
+    assert window.status_label.isHidden()          # no status line
+    window.update_status("Output: Speakers (Realtek(R) Audio)")
+    assert window.home_title.text() == HOME_TITLES["starting"]
+    assert bar.status_shown == "output: Speakers (Realtek(R) Audio)"
+    window.update_status("Loading GTCRN...")
+    assert bar.status_shown == "loading GTCRN…"
     window.update_status("Isolating audio")
     assert window.home_title.text() == HOME_TITLES["isolating"]
-    assert window.stats_bar._state.text() == "processing"
+    assert bar.status_shown == "isolating"
     # The worker's loop says "Processing" after that; Home must stay put.
     window.update_status("Processing")
     assert window.home_title.text() == HOME_TITLES["isolating"]
-    assert window.stats_bar._state.text() == "processing"
+    assert bar.status_shown == "isolating"
+    window.update_status("Stopping...")
+    assert window.home_title.text() == HOME_TITLES["stopping"]
+    window.update_status("Restored playback to Speakers (Realtek(R) Audio)")
+    assert window.home_title.text() == HOME_TITLES["stopping"]
+    assert bar.status_shown.startswith("restored playback to Speakers")
     window.update_status("Error: boom")
     assert window.home_title.text() == HOME_TITLES["error"]
-    assert window.status_label.text() == "Error: boom"
+    assert window.status_label.text() == "boom"
+    assert not window.status_label.isHidden()
+    assert bar.status_shown == "error: boom"
     window.update_status("Ready")
     assert window.home_title.text() == HOME_TITLES["ready"]
-    assert window.stats_bar._state.text() == "ready"
+    assert window.status_label.isHidden()
+    assert bar.status_shown == "ready"
 
 
-def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
-    """Home's headline/status line fade between messages; a burst of
-    messages shows only the newest; the isolating pulse waits its turn."""
+def test_the_error_stays_up_while_the_worker_cleans_up(window, no_dwell):
+    """After a failed start the worker still says "Restored playback..."
+    and "Stopped": the error must stay until the next start."""
+    from stream_denoiser.gui.main_window import HOME_TITLES
+    window._error_state = True
+    window.update_status("Error: VB-CABLE: automatic switch failed.")
+    window._on_worker_status("Restored playback to Speakers")
+    window._on_worker_status("Stopped")
+    assert window.home_title.text() == HOME_TITLES["error"]
+    assert window.status_label.text() == (
+        "VB-CABLE: automatic switch failed.")
+    assert window.stats_bar.status_shown.startswith("error: VB-CABLE")
+    window._error_state = False
+    window._on_worker_status("Starting...")
+    assert window.home_title.text() == HOME_TITLES["starting"]
+    assert window.status_label.isHidden()
+
+
+def test_clicking_the_status_opens_the_log(app, window):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    window._on_page_requested(0)
+    area = window.stats_bar._status
+    QTest.mouseClick(area, Qt.MouseButton.LeftButton,
+                     pos=area.rect().center())
+    _pump(app, 0.6)
+    assert window.stack.currentIndex() == 2
+    window._on_page_requested(0)
+    _pump(app, 0.6)
+
+
+def test_headline_changes_fade_and_coalesce(app, window, monkeypatch):
+    """The headline fades between messages; a burst shows only the
+    newest."""
     from PyQt6.QtWidgets import QGraphicsOpacityEffect
     from stream_denoiser.gui.main_window import HOME_TITLES
     monkeypatch.delenv("POISE_NO_ANIM", raising=False)
@@ -189,29 +242,10 @@ def test_status_changes_fade_and_coalesce(app, window, monkeypatch):
     # Mid-fade: the old text is still up, fading out.
     assert window.home_title.text() == HOME_TITLES["ready"]
     assert isinstance(window.home_title.graphicsEffect(), QGraphicsOpacityEffect)
-    window.update_status("Loading model...")    # arrives during the fade-out
+    window.update_status("Isolating audio")      # arrives during the fade-out
     _pump(app, 0.5)
-    assert window.home_title.text() == HOME_TITLES["starting"]
-    assert window.status_label.text() == "Loading model..."
+    assert window.home_title.text() == HOME_TITLES["isolating"]
     assert window.home_title.graphicsEffect() is None   # effect dropped
-    assert window.stats_bar._state.text() == "loading model…"
-
-    # Running: the pulse starts only after "Isolating" has faded in.
-    window.update_status("Isolating audio")
-    window._start_status_pulse()
-    assert window._status_pulse is None and window._status_swap.busy
-    _pump(app, 0.5)
-    assert window.status_label.text() == "Processing"
-    assert window._status_pulse is not None
-    assert window.status_label.graphicsEffect() is window._status_pulse_eff
-
-    # Leaving the isolating line stops the pulse so the swap can fade.
-    window.update_status("Stopping...")
-    assert window._status_pulse is None
-    _pump(app, 0.5)
-    assert window.status_label.text() == "Stopping..."
-    assert window.status_label.graphicsEffect() is None
-    window._stop_status_pulse()
 
 
 def test_home_only_keeps_the_everyday_controls(window):
