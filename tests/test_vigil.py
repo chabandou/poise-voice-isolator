@@ -116,6 +116,46 @@ def test_keyframes_interpolate_between_frames(app):
     assert keyframes(1.0, CHARGE) == 1.0
 
 
+def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+    seen = []    # (glow, star scale) per frame
+    night._paint_geometry = lambda *a: seen.append((a[7], a[9][0]))
+    image = QImage(900, 520, QImage.Format.Format_ARGB32_Premultiplied)
+    box = QRectF(0, 0, 900, 520)
+    clip = QPainterPath()
+    clip.addRect(box)
+    cycles = [0, 500, 1000, 4000, 6000, 7000, 7900]
+    p = QPainter(image)
+    for cycle in cycles:
+        night.paint(p, box, clip, QPointF(450, 280), 1.0, 1.0, 1000.0, {
+            "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
+            "gather_ms": 0.0, "cycle": cycle, "stopped": None,
+            "gain": lambda index: 1.0, "moving": True,
+            "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
+            "accent_light": QColor("#e4dcff")})
+    p.end()
+    glow = dict(zip(cycles, (g for g, _ in seen)))
+    assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
+    assert glow[0] == pytest.approx(1.0)              # full as it leaves
+    assert glow[4000] == 0.0                          # gone mid-breath
+    assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again
+
+
+def test_the_charge_fades_from_where_stop_caught_it(app):
+    from stream_denoiser.gui.widgets import sky
+    assert sky.charge(None) == 1.0                # gathering for the first
+    stopped = sky.BREATH_MS * 0.99                # just before a pulse
+    held = sky.charge(stopped)
+    assert held > 0.9
+    after = [sky.charge(stopped + ms, stopped) for ms in range(0, 700, 20)]
+    assert after[0] == pytest.approx(held)
+    assert after == sorted(after, reverse=True)   # fades, no jump at the
+    assert after[-1] == 0.0                       # breath it never takes
+
+
 # -- the dial on the breathing rhythm --------------------------------------------
 def _dial(app):
     from stream_denoiser.gui.widgets.dial import DialButton

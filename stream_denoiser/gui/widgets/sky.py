@@ -1,16 +1,18 @@
 """
 Poise Voice Isolator - Night Sky
 
-The Vigil theme's backdrop for the dial card (PatternCard paints it in
+The backdrop of Vigil and Mono for the dial card (PatternCard paints it in
 place of the lattice): a soft aura and quiet geometry around the dial
-(two rings, a dashed one turning slowly, two eight-point stars turning
-against each other, beads on the middle ring), small eight-point
-sparkles scattered over the card and motes of light drifting up through
-it. Idle it is candle gold and breathes slowly; while isolating it turns
-lavender and moves on the dial's breathing cycle (BREATH_MS): each breath
-a soft band of light and three halos leave the dial, the stars kick round
-and swell, the beads flare as the band passes them, and each sparkle
-flashes and is pushed outward as the band reaches it, springing back.
+(a ring with beads on it, a dashed one turning slowly, two eight-point
+stars turning against each other), small eight-point sparkles scattered
+over the card and motes of light drifting up through it. Idle it is
+candle gold and breathes slowly; while isolating it turns lavender and
+moves on the dial's breathing cycle (BREATH_MS): the ring and the stars
+gather light with the dial's disc before each breath's pulse (CHARGE),
+and as it leaves, a soft band of light and three halos leave the dial,
+the stars kick round (holding their size), the beads flare as the band
+passes them, and each sparkle flashes and is pushed outward as the band
+reaches it, springing back.
 
 The dial itself breathes on the same cycle (see DialButton); the shared
 timelines live here. Ported from the design's CSS (the Vigil board), so
@@ -41,14 +43,19 @@ PULSE_FADE_MS = 600       # a pulse in flight when isolating stops fades
 DISC_R = 88.0
 AURA_R = 290.0            # the aura's disc; its gradient runs to the
 AURA_RAY = 410.0          # box's corner, as CSS circle gradients do
-RINGS = ((168.0, 0.13), (200.0, 0.11))
+RING_R, RING_ALPHA = 168.0, 0.13              # the beads sit on it
 DASH_R, DASH_ALPHA, DASH_TURN_MS = 262.0, 0.10, 320000
 STAR_HALF, STAR_TURN_MS = 182.0, 240000       # the outer star
 STAR2_HALF, STAR2_TURN_MS = 132.0, 300000     # the inner one, turning back
-STAR_ALPHA = (0.07, 0.17)                     # idle, live
-STAR2_ALPHA = (0.05, 0.11)
+STAR_ALPHA = (0.07, 0.105)                    # idle, live between pulses
+STAR2_ALPHA = (0.05, 0.07)
 BEAD_R, BEAD_MS, BEAD_STEP = 1.8, 6000, 750
 FLARE_R = 3.2
+# The charge the ring and stars hold (0..1, as the disc's): their lines
+# brighten toward accent_light, x(1 + GLOW_LIFT) at full, over soft
+# halos (width x the line's, alpha x the line's).
+GLOW_LIFT = 1.5
+GLOW_HALO = ((10.0, 0.3), (4.0, 0.6))
 SEED = 0x2F6B1D3          # the design's scatter, star for star
 MOTE_COUNT = 18
 SPARKLE_COUNT = 26
@@ -102,10 +109,6 @@ AURA_LIVE = (((0, 1.06, BREATH), (0.12, 0.96, BREATH), (0.75, 0.96, BREATH),
               (1, 1.0, BREATH)))
 STARS_IDLE = ((0, 0.985, BREATH), (0.45, 1.02, BREATH), (1, 0.985, BREATH))
 STARS_GATHER = ((0, 1.01, BREATH), (0.55, 0.955, BREATH), (1, 1.01, BREATH))
-STARS_LIVE_SCALE = ((0, 1.06, _KICK), (0.12, 0.97, EASE),
-                    (0.75, 0.97, EASE_IN), (1, 1.06, _linear))
-STARS_LIVE_ALPHA = ((0, 1.0, _KICK), (0.12, 0.62, EASE),
-                    (0.75, 0.62, EASE_IN), (1, 1.0, _linear))
 STARS_LIVE_TURN = ((0, 0.0, _KICK), (0.09, 7.0, EASE), (0.75, 1.0, EASE_IN),
                    (1, 0.0, _linear))
 BEAD = ((0, 0.1, BREATH), (0.12, 0.6, BREATH), (0.3, 0.1, BREATH),
@@ -152,6 +155,22 @@ def band_arrival(distance: float) -> float:
         else:
             hi = mid
     return (lo + hi) / 2 * BAND_MS
+
+
+def charge(cycle, stopped=None) -> float:
+    """0..1: the light the ring and stars hold, on the disc's CHARGE curve
+    (full as each pulse leaves; gathering until the first one). After
+    Stop (`stopped` ms into the cycle) the charge in hand fades as the
+    pulse in flight does and no new one gathers."""
+    if cycle is None:
+        return keyframes(1.0, CHARGE)
+    if stopped is None:
+        return keyframes(breath_pos(cycle, BREATH_MS), CHARGE)
+    u = (cycle - stopped) / PULSE_FADE_MS
+    if u >= 1.0:
+        return 0.0
+    return (keyframes(breath_pos(stopped, BREATH_MS), CHARGE)
+            * (1.0 - max(0.0, u)) ** 2)
 
 
 # -- the scatter ----------------------------------------------------------------
@@ -247,6 +266,20 @@ def _alpha(colour: QColor, alpha: float) -> QColor:
     return c
 
 
+def _charged_pens(colour: QColor, light: QColor, alpha: float, width: float,
+                  glow: float):
+    """Pens, drawn in order, for a line of `alpha` holding `glow` (0..1)
+    of the charge: soft halos, then the line brightened toward `light`."""
+    pens = []
+    if glow > 0.01:
+        for spread, level in GLOW_HALO:
+            pens.append(QPen(_alpha(colour, alpha * level * glow),
+                             width * spread))
+    pens.append(QPen(_alpha(mix_rgba(colour, light, glow),
+                            alpha * (1.0 + GLOW_LIFT * glow)), width))
+    return pens
+
+
 def _square_outline(half: float, pen: QPen):
     """A square's outline (centred, `half` across), as stroking it with
     `pen` would draw it, in pieces Qt rasterizes far faster when rotated
@@ -269,6 +302,13 @@ def _square_outline(half: float, pen: QPen):
         corners.lineTo(sx * half, sy * (half - e))
         corners.closeSubpath()
     return flat, pen.color(), edges, corners
+
+
+def _bead(centre: QPointF, k: float, i: int) -> QPointF:
+    """Bead i of 8 on the ring, clockwise from the top."""
+    angle = math.radians(i * 45.0)
+    return QPointF(centre.x() + RING_R * k * math.sin(angle),
+                   centre.y() - RING_R * k * math.cos(angle))
 
 
 class NightSky:
@@ -304,8 +344,10 @@ class NightSky:
 
         look: live / gather / error / reveal (0..1 blends), gather_ms (ms
         into starting), cycle (ms since the first pulse, or None),
-        gain(index) (how much of that breath's pulse to show), and the
-        colours secondary / accent / accent_light (QColor).
+        stopped (cycle ms at Stop, or None), gain(index) (how much of
+        that breath's pulse to show), moving (False under reduced motion:
+        no charge), and the colours secondary / accent / accent_light
+        (QColor).
         """
         live, gather = look["live"], look["gather"]
         reveal = look["reveal"]
@@ -339,12 +381,14 @@ class NightSky:
                                keyframes(u_gather, AURA_GATHER[1]),
                                keyframes(u_live, AURA_LIVE[1])))
         geo = mix_rgba(sec, acc, live)
+        # Live, the stars hold their size; the pulses only turn them.
         stars = (blend(keyframes(u_idle, STARS_IDLE),
-                       keyframes(u_gather, STARS_GATHER),
-                       keyframes(u_live, STARS_LIVE_SCALE)),
-                 live * keyframes(u_live, STARS_LIVE_TURN),
-                 1.0 + (keyframes(u_live, STARS_LIVE_ALPHA) - 1.0) * live)
-        self._paint_geometry(p, centre, k, now, live, geo, reveal, stars)
+                       keyframes(u_gather, STARS_GATHER), 1.0),
+                 live * keyframes(u_live, STARS_LIVE_TURN))
+        glow = (live * charge(cycle, look["stopped"]) if look["moving"]
+                else 0.0)
+        self._paint_geometry(p, centre, k, now, live, geo, light, glow,
+                             reveal, stars)
         self._paint_flares(p, centre, k, cycle, gain, live, geo, reveal)
         self._paint_halos(p, centre, k, cycle, gain, acc, light, reveal)
         p.restore()
@@ -457,13 +501,14 @@ class NightSky:
             p.drawEllipse(centre, r, r)
 
     @staticmethod
-    def _paint_geometry(p, centre, k, now, live, colour, reveal,
+    def _paint_geometry(p, centre, k, now, live, colour, light, glow, reveal,
                         stars) -> None:
         width = max(1.0, k)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for r, a in RINGS:
-            p.setPen(QPen(_alpha(colour, a * reveal), width))
-            p.drawEllipse(centre, r * k, r * k)
+        for pen in _charged_pens(colour, light, RING_ALPHA * reveal, width,
+                                 glow):
+            p.setPen(pen)
+            p.drawEllipse(centre, RING_R * k, RING_R * k)
         p.save()
         p.translate(centre)
         p.rotate(-360.0 * now / DASH_TURN_MS)
@@ -473,8 +518,9 @@ class NightSky:
         p.drawEllipse(QPointF(0, 0), DASH_R * k, DASH_R * k)
         p.restore()
 
-        # The stars: one swell and turn for both, each turning on its own.
-        scale, turn, opacity = stars
+        # The stars: one swell (idle) and kick for both, each turning on
+        # its own, charged with the ring.
+        scale, turn = stars
         p.save()
         p.translate(centre)
         p.scale(k * scale, k * scale)
@@ -483,17 +529,18 @@ class NightSky:
                 (STAR_HALF, STAR_TURN_MS, 1.0, STAR_ALPHA, (0.0, 45.0)),
                 (STAR2_HALF, STAR2_TURN_MS, -1.0, STAR2_ALPHA,
                  (22.5, 67.5))):
-            a = (idle_a + (live_a - idle_a) * live) * opacity * reveal
-            pen, brush, edges, corners = _square_outline(
-                half, QPen(_alpha(colour, a), 1.0 / scale))
+            a = (idle_a + (live_a - idle_a) * live) * reveal
+            pens = _charged_pens(colour, light, a, 1.0 / scale, glow)
+            outlines = [_square_outline(half, pen) for pen in pens]
             for angle in angles:
                 p.save()
                 p.rotate(angle + sense * 360.0 * now / period)
-                p.setPen(pen)
-                p.drawLines(edges)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(brush)
-                p.drawPath(corners)
+                for pen, brush, edges, corners in outlines:
+                    p.setPen(pen)
+                    p.drawLines(edges)
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(brush)
+                    p.drawPath(corners)
                 p.restore()
         p.restore()
 
@@ -502,10 +549,7 @@ class NightSky:
             u = breath_pos(now - i * BEAD_STEP, BEAD_MS)
             a = keyframes(u, BEAD) * reveal
             p.setBrush(_alpha(colour, a))
-            angle = math.radians(i * 45.0)
-            p.drawEllipse(QPointF(centre.x() + 200 * k * math.sin(angle),
-                                  centre.y() - 200 * k * math.cos(angle)),
-                          BEAD_R * k, BEAD_R * k)
+            p.drawEllipse(_bead(centre, k, i), BEAD_R * k, BEAD_R * k)
 
     @staticmethod
     def _paint_flares(p, centre, k, cycle, gain, live, colour,
@@ -528,10 +572,7 @@ class NightSky:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_alpha(colour, a))
         for i in range(8):
-            angle = math.radians(i * 45.0)
-            p.drawEllipse(QPointF(centre.x() + 200 * k * math.sin(angle),
-                                  centre.y() - 200 * k * math.cos(angle)),
-                          FLARE_R * k, FLARE_R * k)
+            p.drawEllipse(_bead(centre, k, i), FLARE_R * k, FLARE_R * k)
 
     def _paint_halos(self, p, centre, k, cycle, gain, acc, light,
                      reveal) -> None:

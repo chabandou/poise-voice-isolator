@@ -21,7 +21,7 @@ Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
 
-A theme whose backdrop is "sky" (Vigil) gets the night sky instead (see
+A theme whose backdrop is "sky" (Vigil, Mono) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
 shown (SKY_FRAME_MS, faster while starting and isolating). Its pulses
 follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
@@ -367,16 +367,19 @@ class PatternCard(QFrame):
         palette = current_theme()
         moving = motion_ok()
         now = time.monotonic()
-        cycle = None
+        cycle = stopped = None
         if moving and self._ping_at is not None:
             cycle = (now - self._ping_at) * 1000.0
+            if self._ping_end is not None:
+                stopped = (self._ping_end - self._ping_at) * 1000.0
         look = {
             "live": self._live.value, "gather": self._gather.value,
             "error": self._error.value, "reveal": self._reveal.value,
             # Reduced motion: every loop holds still.
             "gather_ms": (now - self._gather_at) * 1000.0 if moving else 0.0,
-            "cycle": cycle,
+            "cycle": cycle, "stopped": stopped,
             "gain": lambda index: self._pulse_gain(index, now),
+            "moving": moving,
             "secondary": QColor(palette["secondary"]),
             "accent": QColor(palette["accent"]),
             "accent_light": QColor(palette["accent_light"]),
