@@ -60,19 +60,22 @@
 	--color-divider: rgb(255 255 255 / 0.42);
 }
 
-[data-theme="ultraviolet"] {
-	--color-bg: #0f0d1d;
-	--color-deep: #0c0a17;
-	--color-card: #151226;
-	--color-pill: #191530;
-	--color-groove: #251f3d;
-	--color-ink: #f5f3ff;
-	--color-muted: #8f8aa3;
-	--color-accent: #a78bfa;
-	--color-accent-light: #d6c9ff;
-	--color-secondary: #f3a0c0;
-	--color-edge: rgb(190 170 255 / 0.24);
-	--color-divider: rgb(180 160 255 / 0.34);
+[data-theme="vigil"] {
+	--color-bg: #0a0920;
+	--color-deep: #07061a;
+	--color-card: #141131;
+	--color-pill: #151236;
+	--color-groove: #2a2552;
+	--color-ink: #f3efff;
+	--color-muted: #9a93b8;
+	--color-accent: #b9a6ff;
+	--color-accent-light: #e4dcff;
+	--color-secondary: #e6cd8a;
+	--color-edge: rgb(190 170 255 / 0.18);
+	--color-divider: rgb(190 170 255 / 0.24);
+	--color-success: #7ee0b0;
+	--color-warning: #f5d77a;
+	--color-error: #f49aa6;
 }
 
 [data-theme="ember"] {

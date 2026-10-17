@@ -300,9 +300,9 @@ class Settings:
     @property
     def theme(self) -> str:
         """Get selected color theme id."""
-        from .themes import DEFAULT_THEME, theme_ids
-        theme_id = str(self.get(self.KEY_THEME, DEFAULT_THEME))
-        return theme_id if theme_id in theme_ids() else DEFAULT_THEME
+        from .themes import DEFAULT_THEME, resolve_id
+        # A retired theme lands on its successor (Ultraviolet -> Vigil).
+        return resolve_id(str(self.get(self.KEY_THEME, DEFAULT_THEME)))
 
     @theme.setter
     def theme(self, value: str) -> None:

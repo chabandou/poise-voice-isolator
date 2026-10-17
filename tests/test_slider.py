@@ -159,46 +159,224 @@ def _pump(app, secs=0.5):
         time.sleep(0.02)
 
 
-def test_hover_crossfade_midpoint_is_blended(app):
-    """Mid-anim the sheet holds a true midpoint, not an endpoint snap."""
-    from stream_denoiser.gui.widgets.slider import _mix
-    from PyQt6.QtGui import QColor
+def _mouse(slider, kind, x, y=None, button=None, modifiers=None):
+    from PyQt6.QtCore import QEvent, QPointF, Qt
+    from PyQt6.QtGui import QEnterEvent, QMouseEvent
+    pos = QPointF(x, slider.height() / 2 if y is None else y)
+    if kind == "enter":
+        slider.enterEvent(QEnterEvent(pos, pos, slider.mapToGlobal(pos)))
+        return
+    if kind == "leave":
+        slider.leaveEvent(QEvent(QEvent.Type.Leave))
+        return
+    left, none = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    types = {"press": QEvent.Type.MouseButtonPress,
+             "move": QEvent.Type.MouseMove,
+             "release": QEvent.Type.MouseButtonRelease}
+    held = left if (kind in ("press", "move") and button) else none
+    event = QMouseEvent(types[kind], pos, slider.mapToGlobal(pos),
+                        none if kind == "move" else left,
+                        held, modifiers or Qt.KeyboardModifier.NoModifier)
+    {"press": slider.mousePressEvent, "move": slider.mouseMoveEvent,
+     "release": slider.mouseReleaseEvent}[kind](event)
+
+
+def _wheel(slider, notches=1, ctrl=False):
+    from PyQt6.QtCore import QPoint, QPointF, Qt
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+    centre = QPointF(slider.width() / 2, slider.height() / 2)
+    mods = (Qt.KeyboardModifier.ControlModifier if ctrl
+            else Qt.KeyboardModifier.NoModifier)
+    ev = QWheelEvent(centre, slider.mapToGlobal(centre), QPoint(0, 0),
+                     QPoint(0, 120 * notches), Qt.MouseButton.NoButton, mods,
+                     Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(slider, ev)
+    return ev.isAccepted()
+
+
+def test_wheel_only_after_the_pointer_moves_over_it(app):
+    """A page scroll sliding the slider under a still pointer keeps
+    scrolling the page; once the pointer moves over it, the wheel steps
+    the value (a page with Ctrl)."""
     slider = _make_hover_slider()
-    slider._hoverT = 0.5
-    slider._apply_hover()
-    sheet = slider.styleSheet()
-    assert sheet, "hover sheet must be installed mid-fade"
-    # Handle fill glides from the secondary colour toward the text colour
-    # (half way at full hover), so mid-fade is a quarter of the way.
-    mid = _mix(QColor("#E8C468"), QColor("#f8fafc"), 0.25).name()
-    assert mid in sheet, (mid, sheet)
-    assert "#e8c468" not in sheet.lower() and "#f8fafc" not in sheet.lower()
+    _pump(app, 0.1)
+    _mouse(slider, "enter", 200)
+    assert not _wheel(slider) and slider.value() == -40   # not armed yet
+    _mouse(slider, "move", 205)
+    assert _wheel(slider) and slider.value() == -39       # up = higher
+    assert _wheel(slider, -2) and slider.value() == -41
+    assert _wheel(slider, ctrl=True) and slider.value() == -31
+    _mouse(slider, "leave", 0)
+    assert not _wheel(slider) and slider.value() == -31   # disarmed
+    _mouse(slider, "enter", 200)
+    _mouse(slider, "move", 210)
+    slider.setEnabled(False)   # (Qt doesn't run a disabled widget's handlers)
+    _wheel(slider)
+    assert slider.value() == -31                          # locked
     slider.close()
 
 
-def test_hover_settles_and_clears(app):
-    """Hover on installs the sheet; hover off removes it entirely."""
+def test_handle_glides_to_a_new_value(app):
+    """The handle eases to each new value (a spring for jumps) instead of
+    jumping, and always comes to rest exactly on it."""
+    import time
     slider = _make_hover_slider()
-    assert slider.styleSheet() == ""
-    slider._target_hover(True)
-    _pump(app)
-    assert slider.styleSheet() != ""
-    slider._target_hover(False)
-    _pump(app)
-    assert slider.styleSheet() == ""
+    _pump(app, 0.1)
+    slider.setValue(-20)
+    assert slider.value() == -20
+    assert slider.shown_value == pytest.approx(-40)       # not jumped
+    seen = []
+    end = time.time() + 0.6
+    while time.time() < end:
+        app.processEvents()
+        seen.append(slider.shown_value)
+        time.sleep(0.005)
+    assert any(-39 < v < -21 for v in seen)               # in between
+    assert max(seen) > -20                                # springs past
+    assert slider.shown_value == pytest.approx(-20)
     slider.close()
 
 
-def test_hover_respects_disabled_and_reduced_motion(app, monkeypatch):
-    """Disabled sliders and reduced motion never install a sheet."""
-    slider = _make_hover_slider()
-    slider.setEnabled(False)
-    slider._target_hover(True)
-    _pump(app, 0.3)
-    assert slider.styleSheet() == ""
-    slider.setEnabled(True)
+def test_reduced_motion_puts_the_handle_straight_on_the_value(
+        app, monkeypatch):
     monkeypatch.setenv("POISE_NO_ANIM", "1")
-    slider._target_hover(True)
-    _pump(app, 0.3)
-    assert slider.styleSheet() == ""
+    slider = _make_hover_slider()
+    _pump(app, 0.1)
+    slider.setValue(-70)
+    assert slider.shown_value == pytest.approx(-70)
     slider.close()
+
+
+def test_drag_follows_and_settles_on_a_whole_value(app):
+    slider = _make_hover_slider()
+    _pump(app, 0.1)
+    x0 = slider._x_for(slider.value())
+    _mouse(slider, "enter", x0)
+    _mouse(slider, "press", x0, button=True)
+    assert slider.isSliderDown() and slider._press.target == 1.0
+    _mouse(slider, "move", x0 + 80, button=True)
+    moved = slider.value()
+    assert moved > -40
+    _pump(app, 0.2)
+    assert slider.shown_value == pytest.approx(
+        slider._value_at(x0 + 80), abs=0.6)               # follows, smooth
+    _mouse(slider, "release", x0 + 80)
+    assert not slider.isSliderDown() and slider._press.target == 0.0
+    _pump(app, 0.4)
+    assert slider.shown_value == pytest.approx(moved)     # settled
+    slider.close()
+
+
+def test_track_click_springs_there(app):
+    slider = _make_hover_slider()
+    _pump(app, 0.1)
+    target_x = slider._x_for(-15)
+    _mouse(slider, "press", target_x, button=True)
+    _mouse(slider, "release", target_x)
+    assert slider.value() == -15
+    assert slider.shown_value < -16                       # on its way
+    _pump(app, 0.6)
+    assert slider.shown_value == pytest.approx(-15)
+    slider.close()
+
+
+def _handle_colour(slider):
+    x = int(round(slider._x_for(slider.shown_value)))
+    return slider.grab().toImage().pixelColor(x, slider.height() // 2)
+
+
+def test_hover_lifts_the_handle_toward_the_text_colour(app):
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui.widgets.slider import _mix
+    slider = _make_hover_slider()
+    _pump(app, 0.1)
+    assert _handle_colour(slider).name() == "#e8c468"     # abyss secondary
+    slider._hover.snap(1.0)
+    lifted = _mix(QColor("#E8C468"), QColor("#f8fafc"), 0.5)
+    got = _handle_colour(slider)
+    assert abs(got.red() - lifted.red()) <= 2
+    assert abs(got.blue() - lifted.blue()) <= 2
+    # Hovering the handle eases in; leaving eases out.
+    slider._hover.snap(0.0)
+    x = slider._x_for(slider.value())
+    _mouse(slider, "enter", x)
+    _mouse(slider, "move", x + 1)
+    assert slider._hover.target == 1.0
+    _mouse(slider, "leave", 0)
+    assert slider._hover.target == 0.0
+    slider.close()
+
+
+def test_disabled_slider_is_grey_and_inert(app):
+    slider = _make_hover_slider()
+    _pump(app, 0.1)
+    slider.setEnabled(False)
+    x = slider._x_for(slider.value())
+    _mouse(slider, "enter", x)
+    _mouse(slider, "move", x + 1)
+    _mouse(slider, "press", slider._x_for(-15), button=True)
+    assert slider.value() == -40 and not slider.isSliderDown()
+    assert slider._hover.target == 0.0
+    assert _handle_colour(slider).name() == "#3f3f46"
+    slider.close()
+
+
+def test_rolling_number_rolls_and_bumps_like_the_dial(app):
+    from PyQt6.QtCore import QVariantAnimation
+    from stream_denoiser.gui.widgets.rolling_number import RollingNumber
+    number = RollingNumber(-40, " dB")
+    number.resize(80, 30)
+    number.show()
+    _pump(app, 0.1)
+    assert number.text() == "-40 dB"
+    number.set_value(-33)
+    assert number.text() == "-33 dB"
+    tens, ones = number._columns
+    assert tens.running and ones.running                  # digits roll
+    assert tens.target == 3 and ones.target == 3
+    _pump(app, 0.6)
+    assert tens.value == pytest.approx(3) and ones.value == pytest.approx(3)
+    assert number._bump.state() != QVariantAnimation.State.Running
+    number.set_value(-30)                                 # a ten: bump
+    assert number._bump.state() == QVariantAnimation.State.Running
+    number.grab()                                         # paints mid-roll
+    number.close()
+
+
+def test_rolling_number_snaps_when_hidden_or_reduced(app, monkeypatch):
+    from stream_denoiser.gui.widgets.rolling_number import RollingNumber
+    number = RollingNumber(-40, " dB")
+    number.set_value(-52)                                 # not shown yet
+    assert [c.value for c in number._columns] == [5, 2]
+    number.show()
+    _pump(app, 0.1)
+    monkeypatch.setenv("POISE_NO_ANIM", "1")
+    number.set_value(-61)
+    assert [c.value for c in number._columns] == [6, 1]
+    number.close()
+
+
+def test_long_digit_rolls_settle_from_just_past(app):
+    """OutBack overshoots in proportion to the travel: rolling 0 -> 7
+    sprang a third of a digit past and half-hid the 7. The spring is
+    softened for long rolls so every digit settles from just past."""
+    import time
+    from stream_denoiser.gui.widgets.rolling_number import (
+        ROLL_SETTLE, RollingNumber,
+    )
+    number = RollingNumber(-40, " dB")
+    number.resize(80, 30)
+    number.show()
+    _pump(app, 0.1)
+    number.set_value(-37)                       # ones roll 0 -> 7
+    ones = number._columns[1]
+    peak = 0.0
+    end = time.time() + 0.6
+    while time.time() < end:
+        app.processEvents()
+        peak = max(peak, ones.value)
+        time.sleep(0.005)
+    assert 7.0 < peak <= 7.0 + 2 * ROLL_SETTLE  # a small settle, no more
+    assert ones.value == pytest.approx(7.0)
+    number.close()

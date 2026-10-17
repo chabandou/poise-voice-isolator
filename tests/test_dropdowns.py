@@ -1,7 +1,6 @@
 """Dropdown popup stylesheet asserts (no Qt required)."""
 import importlib.util
 import os
-import re
 import sys
 import types
 
@@ -42,21 +41,15 @@ def _block_after(css, marker):
     return css[j:k]
 
 
-def test_popup_view_block_intact():
-    """List view block stays neutral (the container owns the frame) and
-    keeps readable text for both combo styles."""
+def test_no_list_view_rules_for_the_card_popup():
+    """Home's dropdowns open CardPopup (painted cards), not Qt's list
+    view: no view rules to keep in step with it."""
     css = _css()
-    for combo in ("device-combo", "settings-combo"):
-        assert f"QComboBox#{combo} QAbstractItemView" in css, combo
-    body = _block_after(css, "QComboBox#settings-combo QAbstractItemView")
-    assert "background-color" in body
-    assert "border-radius" not in body   # the popup container is rounded
-    assert "padding: 0px" in body        # rows get padding from the container
-    assert re.search(r"font-size:\s*1[5-9]px", body), "readable item text"
+    assert "QComboBox#device-combo QAbstractItemView" not in css
 
 
 def test_no_dead_item_selectors():
-    """::item subcontrols never reach combo popups (delegate paints rows).
+    """::item subcontrols never reach combo popups.
 
     Guards against re-adding rules that silently do nothing.
     """
@@ -64,17 +57,20 @@ def test_no_dead_item_selectors():
     assert "QAbstractItemView::item" not in css
 
 
-def test_focus_outline_and_open_state():
-    """No default white focus frame; open state echoes hover accent."""
+def test_focus_outline_and_no_stylesheet_ring():
+    """No default white focus frame. The gold ring is painted by
+    AnimatedComboBox: a QSS :hover ring dropped out on every click (the
+    popup holds the mouse, and hover only returns on the next move)."""
     css = _css()
-    for combo in ("device-combo", "settings-combo"):
-        focus = _block_after(css, f"QComboBox#{combo}:focus")
-        assert "outline" in focus and "none" in focus, combo
-        opened = _block_after(css, f"QComboBox#{combo}:on")
-        assert "border" in opened, combo
+    focus = _block_after(css, "QComboBox#device-combo:focus")
+    assert "outline" in focus and "none" in focus
+    assert "QComboBox#device-combo:hover" not in css
+    assert 'QComboBox#device-combo[open="true"]' not in css
 
 
-def test_every_theme_renders_popup_cleanly():
+def test_chevron_is_painted_not_an_image():
+    """AnimatedComboBox paints (and turns) the chevron itself."""
     for theme_id in themes.theme_ids():
         css = styles.get_stylesheet(scale=1.0, theme=theme_id)
-        assert "QAbstractItemView" in css, theme_id
+        arrow = _block_after(css, "QComboBox#device-combo::down-arrow")
+        assert "image: none" in arrow, theme_id

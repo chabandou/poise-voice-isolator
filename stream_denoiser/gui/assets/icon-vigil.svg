@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="16 14 76 76" width="512" height="512">
   <defs>
     <linearGradient id="wave" gradientUnits="userSpaceOnUse" x1="12" y1="3" x2="12" y2="21">
-      <stop offset="0" stop-color="#a78bfa"/>
-      <stop offset="0.45" stop-color="#a78bfa"/>
+      <stop offset="0" stop-color="#b9a6ff"/>
+      <stop offset="0.45" stop-color="#b9a6ff"/>
       <stop offset="1" stop-color="#D1D6DD"/>
     </linearGradient>
     <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">

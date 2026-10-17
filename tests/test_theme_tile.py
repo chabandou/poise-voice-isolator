@@ -72,7 +72,7 @@ def test_body_is_filled_with_the_theme_background(app):
 
 
 def test_every_tile_paints_at_its_minimum_width(app):
-    """Long names ("Ultraviolet") shrink to fit instead of clipping."""
+    """Long names shrink to fit instead of clipping."""
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.theme_tile import ThemeTile
     narrowest = ThemeTile("abyss").minimumSizeHint().width()

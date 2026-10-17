@@ -11,7 +11,7 @@ from typing import Optional
 #: identical in every variant.
 THEME_ICON_VARIANTS = {
     "verdant": "icon-verdant.svg",
-    "ultraviolet": "icon-ultraviolet.svg",
+    "vigil": "icon-vigil.svg",
     "ember": "icon-ember.svg",
     "orchid": "icon-orchid.svg",
 }

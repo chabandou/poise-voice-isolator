@@ -32,7 +32,7 @@ def test_signature_icon_keeps_cyan_and_gray_tip():
 
 
 def test_themed_variants_recolor_accent_only():
-    assert _stops("icon-ultraviolet.svg") == ["#a78bfa", "#a78bfa", GRAY_TIP]
+    assert _stops("icon-vigil.svg") == ["#b9a6ff", "#b9a6ff", GRAY_TIP]
     assert _stops("icon-ember.svg") == ["#f5a524", "#f5a524", GRAY_TIP]
     assert _stops("icon-verdant.svg") == ["#35e0a8", "#35e0a8", GRAY_TIP]
     assert _stops("icon-orchid.svg") == ["#f472b6", "#f472b6", GRAY_TIP]

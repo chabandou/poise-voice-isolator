@@ -2,9 +2,9 @@
 Poise Voice Isolator - Main Window
 
 Dashboard layout: sidebar navigation with Home / Settings / Logs / About
-pages. Home is the tick-ring dial (Start/Stop + reduction strength) next
-to the output device and a summary of the current setup; everything else
-lives in Settings. Live performance stats sit in the status bar.
+pages. Home is the tick-ring dial (Start/Stop + reduction strength) above
+two cards: the output device and the model; everything else lives in
+Settings. Live performance stats sit in the status bar.
 """
 import datetime
 import logging
@@ -47,13 +47,14 @@ from .widgets.dial import ATTEN_DEFAULT, DialButton, clamp_db
 from .widgets.donate_button import DonateButton
 from .widgets.switch import ToggleSwitch
 from .widgets.slider import HoverSlider
+from .widgets.rolling_number import RollingNumber
 from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
 from .widgets.chip import IconChip
 from .widgets.model_cards import ModelCards
 from .widgets.settings_row import SettingsRow
-from .widgets.setup_summary import SetupSummary
-from .widgets.stats_bar import StatsBar, status_word
+from .widgets.model_selector import ModelSelector
+from .widgets.stats_bar import StatsBar
 from .widgets.emblem import Emblem
 from .widgets.pattern_card import PatternCard
 from ..logging_config import (
@@ -70,20 +71,21 @@ HOME_TITLES = {
     "stopping": "Stopping...",
     "error": "Couldn't start",
 }
-HOME_READY_SUB = "Press the dial to start."
-HOME_ISOLATING_SUB = "Processing"
 
 GITHUB_URL = "https://github.com/chabandou/poise-voice-isolator"
 ISSUES_URL = "https://github.com/chabandou/poise-voice-isolator/issues"
 VB_AUDIO_URL = "https://vb-audio.com/"
 # Where the About page's Donate button goes. Empty hides the button.
 DONATE_URL = ""
+QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's "no maximum" for widget sizes
 
 
 class MainWindow(QMainWindow):
     """
     Main application window for Poise Voice Isolator.
     """
+
+    CARDS_STACK_BELOW = 1000  # design px: Home's two cards stack below this
 
     def __init__(self):
         super().__init__()
@@ -112,6 +114,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(*self._window_size(700, 560))
         self.setStyleSheet(get_stylesheet())
         self._resp = None  # responsive mode: wide / compact / narrow
+        self._cards_stacked = None
         self._icon_buttons = []  # (button, icon name) re-tinted per theme
 
         self.setup_ui()
@@ -124,8 +127,6 @@ class MainWindow(QMainWindow):
         self.restore_state()
 
         # Apple-style juice: window fade + staggered home entrance.
-        self._status_pulse = None
-        self._status_pulse_eff = None
         self._shown_once = False
         try:
             from .animations import install_press_fade
@@ -186,9 +187,10 @@ class MainWindow(QMainWindow):
     def _apply_responsive(self) -> None:
         """Adapt chrome density and row direction to the window width.
 
-        Wide puts the dial card beside the cards; compact tightens it;
-        narrow stacks everything and collapses the sidebar to an icon
-        rail. Runs only on mode changes, so live resizes stay cheap. The
+        Home is always the dial card over its two cards; compact tightens
+        it (and below CARDS_STACK_BELOW stacks the two cards); narrow
+        collapses the sidebar to an icon rail. Runs only on mode changes,
+        so live resizes stay cheap. The
         window width alone drives the mode (internal changes never feed
         back into it), so this cannot oscillate.
         """
@@ -204,22 +206,32 @@ class MainWindow(QMainWindow):
             pass
         mode = ("narrow" if w < 850
                 else "compact" if w < 1150 else "wide")
-        if mode == self._resp:
+        cards_stacked = w < self.CARDS_STACK_BELOW
+        if mode == self._resp and cards_stacked == self._cards_stacked:
             return
         self._resp = mode
+        self._cards_stacked = cards_stacked
         narrow = mode == "narrow"
         V = QBoxLayout.Direction.TopToBottom
         H = QBoxLayout.Direction.LeftToRight
 
         # Home
-        self._home_layout.setDirection(V if narrow else H)
+        # Wide paddings are trimmed vertically so the default window shows
+        # the dial card and both cards without scrolling.
         self._home_layout.setContentsMargins(
-            *self._rm((26, 26, 26, 26), (16, 16, 16, 16), (12, 12, 12, 12)))
-        self._home_layout.setSpacing(sp(self._rv(20, 16, 12)))
+            *self._rm((26, 20, 26, 20), (16, 16, 16, 16), (12, 12, 12, 12)))
+        self._home_layout.setSpacing(sp(self._rv(16, 16, 12)))
         self._stage_layout.setContentsMargins(
-            *self._rm((26, 28, 26, 24), (20, 24, 20, 20), (16, 20, 16, 18)))
-        self._right_col.setSpacing(sp(self._rv(20, 16, 12)))
+            *self._rm((26, 24, 26, 20), (20, 24, 20, 20), (16, 20, 16, 18)))
         self.power_btn.set_dial_size(sp(self._rv(300, 270, 240)))
+        # The cards stack before narrow mode: side by side they need more
+        # room than compact chrome leaves.
+        self._cards_layout.setDirection(V if cards_stacked else H)
+        self._cards_layout.setSpacing(sp(self._rv(16, 16, 12)))
+        for card_layout in self._home_card_layouts:
+            card_layout.setContentsMargins(
+                *self._rm((24, 20, 24, 20), (20, 18, 20, 18),
+                          (16, 16, 16, 16)))
 
         # Settings
         self._settings_layout.setContentsMargins(
@@ -293,6 +305,7 @@ class MainWindow(QMainWindow):
         bar.setSizeGripEnabled(False)
         bar.setContentsMargins(0, 0, 0, 0)
         self.stats_bar = StatsBar()
+        self.stats_bar.open_log.connect(lambda: self._on_page_requested(2))
         bar.addWidget(self.stats_bar, 1)
 
     # -- Home page ----------------------------------------------------------
@@ -311,7 +324,7 @@ class MainWindow(QMainWindow):
 
     def _build_home_page(self) -> QWidget:
         page = QWidget()
-        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, page)
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(sp(26), sp(26), sp(26), sp(26))
         layout.setSpacing(sp(20))
         self._home_layout = layout
@@ -332,66 +345,65 @@ class MainWindow(QMainWindow):
         self.home_title.setWordWrap(True)
         stage_layout.addWidget(self.home_title)
 
-        self.status_label = QLabel(HOME_READY_SUB)
+        # Only errors get a line under the headline (they need reading in
+        # full); every other step is told in the status bar.
+        self.status_label = QLabel("")
         self.status_label.setObjectName("status-line")
-        self.status_label.setProperty("state", "ready")
+        self.status_label.setProperty("state", "error")
         self.status_label.setAlignment(center)
         self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
         stage_layout.addWidget(self.status_label)
-        # Status changes fade instead of snapping (several can arrive in
-        # quick succession while starting; only the newest fades in).
+        # Headline changes roll instead of snapping (several can arrive in
+        # quick succession while starting; only the newest rolls in).
         from .animations import TextSwap
-        self._title_swap = TextSwap(self.home_title)
-        self._status_swap = TextSwap(self.status_label)
-        self._status_swap.settled.connect(self._on_status_settled)
-        self._pulse_wanted = False   # start the pulse once the text settles
+        self._title_swap = TextSwap(self.home_title, out_ms=120, in_ms=240,
+                                    rise=sp(14))
+        self._sync_home_pace()
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()
         self.power_btn.toggled_state.connect(self.toggle_processing)
         self.power_btn.set_strength_db(self._saved_atten_db())
         self.power_btn.strength_changed.connect(self._on_atten_changed)
+        # The lattice pings out from the dial once its live sweep closes
+        # (a night sky breathes with it, drawing in while starting).
+        stage.set_ping_origin(self.power_btn)
+        self.power_btn.ignited.connect(stage.start_pings)
+        self.power_btn.phase_changed.connect(stage.set_phase)
         stage_layout.addWidget(
             self.power_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
         stage_layout.addStretch(1)
 
-        hint = QLabel("Drag the ring to set the reduction strength. "
-                      "Changes apply right away.")
-        hint.setObjectName("row-sub")
-        hint.setAlignment(center)
-        hint.setWordWrap(True)
-        stage_layout.addWidget(hint)
-        layout.addWidget(stage, stretch=2)
+        layout.addWidget(stage, stretch=1)
 
-        # --- Right: output device + current setup ---
-        right = QVBoxLayout()
-        right.setSpacing(sp(20))
-        self._right_col = right
+        # --- Below: output device and model, side by side ---
+        cards = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        cards.setSpacing(sp(16))
+        self._cards_layout = cards
+        self._home_card_layouts = []
+        self._home_cards = []
 
-        output_card = QFrame()
-        output_card.setObjectName("card")
-        output_layout = QVBoxLayout(output_card)
-        output_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(20))
-        output_layout.setSpacing(sp(12))
+        # Input is always VB-Cable (named in the status bar); only the
+        # output is picked here.
         self.output_selector = DeviceSelector(
             "Output device", "output", "Where the clean audio plays")
         self.output_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'output_device', id))
-        output_layout.addWidget(self.output_selector)
-        # Input is always VB-Cable: say so once, plainly.
-        routing_note = QLabel(
-            "Locked while running. If routing fails, Poise "
-            "stops and shows manual steps.")
-        routing_note.setObjectName("row-sub")
-        routing_note.setWordWrap(True)
-        output_layout.addWidget(routing_note)
-        right.addWidget(output_card)
-
-        self.setup_summary = SetupSummary()
-        self.setup_summary.open_settings.connect(
-            lambda: self._on_page_requested(1))
-        right.addWidget(self.setup_summary, stretch=1)
-        layout.addLayout(right, stretch=3)
+        # Settings' model cards stay in step (see _on_model_changed).
+        self.model_selector = ModelSelector()
+        self.model_selector.currentTextChanged.connect(
+            self._on_home_model_picked)
+        for content in (self.output_selector, self.model_selector):
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
+            card_layout.addWidget(content)
+            self._home_card_layouts.append(card_layout)
+            self._home_cards.append(card)
+            cards.addWidget(card, stretch=1)
+        layout.addLayout(cards)
         return page
 
     # -- Settings page -------------------------------------------------------
@@ -437,10 +449,11 @@ class MainWindow(QMainWindow):
         self.thresh_slider.setEnabled(self.settings.aad_enabled)
         self.thresh_slider.setMinimumWidth(sp(230))
         thresh_layout.addWidget(self.thresh_slider, stretch=1)
-        self.thresh_val_label = QLabel(f"{self.settings.aad_threshold:.0f} dB")
+        # Digits roll like the dial's strength readout on Home.
+        self.thresh_val_label = RollingNumber(
+            int(self.settings.aad_threshold), " dB")
         self.thresh_val_label.setObjectName("thresh-value")
         self.thresh_val_label.setFixedWidth(sp(64))
-        self.thresh_val_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         thresh_layout.addWidget(self.thresh_val_label)
         thresh_row = SettingsRow(
             "Silence threshold", "Anything quieter counts as silence.",
@@ -498,6 +511,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.model_cards.currentTextChanged.connect(self._on_model_changed)
+        self.model_selector.setCurrentText(self.model_cards.currentText())
         model_layout.addWidget(self.model_cards)
         model_layout.addStretch(1)
         bottom.addWidget(model_card, stretch=3)
@@ -543,7 +557,6 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(bottom)
         layout.addStretch()
-        self._refresh_summary()
         return page
 
     def _card_head(self, icon: str, title: str, subtitle: str):
@@ -854,6 +867,13 @@ class MainWindow(QMainWindow):
                     self._window_fade = anim  # keep alive
                 except Exception:
                     pass
+            # Home's cards rise into place one after another (the dial
+            # sweeps its ring on by itself).
+            if self.stack.currentIndex() == 0:
+                from .animations import rise_in
+                for i, card in enumerate([self._stage] + self._home_cards):
+                    rise_in(card, delay_ms=60 + 90 * i, duration_ms=520,
+                            rise=sp(14))
         except Exception:
             pass
 
@@ -866,7 +886,7 @@ class MainWindow(QMainWindow):
         self.worker.started_processing.connect(self._on_worker_started)
         self.worker.stopped_processing.connect(self._on_worker_stopped)
         self.worker.stats_updated.connect(self.stats_bar.update_stats)
-        self.worker.status_changed.connect(self.update_status)
+        self.worker.status_changed.connect(self._on_worker_status)
         self.worker.error_occurred.connect(self.handle_error)
 
         # Initial config
@@ -892,7 +912,6 @@ class MainWindow(QMainWindow):
 
         # Restore devices (output only — input is always VB-Cable)
         self.output_selector.selected_device_id = self.settings.output_device
-        self._refresh_summary()
 
     def _on_theme_changed(self, index: int):
         """Persist the selected theme and apply it live."""
@@ -925,16 +944,36 @@ class MainWindow(QMainWindow):
         for chip in self.findChildren(IconChip):
             chip.refresh_theme()
         self.output_selector.refresh_theme()
+        self.model_selector.refresh_theme()
         apply_titlebar(self, theme_store.current())
         self._refresh_credits()
         self._tint_icon_buttons()
         self._refresh_logs()   # re-colour warnings/errors for the new palette
+        self._stage.refresh_theme()   # lattice or night sky
+        self._sync_home_pace()
         self.power_btn.update()
         self.stats_bar.update()
         self.update()
         if snapshot is not None:
             from .animations import crossfade_from
             crossfade_from(self, snapshot)
+
+    def _sync_home_pace(self) -> None:
+        """A breathing theme (Vigil) mists the headline slowly from one
+        state to the next and tracks it wider; the others roll it."""
+        from PyQt6.QtGui import QFont
+        from .animations import EASE_BREATHE, EASE_OUT
+        breath = theme_store.breathing()
+        if breath:
+            self._title_swap.set_timing(420, 760, rise=sp(6),
+                                        easing=EASE_BREATHE)
+        else:
+            self._title_swap.set_timing(120, 240, rise=sp(14),
+                                        easing=EASE_OUT)
+        font = self.home_title.font()
+        font.setLetterSpacing(QFont.SpacingType.PercentageSpacing,
+                              108.0 if breath else 100.0)
+        self.home_title.setFont(font)
 
     def _refresh_app_icon(self):
         """Reload window, taskbar, tray, and About icons for the theme."""
@@ -952,21 +991,16 @@ class MainWindow(QMainWindow):
             self._about_icon.set_pixmap(QPixmap(icon_path))
 
     def _on_model_changed(self, model: str):
-        """Persist selected denoising engine."""
+        """Persist selected denoising engine (and show it on Home)."""
         try:
             self.settings.model = model
         except Exception:
             pass
-        self._refresh_summary()
+        self.model_selector.setCurrentText(model)
 
-    def _refresh_summary(self) -> None:
-        """Keep Home's "Current setup" card in step with Settings."""
-        if not hasattr(self, "setup_summary") or not hasattr(self, "aad_switch"):
-            return
-        self.setup_summary.refresh(
-            self.model_cards.currentText(),
-            self.aad_switch.isChecked(),
-            float(self.thresh_slider.value()))
+    def _on_home_model_picked(self, model: str):
+        """Home's dropdown drives Settings' cards, which persist it."""
+        self.model_cards.setCurrentText(model)
 
     def _on_atten_changed(self, value: int):
         """Persist the attenuation limit and apply it to a running worker."""
@@ -1041,6 +1075,8 @@ class MainWindow(QMainWindow):
             return
 
         self.power_btn.set_transitioning(True)
+        # No more lattice pings from here; one crossing the card fades.
+        self._stage.stop_pings()
         self.update_status("Stopping...")
 
         self.worker.stop()
@@ -1061,9 +1097,8 @@ class MainWindow(QMainWindow):
         )
 
     def _set_controls_enabled(self, enabled: bool):
-        self.output_selector.setEnabled(enabled)
-        self.output_selector.set_subtitle(
-            "Where the clean audio plays")
+        self.output_selector.set_locked(not enabled)
+        self.model_selector.set_locked(not enabled)
         self.model_cards.setEnabled(enabled)
         # Turning silence skipping on/off would rebuild the detector inside
         # the running processor; the threshold itself stays live.
@@ -1084,7 +1119,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self.update_status("Isolating audio")
-        self._start_status_pulse()
 
         # Disable controls while running
         self._set_controls_enabled(False)
@@ -1104,7 +1138,6 @@ class MainWindow(QMainWindow):
         self.power_btn.set_transitioning(False)
         self.power_btn.set_active(False)
         self._stage.set_live(False)
-        self._stop_status_pulse()
 
         # Re-enable controls
         self._set_controls_enabled(True)
@@ -1121,20 +1154,33 @@ class MainWindow(QMainWindow):
 
     def _on_threshold_changed(self, value):
         """Persist the AAD threshold and apply it to a running worker."""
-        self.thresh_val_label.setText(f"{value} dB")
+        self.thresh_val_label.set_value(value)
         self.settings.aad_threshold = float(value)
         if self.worker is not None:
             self.worker.set_aad_threshold(float(value))
-        self._refresh_summary()
 
     def _on_aad_toggled(self, checked):
         """Handle AAD switch toggle."""
         self.thresh_slider.setEnabled(checked)
         self.settings.aad_enabled = checked
-        self._refresh_summary()
+
+    def _on_worker_status(self, message: str) -> None:
+        """Worker steps, except after an error: its cleanup ("Restored
+        playback...", "Stopped") must not replace the error until the
+        next start."""
+        if self._error_state:
+            _logger.info(f"Status update (after error): {message}")
+            return
+        self.update_status(message)
+
+    #: Messages that mean "idle" (anything else that isn't an error is a
+    #: step of starting, running or stopping).
+    READY_MESSAGES = ("", "ready", "stopped")
 
     def update_status(self, message: str):
-        """Update status line message."""
+        """A status message: Home's headline follows the state, the
+        status bar tells the step, and errors also get a line under the
+        headline."""
         # First-ever switch needs the AudioDeviceCmdlets one-time
         # install, which can take a few seconds with no other feedback.
         # Expand only that message, and only until the first successful
@@ -1145,121 +1191,76 @@ class MainWindow(QMainWindow):
                 message = MSG_DEVICE_SWITCHING_FIRST_TIME
         except Exception:
             pass
-        # Update status state
-        state = "ready"
-        if "Error" in message:
-            state = "error"
-        elif any(word in message for word in
-                 ("Starting", "Stopping", "Loading", "Isolating", "Processing",
-                  "Switching", "Switched", "Initializing", "Downloading",
-                  "Installing", "Setting up")):
-            state = "processing"
-
-        title_key, sub = self._home_copy(message, state)
-        self._title_swap.set_text(HOME_TITLES[title_key])
-        if sub != self._status_swap.text():
-            # The swap needs the label's effect; the isolating pulse only
-            # belongs to the isolating line anyway.
-            self._stop_status_pulse()
-
-        def restyle(label=self.status_label, state=state):
-            label.setProperty("state", state)
-            label.style().unpolish(label)
-            label.style().polish(label)
-
-        self._status_swap.set_text(sub, on_apply=restyle)
-        self.stats_bar.set_state(state, status_word(state, message))
+        state = self._status_state(message)
+        self._title_swap.set_text(HOME_TITLES[self._home_title_key(
+            message, state)])
+        self._show_error_line(message if state == "error" else "")
+        self.stats_bar.show_status(state, message)
 
         _logger.info(f"Status update: {message}")
 
+    @classmethod
+    def _status_state(cls, message: str) -> str:
+        """ready | processing | error for a worker/GUI status message."""
+        if "Error" in message:
+            return "error"
+        if message.strip().rstrip(".").lower() in cls.READY_MESSAGES:
+            return "ready"
+        return "processing"
+
     @staticmethod
-    def _home_copy(message: str, state: str):
-        """(HOME_TITLES key, subtitle) for a worker status message."""
-        if state == "error":
-            return "error", message
-        if state == "ready":
-            return "ready", (
-                HOME_READY_SUB if message.strip() in ("", "Ready") else message)
+    def _home_title_key(message: str, state: str) -> str:
+        """HOME_TITLES key for a status message."""
+        if state in ("error", "ready"):
+            return state
         lowered = message.lower()
         # "Processing" comes from the worker's loop, after the GUI already
         # said "Isolating audio" (it used to flip Home back to the
         # starting headline).
         if lowered.startswith(("isolating", "processing")):
-            return "isolating", HOME_ISOLATING_SUB
-        if lowered.startswith("stopping"):
-            return "stopping", message
-        return "starting", message
+            return "isolating"
+        if lowered.startswith(("stopping", "restored")):
+            return "stopping"
+        return "starting"
 
-    def _start_status_pulse(self) -> None:
-        """Breathe the status line while isolating (live-indicator feel).
+    def _show_error_line(self, message: str) -> None:
+        """The error under "Couldn't start" (hidden otherwise)."""
+        text = message.strip()
+        if text.lower().startswith("error:"):
+            text = text[len("error:"):].strip()
+        label = self.status_label
+        opening = bool(text) and label.isHidden()
+        label.setText(text)
+        label.setVisible(bool(text))
+        if opening:
+            self._open_error_line()
+        elif not text:
+            label.setMaximumHeight(QWIDGETSIZE_MAX)
 
-        Waits for a running text swap to settle: the swap and the pulse
-        each need the label's opacity effect, and fades must not nest.
-        """
-        self._pulse_wanted = True
-        if not self._status_swap.busy:
-            self._begin_status_pulse()
-
-    def _on_status_settled(self) -> None:
-        if self._pulse_wanted and self._status_pulse is None:
-            self._begin_status_pulse()
-
-    def _begin_status_pulse(self) -> None:
-        try:
-            from .animations import cancel_fade, motion_ok
-            from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
-            from PyQt6.QtWidgets import QGraphicsOpacityEffect
-            self._stop_status_pulse()
-            self._pulse_wanted = True
-            if not motion_ok():
-                return
-            # The pulse owns the label's effect exclusively: void any
-            # entrance fade first so two animations never fight over it
-            # (that replaces the effect mid-paint -> QPainter errors).
-            cancel_fade(self.status_label)
-            eff = QGraphicsOpacityEffect(self.status_label)
-            self.status_label.setGraphicsEffect(eff)
-            self._status_pulse_eff = eff
-            eff.setOpacity(1.0)
-            anim = QPropertyAnimation(eff, b"opacity", self)
-            anim.setDuration(1400)
-            anim.setStartValue(1.0)
-            anim.setKeyValueAt(0.5, 0.55)
-            anim.setEndValue(1.0)
-            anim.setEasingCurve(QEasingCurve.Type.InOutSine)
-            anim.setLoopCount(-1)
-            anim.start()
-            self._status_pulse = anim
-        except Exception:
-            pass
-
-    def _stop_status_pulse(self) -> None:
-        self._pulse_wanted = False
-        try:
-            if self._status_pulse is not None:
-                try:
-                    self._status_pulse.stop()
-                except Exception:
-                    pass
-                self._status_pulse = None
-            # Remove only the pulse's own effect: a text swap may own the
-            # label's effect right now.
-            eff = getattr(self, "_status_pulse_eff", None)
-            self._status_pulse_eff = None
-            if eff is not None and hasattr(self, "status_label"):
-                try:
-                    if self.status_label.graphicsEffect() is eff:
-                        self.status_label.setGraphicsEffect(None)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+    def _open_error_line(self) -> None:
+        """The error line opens (the dial glides down to make room) and
+        its text rises in, instead of both jumping into place."""
+        from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
+        from .animations import motion_ok, rise_in
+        label = self.status_label
+        if not motion_ok() or not label.isVisible():
+            return
+        width = label.width() or label.sizeHint().width()
+        full = max(1, label.heightForWidth(width), label.sizeHint().height())
+        anim = QPropertyAnimation(label, b"maximumHeight", label)
+        anim.setDuration(340)
+        anim.setStartValue(0)
+        anim.setEndValue(full)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: label.setMaximumHeight(QWIDGETSIZE_MAX))
+        self._error_line_anim = anim
+        anim.start()
+        rise_in(label, delay_ms=100, duration_ms=300, rise=sp(4))
 
     def handle_error(self, message: str):
         """Handle error from worker."""
         self._error_state = True
         self.power_btn.set_error(True)
-        self._stop_status_pulse()
         self.update_status(f"Error: {message}")
         if self._is_vb_cable_error(message):
             # Blocking modal: processing cannot start without VB-Cable
