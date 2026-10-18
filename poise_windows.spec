@@ -65,6 +65,50 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# PyInstaller's QtQml hook bundles every QML module PyQt6 ships
+# (Quick3D, Controls, Multimedia...) and the Qt DLLs they link. Only
+# the night sky uses Qt Quick (widgets/sky_gpu.py: `import QtQuick`,
+# which imports QtQml), so keep those and drop the Qt DLLs nothing
+# else links.
+from PyInstaller.depend import bindepend
+
+_QML_DIR = 'PyQt6/Qt6/qml/'
+_QML_KEEP = {'QtQuick', 'QtQml', 'QtQml/Models', 'QtQml/WorkerScript'}
+_QT_BIN = 'PyQt6/Qt6/bin/'
+
+
+def _dest(entry):
+    return entry[0].replace('\\', '/')
+
+
+def _qml_wanted(entry):
+    dest = _dest(entry)
+    if not dest.startswith(_QML_DIR):
+        return True
+    return os.path.dirname(dest[len(_QML_DIR):]) in _QML_KEEP
+
+
+a.datas = [e for e in a.datas if _qml_wanted(e)]
+a.binaries = [e for e in a.binaries if _qml_wanted(e)]
+
+# Qt DLLs still linked from what is left (Qt loads none of them by name).
+_qt_dlls = {os.path.basename(_dest(e)).lower(): e for e in a.binaries
+            if _dest(e).startswith(_QT_BIN)
+            and os.path.basename(_dest(e)).lower().startswith('qt6')}
+_linked = set()
+_todo = [e[1] for e in a.binaries
+         if os.path.basename(_dest(e)).lower() not in _qt_dlls]
+while _todo:
+    for _name, _ in bindepend.get_imports(_todo.pop()):
+        _name = _name.lower()
+        if _name in _qt_dlls and _name not in _linked:
+            _linked.add(_name)
+            _todo.append(_qt_dlls[_name][1])
+a.binaries = [e for e in a.binaries
+              if os.path.basename(_dest(e)).lower() not in _qt_dlls
+              or os.path.basename(_dest(e)).lower() in _linked]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
