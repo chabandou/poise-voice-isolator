@@ -9,8 +9,9 @@ is the theme's secondary colour; while isolating it turns to the accent.
 Evolves PowerButton and keeps its API (toggled_state / set_active /
 set_transitioning / set_error / is_active), so MainWindow wiring is
 unchanged. The press squash comes from PowerButton; everything else runs
-on the dial's own clock. All motion respects POISE_NO_ANIM /
-POISE_REDUCE_MOTION (the dial then shows each state's resting look).
+on the dial's own clock. All of it is ambient motion (animations.
+ambient_ok): POISE_NO_ANIM / POISE_REDUCE_MOTION or Reduce motion in
+Settings show each state's resting look; hover feedback stays.
 
 Motion, phase by phase:
 - hover: ticks near the pointer lift outward and the head needle fades
@@ -70,7 +71,7 @@ from .sky import (
     breath_pos, keyframes,
 )
 from ..animations import (
-    Blend, EASE_BREATHE, mix_rgba, motion_ok,
+    Blend, EASE_BREATHE, ambient_ok, mix_rgba,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
@@ -329,7 +330,7 @@ class DialButton(PowerButton):
 
         self.setAccessibleName("Start isolating")
         self.setToolTip(
-            "Press to start or stop. Drag the ring to set the reduction "
+            "Press to start/stop isolation. Scroll to set the reduction "
             "strength; it applies live.")
 
     # -- sizing ---------------------------------------------------------------
@@ -389,7 +390,7 @@ class DialButton(PowerButton):
         animated = self.isVisible()
         self._tens.set_target(tens, animated)
         self._ones.set_target(ones, animated)
-        self._mist_number(animated and motion_ok())
+        self._mist_number(animated and ambient_ok())
 
     # -- breath: misting values ----------------------------------------------------
     def _mist_ms(self):
@@ -474,6 +475,18 @@ class DialButton(PowerButton):
     def _play_pop(self) -> None:
         pass
 
+    def refresh_motion(self) -> None:
+        """Reduce motion changed (animations.set_still): settle on each
+        state's resting look now, or let the loops move again."""
+        if ambient_ok():
+            self._run_clock()
+        else:
+            self._clock.stop()
+            self._mist_number(False)
+            if self._phase == "live" and not self._ignited:
+                self._ignite()
+        self.update()
+
     # -- phases ---------------------------------------------------------------------
     def _phase_now(self) -> str:
         if self._is_transitioning:
@@ -501,7 +514,7 @@ class DialButton(PowerButton):
         if phase == "live":
             self._ignite_lit = lit_count(self._strength_db)
             self._ignited = False
-            if not motion_ok():
+            if not ambient_ok():
                 self._ignite()
         label = LABEL_OF_PHASE[phase]
         self._label.set_target(label, self.isVisible())
@@ -527,14 +540,14 @@ class DialButton(PowerButton):
 
     def _ms(self) -> float:
         """Milliseconds into the phase (settled when motion is reduced)."""
-        if not motion_ok():
+        if not ambient_ok():
             return 1e9
         return (time.monotonic() - self._phase_at) * 1000.0
 
     @staticmethod
     def _since(stamp) -> float:
         """Milliseconds since a monotonic stamp (None: long ago)."""
-        if stamp is None or not motion_ok():
+        if stamp is None or not ambient_ok():
             return 1e9
         return (time.monotonic() - stamp) * 1000.0
 
@@ -562,7 +575,7 @@ class DialButton(PowerButton):
 
     # -- the clock ------------------------------------------------------------------
     def _run_clock(self) -> None:
-        if motion_ok() and not self._clock.isActive() and self._animating():
+        if ambient_ok() and not self._clock.isActive() and self._animating():
             self._clock.setInterval(FRAME_MS)
             self._clock.start()
 
@@ -625,7 +638,7 @@ class DialButton(PowerButton):
         super().showEvent(event)
         if not self._swept:
             self._swept = True
-            if motion_ok():
+            if ambient_ok():
                 delay = self._sweep_ms()[0]
                 self._sweep_at = time.monotonic() + delay / 1000.0
         self._run_clock()
@@ -669,7 +682,7 @@ class DialButton(PowerButton):
 
     def _spring_back(self) -> None:
         """Let a stretched ring go."""
-        if abs(self._over) < 0.01 or not motion_ok():
+        if abs(self._over) < 0.01 or not ambient_ok():
             self._set_over(0.0)
             return
         self._over_anim.stop()
@@ -772,7 +785,7 @@ class DialButton(PowerButton):
     def _nudge_to(self, db) -> None:
         """A wheel or key step: the needle glides there, trailing."""
         target = clamp_db(db)
-        if motion_ok() and self.isVisible():
+        if ambient_ok() and self.isVisible():
             self._nudge.set_target(1.0)
             self._nudge_timer.start(NUDGE_HOLD_MS)
             if target == self._strength_db and target != db:
@@ -790,7 +803,7 @@ class DialButton(PowerButton):
         """Glide the needle to tick `target`, flashing each tick as the
         needle (and the lit edge) passes it."""
         start = self._needle_pos.value
-        if not motion_ok() or not self.isVisible() or start == target:
+        if not ambient_ok() or not self.isVisible() or start == target:
             self._needle_pos.snap(target)
             return
         self._needle_pos.set_target(target)
@@ -884,7 +897,7 @@ class DialButton(PowerButton):
     def _comet_look(self, i: int, base: QColor, col: dict, t: float):
         """Starting: (colour, radial scale) of tick i as the comet laps."""
         u = t - i * COMET_STEP
-        if u < 0 or not motion_ok():
+        if u < 0 or not ambient_ok():
             return base, 1.0
         ph = (u % COMET_MS) / COMET_MS
         if ph < 0.07:
@@ -931,7 +944,7 @@ class DialButton(PowerButton):
 
     def _idle_breath(self) -> float:
         """Breath: the lit ticks' alpha while idle (a slow swell)."""
-        if self._phase != "idle" or not motion_ok():
+        if self._phase != "idle" or not ambient_ok():
             return 1.0
         return keyframes(breath_pos(time.monotonic() * 1000.0,
                                     IDLE_BREATH_MS), TICKS_IDLE)
@@ -949,7 +962,7 @@ class DialButton(PowerButton):
             # Light gathers from the ends of the lit arc inward, each lap.
             flash = 0.0
             u = t - inward * GATHER_STEP
-            if u >= 0 and motion_ok():
+            if u >= 0 and ambient_ok():
                 ph = (u % GATHER_MS) / GATHER_MS
                 if ph < GATHER_FLASH:
                     flash = 1.0 - _breath(ph / GATHER_FLASH)
@@ -1067,7 +1080,7 @@ class DialButton(PowerButton):
     def _charge(self, t: float) -> float:
         """Live: 0..1 glow of the disc around each later lattice ping
         (after live: the glow it was left with, fading out)."""
-        if not motion_ok():
+        if not ambient_ok():
             return 0.0
         if self._phase != "live":
             u = self._since(self._charge_drop_at) / CHARGE_DROP_MS
@@ -1531,7 +1544,7 @@ class DialButton(PowerButton):
         breath = breathing()
         for j in range(3):
             colour, alpha, lift, scale = QColor(col["text"]), 0.35, 0.0, 1.0
-            if breath and self._phase == "starting" and motion_ok():
+            if breath and self._phase == "starting" and ambient_ok():
                 colour, alpha, scale = QColor(col["gold"]), 0.25, 0.8
                 u = t - j * DOT_BREATH_STEP
                 if u >= 0:
@@ -1547,7 +1560,7 @@ class DialButton(PowerButton):
                 q = _breath(_clamp((t - j * DOT_SETTLE_STEP) / DOT_SETTLE_MS))
                 colour = mix_rgba(col["accent"], col["gold"], q)
                 alpha, scale = 1.0 - 0.75 * q, 1.0 - 0.3 * q
-            elif self._phase == "starting" and motion_ok():
+            elif self._phase == "starting" and ambient_ok():
                 colour, alpha = QColor(col["gold"]), 0.3
                 u = t - j * DOT_STEP
                 if u >= 0:
@@ -1615,7 +1628,7 @@ class DialButton(PowerButton):
                 dy = NUMBER_DRIFT * (1.0 - moved) * (1.0 - start)
             else:              # drifting up and away
                 dy = -NUMBER_DRIFT * moved
-            if not motion_ok():
+            if not ambient_ok():
                 dy = 0.0
             self._misted_text(p, str(value), c, baseline + dy, big,
                               col["text"], alpha, right=right)
