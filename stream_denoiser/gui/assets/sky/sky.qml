@@ -64,6 +64,12 @@ ShaderEffect {
     property vector4d s23
     property vector4d s24
     property vector4d s25
+    property vector4d meteor
+    property vector4d meteorEnd
+    property vector4d meteorRgba
+    property vector4d meteorGeo
+    property vector4d meteorHead
+    property vector4d meteorStyle
     property vector4d auraRgb0
     property vector4d auraA0
     property vector4d auraP0

@@ -47,6 +47,28 @@ def _live_frame(app, cycle):
         "accent_light": QColor("#e4dcff")})
 
 
+def _meteor_frame(app):
+    """An idle sky as a shooting star is at its brightest (the first span
+    with room for one)."""
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui.widgets import sky
+    box = QRectF(1, 1, 910, 405)
+    look = {"live": 0.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
+            "gather_ms": 0.0, "cycle": None, "stopped": None,
+            "gain": lambda index: 1.0, "moving": True,
+            "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
+            "accent_light": QColor("#e4dcff")}
+    night = sky.NightSky()
+    for index in range(30):
+        start, _ = sky.meteor_flight(index * sky.METEOR_EVERY_MS + 1.0)
+        frame = night.frame(box, QPointF(455, 230), 0.8, 1.0,
+                            start + 0.56 * sky.METEOR_MS, look)
+        if frame["meteor"] is not None:
+            return box, frame
+    raise AssertionError("no shooting star with room to fly")
+
+
 def _base():
     from PyQt6.QtGui import QColor
     from stream_denoiser.gui import themes
@@ -209,6 +231,34 @@ def test_a_pulse_reaches_the_shader(app):
     assert all(v.isNull() for v in off.values())
 
 
+def test_a_shooting_star_reaches_the_shader(app):
+    from stream_denoiser.gui.widgets.sky_gpu import frame_uniforms
+    from stream_denoiser.gui.widgets import sky
+    box, frame = _meteor_frame(app)
+    m = frame["meteor"]
+    u = frame_uniforms(frame, box)
+
+    def values(v):
+        return (v.x(), v.y(), v.z(), v.w())
+
+    a, b, c = m["arc"]
+    assert values(u["meteor"]) == pytest.approx(
+        (a.x(), a.y(), b.x(), b.y()), abs=1e-3)
+    assert values(u["meteorEnd"]) == pytest.approx(
+        (c.x(), c.y(), m["s0"], m["s1"]), abs=1e-3)
+    assert u["meteorRgba"].w() == pytest.approx(m["colour"].alphaF(),
+                                                abs=1e-3)
+    assert values(u["meteorGeo"]) == pytest.approx(
+        (m["width"], m["glow"], m["head_r"], m["head_glow"]), abs=1e-3)
+    assert values(u["meteorHead"]) == pytest.approx(
+        (m["head"], m["white"], 0.0, 1.0), abs=1e-3)
+    assert values(u["meteorStyle"]) == pytest.approx(
+        (sky.METEOR_TAPER, sky.METEOR_WHITE, sky.METEOR_GLOW_ALPHA,
+         sky.METEOR_HEAD_GLOW_ALPHA), abs=1e-6)
+    frame["meteor"] = None                     # none in flight: off
+    assert frame_uniforms(frame, box)["meteorHead"].isNull()
+
+
 def test_qss_gradients_are_read():
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.sky_gpu import qss_radial, qss_stops
@@ -268,6 +318,56 @@ def test_the_view_draws_the_sky():
         pytest.skip(out[-1][6:])
     _, bare, lit = out[-1].split()
     assert int(lit) > int(bare)
+
+
+_METEOR_CHECK = """
+import sys, time
+sys.path.insert(0, {root!r})
+sys.path.insert(0, {tests!r})
+from PyQt6.QtWidgets import QApplication
+app = QApplication([])
+from PyQt6.QtQuick import QSGRendererInterface
+from stream_denoiser.gui.widgets.sky_gpu import SkyView
+from test_sky_gpu import _base, _meteor_frame
+box, frame = _meteor_frame(app)
+head = frame["meteor"]["front"]
+view = SkyView()
+if not view.ok:
+    print("skip: the shader does not load"); sys.exit()
+view.resize(912, 407)
+view.show_frame(frame, box, _base())
+view.show()
+end = time.time() + 1.0
+while time.time() < end:
+    app.processEvents()
+api = view.quickWindow().rendererInterface().graphicsApi()
+if api in (QSGRendererInterface.GraphicsApi.Software,
+           QSGRendererInterface.GraphicsApi.Unknown):
+    print("skip: no GPU API for Qt Quick"); sys.exit()
+lit = view.grabFramebuffer()
+frame["meteor"] = None
+view.show_frame(frame, box, _base())
+bare = view.grabFramebuffer()
+x = round(head.x() * lit.width() / 912)
+y = round(head.y() * lit.height() / 407)
+print("lightness", bare.pixelColor(x, y).lightness(),
+      lit.pixelColor(x, y).lightness())
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the GPU sky's home")
+def test_the_view_draws_the_shooting_star():
+    env = dict(os.environ, QT_QPA_PLATFORM="windows")
+    run = subprocess.run(
+        [sys.executable, "-c", _METEOR_CHECK.format(
+            root=str(ROOT), tests=str(ROOT / "tests"))],
+        capture_output=True, text=True, timeout=60, env=env)
+    out = run.stdout.strip().splitlines()
+    assert run.returncode == 0 and out, run.stderr
+    if out[-1].startswith("skip:"):
+        pytest.skip(out[-1][6:])
+    _, bare, lit = out[-1].split()
+    assert int(lit) > int(bare) + 40
 
 
 def test_raster_sky_when_asked(app, monkeypatch):
