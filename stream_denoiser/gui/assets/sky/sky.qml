@@ -96,5 +96,17 @@ ShaderEffect {
     property vector4d halo2
     property vector4d haloAcc
     property vector4d haloLight
+    property vector4d tickRing
+    property vector4d tickAt
+    property real tickBreath
+    property string ringDataSource: "image://sky/ringData/0"
+    property var ringData: ringDataImage
+    Image {
+        id: ringDataImage
+        visible: false
+        cache: false
+        smooth: false
+        source: parent.ringDataSource
+    }
     fragmentShader: "sky.frag.qsb"
 }

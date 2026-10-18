@@ -3,7 +3,8 @@
 // Draws the dial card under a QQuickWidget (widgets/sky_gpu.py): the
 // page's gradient around the card's rounded corners, the card's fill
 // and border, then every layer of the night sky in NightSky.paint's
-// order, clipped to the inside of the border. NightSky.frame works out
+// order, clipped to the inside of the border, and over it the dial's
+// ring of ticks and its needle (the dial widget paints the rest). NightSky.frame works out
 // each layer (positions, sizes, colours) on the CPU every frame; this
 // only draws them. Lengths are in card px (logical); colours are
 // straight RGBA.
@@ -75,7 +76,21 @@ layout(std140, binding = 0) uniform buf {
     // Halos: radius, width unit, alpha, on; their colours.
     vec4 halo0; vec4 halo1; vec4 halo2;
     vec4 haloAcc; vec4 haloLight;
+    // The dial's ring: its stretch (deg), the needle's angle (deg) and
+    // glow width, on; the dial's centre and scale (k). The strokes
+    // themselves are in ringData. tickBreath scales the strokes marked
+    // breathing (the idle breath: all that moves while the dial rests).
+    vec4 tickRing;
+    vec4 tickAt;
+    float tickBreath;
 };
+
+// DialButton._ring_strokes, one column per tick (55) and the needle's
+// (column 55); rows: the stroke's rgb, its glow's rgb, (the stroke's
+// alpha, the glow's, which breathe: 128 the stroke, 64 its glow), then
+// the stroke's inner and outer radius and the glow's, each as two bytes
+// (x 256). RGBX, so nothing premultiplies it.
+layout(binding = 1) uniform sampler2D ringData;
 
 const vec2 SPARKLE[16] = vec2[16](
     vec2(0.000000, -5.000000), vec2(0.344415, -0.831492),
@@ -232,6 +247,71 @@ vec3 halo(vec3 col, float d, vec4 h) {
         }                                                               \
     }
 
+// -- the dial's ring --------------------------------------------------------------
+const float RING_COLUMNS = 56.0;
+const float RING_ROWS = 7.0;
+
+vec3 ringTexel(int column, int row) {
+    return texture(ringData, (vec2(float(column), float(row)) + 0.5)
+                   / vec2(RING_COLUMNS, RING_ROWS)).rgb;
+}
+
+float ringRadius(int column, int row) {
+    vec3 v = floor(ringTexel(column, row) * 255.0 + 0.5);
+    return (v.r * 256.0 + v.g) / 256.0;
+}
+
+// A round-capped stroke along the ray at `angle` (radians) from r0 to
+// r1, `width` wide, in dial units (k card px each).
+vec3 ringStroke(vec3 col, vec2 q, float angle, float r0, float r1,
+                float width, vec4 rgba) {
+    if (rgba.a <= 0.0) return col;
+    vec2 dir = vec2(cos(angle), sin(angle));
+    float sd = length(q - dir * clamp(dot(q, dir), r0, r1)) - width * 0.5;
+    return over(col, rgba, cover(sd * tickAt.z));
+}
+
+// Stroke `column` and its glow (rows as above): the glow first.
+vec3 ringColumn(vec3 col, vec2 q, int column, float angle, float width,
+                float glowWidth) {
+    vec3 alphaBytes = floor(ringTexel(column, 2) * 255.0 + 0.5);
+    vec2 alphas = alphaBytes.rg / 255.0;
+    vec2 breathes = vec2(step(128.0, alphaBytes.b),
+                         step(64.0, mod(alphaBytes.b, 128.0)));
+    alphas *= mix(vec2(1.0), vec2(tickBreath), breathes);
+    col = ringStroke(col, q, angle, ringRadius(column, 5),
+                     ringRadius(column, 6), glowWidth,
+                     vec4(ringTexel(column, 1), alphas.g));
+    return ringStroke(col, q, angle, ringRadius(column, 3),
+                      ringRadius(column, 4), width,
+                      vec4(ringTexel(column, 0), alphas.r));
+}
+
+vec3 tickColumn(vec3 col, vec2 q, int i) {
+    if (i < 0 || i > 54) return col;
+    return ringColumn(col, q, i, radians(135.0 + 5.0 * float(i)), 4.0, 10.0);
+}
+
+vec3 dialRing(vec3 col, vec2 p) {
+    if (tickRing.w <= 0.0) return col;
+    // Into the dial's design square (300 across, centred), unstretched.
+    vec2 q = unrotate((p - tickAt.xy) / tickAt.z, tickRing.x);
+    float r = length(q);
+    if (r < 95.0 || r > 170.0) return col;
+    // The ticks run every 5 degrees clockwise from 135 (the gentle
+    // end); a pixel is in reach of its nearest tick and the two beside
+    // it (a glow is 10 wide, ticks ~10 apart). In drawing order.
+    float f = mod(degrees(atan(q.y, q.x)) - 135.0 + 720.0, 360.0) / 5.0;
+    if (f > 63.0) f -= 72.0;
+    // (Written out, not looped: texture() needs derivatives, which
+    // Direct3D cannot take in a loop it cannot unroll.)
+    int nearest = int(floor(f + 0.5));
+    col = tickColumn(col, q, nearest - 1);
+    col = tickColumn(col, q, nearest);
+    col = tickColumn(col, q, nearest + 1);
+    return ringColumn(col, q, 55, radians(tickRing.y), 5.0, tickRing.z);
+}
+
 vec3 sky(vec3 col, vec2 p) {
     vec2 c = geo.xy;
     float d = length(p - c);
@@ -361,6 +441,7 @@ void main() {
                                 card.z);
     if (clipped < px)
         col = mix(col, sky(col, p), cover(clipped));
+    col = dialRing(col, p);
 
     fragColor = vec4(col, 1.0) * qt_Opacity;
 }
