@@ -74,6 +74,8 @@ def window(app, still_reset):
     win.show()
     _pump(app)
     saved = win.settings.reduce_motion
+    win.restarts = []                      # no real restart in tests
+    win.restart_app = lambda: win.restarts.append(1)
     yield win
     win.motion_switch.setChecked(saved)
     win.close()
@@ -108,6 +110,45 @@ def test_the_switch_holds_home_still_and_lets_it_go(app, window):
     _pump(app, 0.1)
     assert window.settings.reduce_motion is False
     assert ambient_ok()
+
+
+def test_the_switch_restarts_poise(app, window):
+    window.motion_switch.setChecked(not window.motion_switch.isChecked())
+    _pump(app, 0.1)
+    assert window.restarts == []           # the switch is seen to flip
+    _pump(app, 0.4)
+    assert window.restarts == [1]
+    row = window.motion_switch.parentWidget()
+    assert "restarts" in row._subtitle
+
+
+def test_a_restart_comes_back_where_it_was(app, monkeypatch):
+    import stream_denoiser.gui as gui
+    monkeypatch.setattr(sys, "argv", ["C:/poise/run_poise_gui.py",
+                                      "--log-file", "x.log",
+                                      gui.FLAG_RESTART_RESUME])
+    monkeypatch.setattr(gui, "_restart_args", None)
+    gui.request_restart(resume=False)
+    program, args = gui._restart_command(gui._restart_args)
+    assert program == sys.executable
+    assert args == [os.path.abspath("C:/poise/run_poise_gui.py"),
+                    "--log-file", "x.log", gui.FLAG_RESTART_SETTINGS]
+    gui.request_restart(resume=True)
+    assert gui._restart_args[-2:] == [gui.FLAG_RESTART_SETTINGS,
+                                      gui.FLAG_RESTART_RESUME]
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    program, args = gui._restart_command(["--x"])
+    assert (program, args) == (sys.executable, ["--x"])
+
+
+def test_a_restarted_window_opens_on_settings(app, window, monkeypatch):
+    started = []
+    monkeypatch.setattr(window, "_start_processing",
+                        lambda: started.append(1))
+    window.resume_after_restart(settings_page=True, isolate=True)
+    _pump(app, 0.1)
+    assert window.stack.currentIndex() == 1
+    assert started == [1]
 
 
 def test_reset_keeps_the_motion_setting(app, window):
