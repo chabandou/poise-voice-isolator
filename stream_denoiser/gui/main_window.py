@@ -418,8 +418,8 @@ class MainWindow(QMainWindow):
         title = QLabel("Settings")
         title.setObjectName("page-title")
         layout.addWidget(title)
-        subtitle = QLabel("Silence skipping, model, appearance, and app "
-                          "behavior. Reduction strength is the dial on Home.")
+        subtitle = QLabel("Tweak silence skipping, appearance, and other app "
+                          "behavior.")
         subtitle.setObjectName("page-subtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
