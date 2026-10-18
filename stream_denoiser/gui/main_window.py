@@ -480,7 +480,8 @@ class MainWindow(QMainWindow):
         self.motion_switch.toggled.connect(self._on_reduce_motion_toggled)
         motion_row = SettingsRow(
             "Reduce motion",
-            "Saves PC resources by reducing the animations.",
+            "Saves PC resources by reducing the animations. "
+            "App restarts to apply it.",
             self.motion_switch)
         motion_row.setToolTip(
             "Keeps the UI still by eliminating some animations. Lowers CPU, "
@@ -1055,13 +1056,35 @@ class MainWindow(QMainWindow):
         self._on_atten_changed(strength)
         _logger.info("Settings reset to defaults")
 
+    RESTART_AFTER_MS = 250   # the switch is seen to flip first
+
     def _on_reduce_motion_toggled(self, checked: bool):
-        """Hold the ambient motion still, or let it move again, now."""
+        """Hold the ambient motion still, or let it move again, then
+        restart: Qt Quick (the GPU sky) stays loaded once used, so only a
+        fresh start frees its memory."""
         self.settings.reduce_motion = checked
+        self.settings.sync()
         set_still(checked)
         self._stage.refresh_motion()      # drops or brings back the GPU sky
         self.power_btn.refresh_motion()
         self.stats_bar.refresh_motion()
+        QTimer.singleShot(self.RESTART_AFTER_MS, self.restart_app)
+
+    def restart_app(self) -> None:
+        """Quit and start Poise again, on Settings, isolating again if
+        it was (see gui.request_restart)."""
+        from . import request_restart
+        request_restart(resume=self.worker.is_running)
+        self._quit_app()
+
+    def resume_after_restart(self, settings_page: bool, isolate: bool):
+        """Just restarted by restart_app: open on Settings, and start
+        isolating again if it was."""
+        if settings_page:
+            self.sidebar.set_active_page(1)
+            self.stack.setCurrentIndex(1)
+        if isolate:
+            QTimer.singleShot(0, self._start_processing)
 
     def _on_tray_toggled(self, checked: bool):
         self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)

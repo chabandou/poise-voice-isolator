@@ -3,10 +3,11 @@ Poise Voice Isolator - GUI Package
 
 Exports the main entry point function.
 """
+import os
 import sys
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QSharedMemory, QByteArray
+from PyQt6.QtCore import QByteArray, QProcess, QSharedMemory
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 from .main_window import MainWindow
@@ -17,6 +18,48 @@ _logger = get_logger(__name__)
 # Global reference to main window for single-instance handling
 _main_window = None
 _shared_memory = None
+
+# Flags a restarted Poise starts with (see request_restart).
+FLAG_RESTART_SETTINGS = "--restarted-on-settings"
+FLAG_RESTART_RESUME = "--restarted-isolating"
+_restart_args = None   # set: start Poise again once this one has quit
+
+
+def request_restart(resume: bool) -> None:
+    """Start Poise again once this one has quit (the caller quits it):
+    back on the Settings page, and isolating again if `resume`."""
+    global _restart_args
+    args = [a for a in sys.argv[1:]
+            if a not in (FLAG_RESTART_SETTINGS, FLAG_RESTART_RESUME)]
+    args.append(FLAG_RESTART_SETTINGS)
+    if resume:
+        args.append(FLAG_RESTART_RESUME)
+    _restart_args = args
+
+
+def _restart_command(args):
+    """(program, arguments) that start this Poise again."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, list(args)
+    script = os.path.abspath(sys.argv[0])
+    if os.path.basename(script) == "__main__.py":   # python -m ...gui
+        return sys.executable, ["-m", __name__] + list(args)
+    return sys.executable, [script] + list(args)
+
+
+def _restart() -> None:
+    """Hand over to a new Poise: the single-instance lock goes first, or
+    the new one would find this one and only bring it to the front."""
+    if _local_server is not None:
+        _local_server.close()
+    if _shared_memory is not None and _shared_memory.isAttached():
+        _shared_memory.detach()
+    program, args = _restart_command(_restart_args)
+    ok, _ = QProcess.startDetached(program, args, os.getcwd())
+    if ok:
+        _logger.info("Restarting Poise")
+    else:
+        _logger.error(f"Could not restart Poise ({program} {args})")
 _local_server = None
 
 def _send_activate_message():
@@ -226,7 +269,15 @@ def run_gui():
     
     # Setup local server to receive messages from other instances
     _setup_local_server(_main_window)
-    
+
+    # Started again by Poise itself (Reduce motion): pick up where it was.
+    _main_window.resume_after_restart(
+        settings_page=FLAG_RESTART_SETTINGS in sys.argv,
+        isolate=FLAG_RESTART_RESUME in sys.argv)
+
     _logger.info("Starting Qt application event loop...")
-    sys.exit(app.exec())
+    code = app.exec()
+    if _restart_args is not None:
+        _restart()
+    sys.exit(code)
 
