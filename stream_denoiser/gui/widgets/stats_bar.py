@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 
-from ..animations import TextSwap, ease_out, motion_ok, stagger_in
+from ..animations import TextSwap, ambient_ok, ease_out, motion_ok, stagger_in
 from ..scaling import sp
 from ..themes import breathing, current as current_theme
 
@@ -243,7 +243,7 @@ class StatsBar(QWidget):
     # -- the live halo -------------------------------------------------------
     def _set_halo(self, on: bool) -> None:
         """While isolating, a halo leaves the dot every HALO_MS."""
-        if on and motion_ok():
+        if on and ambient_ok():
             if self._halo_at is None:
                 self._halo_at = time.monotonic()
                 self._halo.start()
@@ -251,6 +251,13 @@ class StatsBar(QWidget):
             self._halo_at = None
             self._halo.stop()
             self.update(self._halo_rect())
+
+    def refresh_motion(self) -> None:
+        """Reduce motion changed (animations.set_still): the live halo
+        stops, or starts again while isolating."""
+        state, text = self._shown
+        self._set_halo(state == "processing"
+                       and text == STATE_WORDS["processing"])
 
     def _halo_rect(self) -> QRect:
         centre = self._dot.mapTo(self, self._dot.rect().center())

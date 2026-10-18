@@ -16,7 +16,8 @@ Small, dependency-free micro-interaction toolkit for Qt Widgets:
 
 QSS cannot animate, so all motion lives here in code. Every helper
 respects reduced motion via POISE_NO_ANIM=1 / POISE_REDUCE_MOTION=1
-and degrades to an instant state change.
+and degrades to an instant state change. Reduce motion in Settings holds
+only the ambient motion still (ambient_ok).
 
 Safety rules (learned the hard way):
 - NEVER put a QGraphicsOpacityEffect on a QScrollArea, a QStackedWidget
@@ -186,6 +187,27 @@ def motion_ok() -> bool:
         os.environ.get("POISE_NO_ANIM") == "1"
         or os.environ.get("POISE_REDUCE_MOTION") == "1"
     )
+
+
+# The Settings page's "Reduce motion" (see set_still).
+_still = False
+
+
+def set_still(still: bool) -> None:
+    """Hold the ambient motion still (the Settings page's Reduce motion):
+    see ambient_ok. Widgets with their own clocks catch up through
+    refresh_motion()."""
+    global _still
+    _still = bool(still)
+
+
+def ambient_ok() -> bool:
+    """False when ambient motion holds still: reduced motion, or Reduce
+    motion in Settings. Ambient is what moves on its own (the night sky,
+    the dial's breathing, glows, sweeps and pulses, the live halo) and
+    keeps a clock running; short feedback on a hover or click checks
+    motion_ok and stays."""
+    return motion_ok() and not _still
 
 
 def _keep(widget: QWidget, anim: QObject) -> QObject:

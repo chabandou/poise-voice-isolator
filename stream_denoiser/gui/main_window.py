@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
 from .styles import get_stylesheet
 from .scaling import init_scaling, sp
 from .fonts import load_fonts
-from .animations import install_hover_fades
+from .animations import install_hover_fades, set_still
 from .titlebar import apply_titlebar
 from . import themes as theme_store
 from .settings import get_settings
@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
         init_scaling()
         load_fonts()
         theme_store.set_current(self.settings.theme)
+        set_still(self.settings.reduce_motion)
 
         self.setWindowTitle("Poise Voice Isolator")
 
@@ -474,16 +475,29 @@ class MainWindow(QMainWindow):
             "Keep running in the tray when closed",
             "Closing the window does not stop Poise.", self.min_tray_switch)
 
+        self.motion_switch = ToggleSwitch(
+            checked=self.settings.reduce_motion)
+        self.motion_switch.toggled.connect(self._on_reduce_motion_toggled)
+        motion_row = SettingsRow(
+            "Reduce motion",
+            "Saves PC resources by reducing the animations.",
+            self.motion_switch)
+        motion_row.setToolTip(
+            "Keeps the UI still by eliminating some animations. Lowers CPU, "
+            "GPU and memory use. Useful on older PCs or while doing heavy "
+            "tasks.")
+
         self.reset_btn = self._icon_button("Reset", "reset")
         self.reset_btn.clicked.connect(self._confirm_reset_defaults)
         reset_row = SettingsRow(
             "Reset to defaults",
             "Restore every setting and the reduction strength. "
-            "Output device and theme stay.",
+            "Output device, theme and motion stay.",
             self.reset_btn)
         self._reset_row = reset_row
 
-        rows = [aad_row, thresh_row, tray_row, min_tray_row, reset_row]
+        rows = [aad_row, thresh_row, tray_row, min_tray_row, motion_row,
+                reset_row]
         for i, row in enumerate(rows):
             row.set_position(i == 0, i == len(rows) - 1)
             list_layout.addWidget(row)
@@ -1016,7 +1030,7 @@ class MainWindow(QMainWindow):
             self, "Reset to defaults",
             "Reset reduction strength, silence skipping, tray behavior "
             "and model to their defaults?\n\n"
-            "Your output device and theme stay as they are.",
+            "Your output device, theme and motion setting stay as they are.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
@@ -1040,6 +1054,14 @@ class MainWindow(QMainWindow):
         self.power_btn.set_strength_db(strength)
         self._on_atten_changed(strength)
         _logger.info("Settings reset to defaults")
+
+    def _on_reduce_motion_toggled(self, checked: bool):
+        """Hold the ambient motion still, or let it move again, now."""
+        self.settings.reduce_motion = checked
+        set_still(checked)
+        self._stage.refresh_motion()      # drops or brings back the GPU sky
+        self.power_btn.refresh_motion()
+        self.stats_bar.refresh_motion()
 
     def _on_tray_toggled(self, checked: bool):
         self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
