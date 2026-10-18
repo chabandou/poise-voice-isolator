@@ -974,17 +974,18 @@ class MainWindow(QMainWindow):
             crossfade_from(self, snapshot)
 
     def _sync_home_pace(self) -> None:
-        """A breathing theme (Vigil, Mono) mists the headline slowly from one
-        state to the next and tracks it wider; the others roll it."""
+        """A breathing theme (Vigil, Mono) dissolves the headline slowly
+        like smoke from one state to the next (as the dial's readout) and
+        tracks it wider; the others roll it."""
         from PyQt6.QtGui import QFont
         from .animations import EASE_BREATHE, EASE_OUT
         breath = theme_store.breathing()
         if breath:
-            self._title_swap.set_timing(420, 760, rise=sp(6),
-                                        easing=EASE_BREATHE)
+            self._title_swap.set_timing(420, 760, easing=EASE_BREATHE,
+                                        smoke=sp(6))
         else:
             self._title_swap.set_timing(120, 240, rise=sp(14),
-                                        easing=EASE_OUT)
+                                        easing=EASE_OUT, smoke=0.0)
         font = self.home_title.font()
         font.setLetterSpacing(QFont.SpacingType.PercentageSpacing,
                               108.0 if breath else 100.0)
