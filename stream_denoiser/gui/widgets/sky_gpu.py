@@ -32,7 +32,10 @@ from PyQt6.QtQml import QQmlImageProviderBase
 from PyQt6.QtQuick import QQuickImageProvider, QSGRendererInterface
 from PyQt6.QtQuickWidgets import QQuickWidget
 
-from .sky import MOTE_COUNT, SPARKLE_COUNT
+from .sky import (
+    METEOR_GLOW_ALPHA, METEOR_HEAD_GLOW_ALPHA, METEOR_TAPER, METEOR_WHITE,
+    MOTE_COUNT, SPARKLE_COUNT,
+)
 
 SKY_QML = Path(__file__).resolve().parent.parent / "assets" / "sky" / "sky.qml"
 SHADER_MOTES = 18       # m0..m17 in sky.frag
@@ -42,6 +45,9 @@ assert MOTE_COUNT <= SHADER_MOTES and SPARKLE_COUNT <= SHADER_SPARKLES
 RING_COLUMNS, RING_ROWS = 56, 7   # ringData in sky.frag
 NEEDLE_COLUMN = 55
 _OFF = QVector4D(0.0, 0.0, 0.0, 0.0)
+# The shooting star's look, as sky.py draws it (meteorStyle in sky.frag).
+_METEOR_STYLE = QVector4D(METEOR_TAPER, METEOR_WHITE, METEOR_GLOW_ALPHA,
+                          METEOR_HEAD_GLOW_ALPHA)
 _SOFTWARE = {QSGRendererInterface.GraphicsApi.Unknown,
              QSGRendererInterface.GraphicsApi.Software}
 
@@ -127,6 +133,16 @@ def frame_uniforms(frame, box) -> dict:
     for i, (x, y, size, _, colour) in enumerate(frame["sparkles"]):
         u["sparkRgb"] = _rgb(colour)
         u[f"s{i}"] = QVector4D(x, y, size, colour.alphaF())
+    m = frame["meteor"]
+    if m is not None:
+        a, b, c = m["arc"]
+        u["meteor"] = QVector4D(a.x(), a.y(), b.x(), b.y())
+        u["meteorEnd"] = QVector4D(c.x(), c.y(), m["s0"], m["s1"])
+        u["meteorRgba"] = _rgba(m["colour"])
+        u["meteorGeo"] = QVector4D(m["width"], m["glow"], m["head_r"],
+                                   m["head_glow"])
+        u["meteorHead"] = QVector4D(m["head"], m["white"], 0.0, 1.0)
+        u["meteorStyle"] = _METEOR_STYLE
 
     for i, (r, ray, stops) in enumerate(frame["aura"]):
         (_, c0), (p1, c1), (p2, c2) = stops
@@ -219,7 +235,9 @@ class _RingImages(QQuickImageProvider):
 
 
 _SKY_UNIFORMS = (
-    ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "ring",
+    ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "meteor",
+     "meteorEnd", "meteorRgba", "meteorGeo", "meteorHead", "meteorStyle",
+     "ring",
      "ringPen0", "ringPen1", "ringPen2", "dash", "dashRgba", "stars",
      "squares", "beadsA", "beadsB", "beadRgb", "beadGeo", "flare",
      "haloAcc", "haloLight"]

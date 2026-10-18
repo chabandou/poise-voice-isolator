@@ -23,7 +23,8 @@ dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
 
 A theme whose backdrop is "sky" (Vigil, Mono) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
-shown (SKY_FRAME_MS, faster while starting and isolating). Its pulses
+shown (SKY_FRAME_MS, faster while starting and isolating, and for the
+moment a shooting star crosses). Its pulses
 follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
 than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
 draw in while starting. Where Qt Quick can run, the sky is drawn on the
@@ -44,7 +45,7 @@ from ..animations import Blend, EASE_BREATHE, ambient_ok
 from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import current as current_theme, style as theme_style
-from .sky import BREATH_MS, PULSE_FADE_MS, NightSky
+from .sky import BREATH_MS, PULSE_FADE_MS, NightSky, meteor_due
 
 TILE = 64.0                 # design px per tile
 TILE_OFFSET = (-14.0, -6.0)  # pattern x/y: where the first tile starts
@@ -70,7 +71,8 @@ PING_FRAME_MS = 33
 PING_FADE_MS = 420          # a ring in flight when pings stop fades out
 
 SKY_FRAME_MS = 60           # the night sky's slow loops, at rest...
-SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in
+SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in...
+SKY_METEOR_FRAME_MS = 16    # ...and a shooting star's second of flight
 SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
@@ -315,6 +317,8 @@ class PatternCard(QFrame):
                 or self._live.value > 0.001 or self._phase == "starting"
                 or self._gather.value > 0.001)
         interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
+        if meteor_due(time.monotonic() * 1000.0, interval):
+            interval = SKY_METEOR_FRAME_MS
         if self._sky_timer.interval() != interval:
             self._sky_timer.setInterval(interval)
         if not self._sky_timer.isActive():

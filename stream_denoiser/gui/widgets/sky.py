@@ -5,8 +5,9 @@ The backdrop of Vigil and Mono for the dial card (PatternCard paints it in
 place of the lattice): a soft aura and quiet geometry around the dial
 (a ring with beads on it, a dashed one turning slowly, two eight-point
 stars turning against each other), small eight-point sparkles scattered
-over the card and motes of light drifting up through it. Idle it is
-candle gold and breathes slowly; while isolating it turns lavender and
+over the card, motes of light drifting up through it and, now and then,
+a shooting star across the upper sky (none under reduced motion). Idle
+it is candle gold and breathes slowly; while isolating it turns lavender and
 moves on the dial's breathing cycle (BREATH_MS): the ring and the stars
 gather light with the dial's disc before each breath's pulse (CHARGE),
 and as it leaves, a soft band of light and three halos leave the dial,
@@ -23,7 +24,10 @@ card and sized in px.
 import math
 
 from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
-from PyQt6.QtGui import QColor, QPainterPath, QPen, QRadialGradient
+from PyQt6.QtGui import (
+    QBrush, QColor, QLinearGradient, QPainterPath, QPen, QPolygonF,
+    QRadialGradient,
+)
 
 from ..animations import cubic_bezier_fn, mix_rgba
 
@@ -63,6 +67,33 @@ SPARKLE_GAP = 64.0        # px apart at least (on the design's card)
 DESIGN_CARD = (912.0, 522.0)
 NEAR = 330.0              # sparkles nearer the dial are pushed harder
 PUSH_NEAR, PUSH_FAR = (12.0, -1.5), (7.0, -1.0)   # out, then the recoil
+# A shooting star: one at a random moment in each METEOR_EVERY_MS, down
+# one side of the sky, clear of the dial and the headline (never under
+# reduced motion). It surfaces and dives like something breaching: it
+# flies a ballistic arc (a quadratic bezier at an even pace: rising
+# into view slowing, tipping over, diving faster), and its light and
+# size swell as it surfaces and sink as it dives, a meteor's light curve
+# (rising to a late peak, falling away faster). Its trail follows the
+# arc, brightest and widest by the head, growing as it surfaces and
+# drawn down after it as it dives. Sizes in px, lengths in card widths.
+METEOR_EVERY_MS = 30000
+METEOR_MS = 1700          # its flight, from surfacing to gone
+METEOR_SEED = SEED ^ 0x5EED
+METEOR_TRAVEL = (0.31, 0.42)   # how far it goes, end to end...
+METEOR_TRAIL = (0.20, 0.26)    # ...and how long its trail grows
+METEOR_ANGLE = (25.0, 60.0)    # its chord, in degrees below the horizon
+METEOR_ARC = (0.10, 0.17)      # how far the arc bows up, x the chord
+METEOR_CLEAR = 178.0      # dial units kept clear around the dial (and
+#                           above it, where the headline is)
+METEOR_ALPHA = 0.85
+METEOR_W, METEOR_GLOW = 1.8, 6.5     # the trail at the head, its glow...
+METEOR_TAPER = 0.25       # ...narrowing to this much at the tail
+METEOR_GLOW_ALPHA = 0.14
+METEOR_WHITE = 0.5        # the trail whitens toward the head this much
+METEOR_HEAD, METEOR_HEAD_GLOW = 1.6, 6.0
+METEOR_HEAD_GLOW_ALPHA = 0.6    # at its middle, falling off outward
+METEOR_NEAR = 0.45        # surfaced, it is this much bigger than unseen
+METEOR_TRAIL_LAG = 0.07   # the trail's light trails the head's this much
 
 # The design's CSS easings.
 BREATH = cubic_bezier_fn(0.45, 0.0, 0.25, 1.0)
@@ -75,6 +106,8 @@ _HALO = cubic_bezier_fn(0.2, 0.55, 0.3, 1.0)
 _KICK = cubic_bezier_fn(0.2, 0.7, 0.3, 1.0)
 _SHOVE = cubic_bezier_fn(0.2, 0.8, 0.3, 1.0)
 _RECOIL = cubic_bezier_fn(0.45, 0.0, 0.3, 1.0)
+_SURFACE = cubic_bezier_fn(0.45, 0.0, 0.55, 1.0)   # a shooting star rising
+_DIVE = cubic_bezier_fn(0.4, 0.0, 0.65, 1.0)       # ...and sinking away
 
 
 def _linear(u: float) -> float:
@@ -125,6 +158,11 @@ FLASH_REST = (0.6, 1.08)  # where a flash ends (and waits for the next)
 MOTE = ((0, 0.0, _linear), (0.2, 0.55, _linear), (0.75, 0.4, _linear),
         (1, 0.0, _linear))
 MOTE_DRIFT = (16.0, -150.0)  # px over a mote's life
+# The shooting star's light (u: through its flight), its nearness too: it
+# surfaces slowly to a late, rounded peak and sinks away faster as it
+# dives, gone a little before the end (its trail's, lagging, after).
+METEOR_LIGHT = ((0, 0.0, _SURFACE), (0.56, 1.0, _DIVE), (0.9, 0.0, _linear),
+                (1, 0.0, _linear))
 
 
 def push_track(near: bool):
@@ -171,6 +209,99 @@ def charge(cycle, stopped=None) -> float:
         return 0.0
     return (keyframes(breath_pos(stopped, BREATH_MS), CHARGE)
             * (1.0 - max(0.0, u)) ** 2)
+
+
+def meteor_flight(now: float):
+    """The shooting star of the span `now` (ms) falls in: (its start ms,
+    the seeded generator that places it). Each span's is the same on
+    every run and lies wholly inside it, never at its very edges."""
+    index = math.floor(now / METEOR_EVERY_MS)
+    rand = _mulberry32((METEOR_SEED + index * 0x9E3779B9) & 0xFFFFFFFF)
+    start = (index * METEOR_EVERY_MS
+             + (0.1 + 0.8 * rand()) * (METEOR_EVERY_MS - METEOR_MS))
+    return start, rand
+
+
+def meteor_due(now: float, ahead: float = 0.0) -> bool:
+    """True while a shooting star is crossing at `now` (ms) or leaves
+    within `ahead` ms: the card's clock runs faster for it."""
+    for at in (now, now + ahead):
+        start, _ = meteor_flight(at)
+        if start - ahead <= now < start + METEOR_MS:
+            return True
+    return False
+
+
+def meteor_trail_at(t: float):
+    """The trail at t (0 its tail, 1 at the head): (alpha factor, white
+    mixed in, width factor). Brightest, whitest and widest by the head,
+    tapering away behind it (sky.frag's shootingStar draws the same)."""
+    return (t * t, METEOR_WHITE * t * t * t,
+            METEOR_TAPER + (1.0 - METEOR_TAPER) * t)
+
+
+def arc_point(arc, s: float) -> QPointF:
+    """The point s (0..1) along a shooting star's arc (a, b, c)."""
+    a, b, c = arc
+    v = 1.0 - s
+    return QPointF(v * v * a.x() + 2 * v * s * b.x() + s * s * c.x(),
+                   v * v * a.y() + 2 * v * s * b.y() + s * s * c.y())
+
+
+def arc_tangent(arc, s: float):
+    """The unit direction of travel at s along the arc."""
+    a, b, c = arc
+    x = (1.0 - s) * (b.x() - a.x()) + s * (c.x() - b.x())
+    y = (1.0 - s) * (b.y() - a.y()) + s * (c.y() - b.y())
+    n = math.hypot(x, y) or 1.0
+    return x / n, y / n
+
+
+def meteor_path(rand, box: QRectF, centre: QPointF, k: float):
+    """Where a shooting star flies, from its seeded generator: (its arc
+    (start, control, end points), the trail's share of the arc), down one
+    side of the sky, bowing up (so it rises into view and dives), clear of
+    the dial and the column above it (the headline); None if the card
+    leaves no room."""
+    clear = METEOR_CLEAR * k
+    inset = 0.03 * box.width()
+    left, right = box.left() + inset, box.right() - inset
+    top, bottom = box.top() + inset, box.bottom() - inset
+
+    def free(x, y):
+        if not (left < x < right and top < y < bottom):
+            return False
+        dx, dy = x - centre.x(), y - centre.y()
+        return dx * dx + dy * dy > clear * clear and (
+            abs(dx) > clear or dy > 0)
+
+    width = box.width()
+    for _ in range(48):
+        rightward = rand() < 0.5
+        on_right = rand() < 0.5
+        lo, hi = ((centre.x() + clear, right) if on_right
+                  else (left, centre.x() - clear))
+        x = lo + (hi - lo) * rand()
+        y = top + (centre.y() - top) * rand()
+        angle = math.radians(METEOR_ANGLE[0] + (METEOR_ANGLE[1]
+                                                - METEOR_ANGLE[0]) * rand())
+        travel = width * (METEOR_TRAVEL[0] + (METEOR_TRAVEL[1]
+                                              - METEOR_TRAVEL[0]) * rand())
+        trail = width * (METEOR_TRAIL[0] + (METEOR_TRAIL[1]
+                                            - METEOR_TRAIL[0]) * rand())
+        bow = travel * (METEOR_ARC[0] + (METEOR_ARC[1]
+                                         - METEOR_ARC[0]) * rand())
+        dx = math.cos(angle) * (1.0 if rightward else -1.0)
+        dy = math.sin(angle)
+        nx, ny = (dy, -dx) if rightward else (-dy, dx)   # up, off the chord
+        arc = (QPointF(x, y),
+               QPointF(x + dx * travel / 2 + nx * bow,
+                       y + dy * travel / 2 + ny * bow),
+               QPointF(x + dx * travel, y + dy * travel))
+        if hi > lo and all(free(p.x(), p.y()) for p in (
+                arc_point(arc, s / 16) for s in range(17))):
+            return arc, min(1.0, trail / travel)
+    return None
 
 
 # -- the scatter ----------------------------------------------------------------
@@ -321,6 +452,8 @@ class NightSky:
         self._path = sparkle_path()
         self._placed_key = None
         self._placed = []
+        self._meteor_key = None
+        self._meteor_path = None
 
     def _place(self, box: QRectF, centre: QPointF, k: float, ui: float):
         """Sparkles in card px: (x, y, cos, sin, arrival ms, near, s)."""
@@ -384,6 +517,9 @@ class NightSky:
             "sparkles": self._sparkles(box, centre, k, ui, now, cycle, gain,
                                        live, mix_rgba(sec, light, live),
                                        reveal),
+            "meteor": (self._meteor(box, centre, k, ui, now,
+                                    mix_rgba(sec, light, live), reveal)
+                       if look["moving"] else None),
             "aura": self._aura(k, live, look["error"], reveal, sec, acc,
                                blend(keyframes(u_idle, AURA_IDLE[0]),
                                      keyframes(u_gather, AURA_GATHER[0]),
@@ -480,6 +616,44 @@ class NightSky:
                         s.size / 10.0 * ui * scale,
                         _alpha(colour, a * 0.22), _alpha(colour, a)))
         return out
+
+    def _meteor(self, box, centre, k, ui, now, colour, reveal):
+        """The shooting star in flight, or None: {arc: its (start,
+        control, end) points; s0, s1: the trail's stretch of it (0..1,
+        the head at s1); back, front: the points there; colour: the
+        trail's (its alpha, the trail's light); head: the head's alpha;
+        white: how white its core burns; width, glow, head_r, head_glow:
+        px, as near as it is}."""
+        start, rand = meteor_flight(now)
+        u = (now - start) / METEOR_MS
+        if not 0.0 <= u < 1.0:
+            return None
+        key = (start, box.x(), box.y(), box.width(), box.height(),
+               centre.x(), centre.y(), k)
+        if key != self._meteor_key:
+            self._meteor_key = key
+            self._meteor_path = meteor_path(rand, box, centre, k)
+        if self._meteor_path is None:
+            return None
+        arc, span = self._meteor_path
+        # An even pace along the arc: it rises slowing, dives speeding up.
+        s1 = u
+        near = keyframes(u, METEOR_LIGHT)
+        trailing = keyframes(max(0.0, u - METEOR_TRAIL_LAG), METEOR_LIGHT)
+        # The trail grows as it surfaces and is drawn down after it.
+        s0 = max(0.0, s1 - span * trailing)
+        light = trailing * METEOR_ALPHA * reveal
+        head = near * METEOR_ALPHA * reveal
+        if max(light, head) <= 0.005 or s1 - s0 < 1e-3:
+            return None
+        size = 1.0 + METEOR_NEAR * (near - 1.0)
+        return {"arc": arc, "s0": s0, "s1": s1,
+                "back": arc_point(arc, s0), "front": arc_point(arc, s1),
+                "colour": _alpha(colour, light), "head": head,
+                "white": 0.55 + 0.4 * near * near,
+                "width": METEOR_W * ui * size, "glow": METEOR_GLOW * ui * size,
+                "head_r": METEOR_HEAD * ui * size,
+                "head_glow": METEOR_HEAD_GLOW * ui * size}
 
     @staticmethod
     def _aura(k, live, error, reveal, sec, acc, scale, alpha):
@@ -602,6 +776,8 @@ class NightSky:
             p.setBrush(colour)
             p.drawPath(self._path)
             p.restore()
+        if f["meteor"] is not None:
+            self._paint_meteor(p, f["meteor"])
         for r, ray, stops in f["aura"]:
             grad = QRadialGradient(centre, ray)
             for at, colour in stops:
@@ -621,6 +797,55 @@ class NightSky:
                 p.setPen(pen)
                 p.drawEllipse(centre, r, r)
         p.restore()
+
+    @staticmethod
+    def _paint_meteor(p, m) -> None:
+        """The trail (its glow, then itself) as a strip along the arc,
+        tapering back from the head, lit and whitened along it by
+        meteor_trail_at; then the head: a soft glow and a near-white
+        core."""
+        arc, s0, s1 = m["arc"], m["s0"], m["s1"]
+        back, front, colour = m["back"], m["front"], m["colour"]
+        white = QColor(255, 255, 255, colour.alpha())   # whitens, no more
+        p.setPen(Qt.PenStyle.NoPen)
+        steps = 16
+        spine = []
+        for i in range(steps + 1):
+            t = i / steps
+            s = s0 + (s1 - s0) * t
+            tx, ty = arc_tangent(arc, s)
+            spine.append((arc_point(arc, s), -ty, tx, meteor_trail_at(t)[2]))
+        for width, level in ((m["glow"], METEOR_GLOW_ALPHA),
+                             (m["width"], 1.0)):
+            # Along the chord, which the trail's short stretch of the
+            # gentle arc barely leaves.
+            grad = QLinearGradient(back, front)
+            for t in (0.0, 0.25, 0.5, 0.7, 0.85, 1.0):
+                lit, whiten, _ = meteor_trail_at(t)
+                grad.setColorAt(t, _alpha(mix_rgba(colour, white, whiten),
+                                          lit * level))
+            half = width / 2
+            left = [QPointF(pt.x() + nx * half * w, pt.y() + ny * half * w)
+                    for pt, nx, ny, w in spine]
+            right = [QPointF(pt.x() - nx * half * w, pt.y() - ny * half * w)
+                     for pt, nx, ny, w in reversed(spine)]
+            p.setBrush(QBrush(grad))
+            p.drawPolygon(QPolygonF(left + right))
+        head = m["head"]
+        if head <= 0.005:
+            return
+        rgb = QColor(colour)
+        rgb.setAlphaF(1.0)
+        glow_r = m["head_glow"]
+        glow = QRadialGradient(front, glow_r)      # falls off as (1 - r)^2
+        for at in (0.0, 0.25, 0.5, 0.75, 1.0):
+            glow.setColorAt(at, _alpha(rgb, head * METEOR_HEAD_GLOW_ALPHA
+                                       * (1.0 - at) ** 2))
+        p.setBrush(QBrush(glow))
+        p.drawEllipse(front, glow_r, glow_r)
+        core = mix_rgba(rgb, QColor(255, 255, 255), m["white"])
+        p.setBrush(_alpha(core, head))
+        p.drawEllipse(front, m["head_r"], m["head_r"])
 
     @staticmethod
     def _paint_geometry(p, centre, k, g) -> None:
