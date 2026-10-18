@@ -118,25 +118,20 @@ def test_keyframes_interpolate_between_frames(app):
 
 def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
     from PyQt6.QtCore import QPointF, QRectF
-    from PyQt6.QtGui import QColor, QImage, QPainter, QPainterPath
+    from PyQt6.QtGui import QColor
     from stream_denoiser.gui.widgets import sky
     night = sky.NightSky()
     seen = []    # (glow, star scale) per frame
-    night._paint_geometry = lambda *a: seen.append((a[7], a[9][0]))
-    image = QImage(900, 520, QImage.Format.Format_ARGB32_Premultiplied)
     box = QRectF(0, 0, 900, 520)
-    clip = QPainterPath()
-    clip.addRect(box)
     cycles = [0, 500, 1000, 4000, 6000, 7000, 7900]
-    p = QPainter(image)
     for cycle in cycles:
-        night.paint(p, box, clip, QPointF(450, 280), 1.0, 1.0, 1000.0, {
+        frame = night.frame(box, QPointF(450, 280), 1.0, 1.0, 1000.0, {
             "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
             "gather_ms": 0.0, "cycle": cycle, "stopped": None,
             "gain": lambda index: 1.0, "moving": True,
             "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
             "accent_light": QColor("#e4dcff")})
-    p.end()
+        seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
     glow = dict(zip(cycles, (g for g, _ in seen)))
     assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
     assert glow[0] == pytest.approx(1.0)              # full as it leaves

@@ -26,16 +26,19 @@ widgets/sky.py): always gently moving, so it runs its own clock while
 shown (SKY_FRAME_MS, faster while starting and isolating). Its pulses
 follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
 than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
-draw in while starting.
+draw in while starting. Where Qt Quick can run, the sky is drawn on the
+GPU by a view covering the card (widgets/sky_gpu.py; it draws the card
+too); otherwise, or with POISE_SKY_RASTER=1, it is painted here.
 """
 import time
 
 from PyQt6.QtWidgets import QFrame
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPen, QRadialGradient, QTransform)
 
 from ..animations import Blend, EASE_BREATHE, motion_ok
+from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import current as current_theme, style as theme_style
 from .sky import BREATH_MS, PULSE_FADE_MS, NightSky
@@ -69,6 +72,8 @@ SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
 SKY_REVEAL_MS = 2400        # ...slowly
+
+_logger = get_logger(__name__)
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -116,7 +121,7 @@ class PatternCard(QFrame):
         self._bare_key = self._bare = None     # unmasked lattice, white
         self._ping_key = self._ping_layer = None   # the same, accent
         self._tile = _tile_path()
-        self._live = Blend(self, self.update, LIVE_FADE_MS, EASE_BREATHE)
+        self._live = Blend(self, self._changed, LIVE_FADE_MS, EASE_BREATHE)
         self._origin = None                    # the dial the pings leave
         self._ping_at = None
         self._ping_end = None                  # pings stopped: ring fades
@@ -129,16 +134,30 @@ class PatternCard(QFrame):
         self._sky = None
         self._phase = "idle"
         self._gather_at = time.monotonic()   # the starting draw-in began
-        self._gather = Blend(self, self.update, SKY_GATHER_MS, EASE_BREATHE)
-        self._error = Blend(self, self.update, SKY_LIVE_FADE_MS, EASE_BREATHE)
-        self._reveal = Blend(self, self.update, SKY_REVEAL_MS)
+        self._gather = Blend(self, self._changed, SKY_GATHER_MS,
+                             EASE_BREATHE)
+        self._error = Blend(self, self._changed, SKY_LIVE_FADE_MS,
+                            EASE_BREATHE)
+        self._reveal = Blend(self, self._changed, SKY_REVEAL_MS)
         self._revealed = False
         self._sky_timer = QTimer(self)
         self._sky_timer.setInterval(SKY_FRAME_MS)
         self._sky_timer.timeout.connect(self._sky_tick)
+        # The sky on the GPU (made on first show; None paints it here).
+        self._view = None
+        self._view_failed = self._making_view = False
+        self._base_key = self._base = None
 
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
+
+    def _changed(self) -> None:
+        """What the backdrop shows moved: the GPU sky's next frame, or a
+        repaint."""
+        if self._view is not None:
+            self._show_sky_frame()
+        else:
+            self.update()
 
     def set_live(self, live: bool, animated: bool = True) -> None:
         """Secondary colour when idle, the accent while isolating."""
@@ -176,7 +195,9 @@ class PatternCard(QFrame):
             if self._ping_at is not None and self.isVisible():
                 self._ping_timer.start()
         self._live.snap(self._live.target)
+        self._sync_view()
         self._run_sky()
+        self._changed()
         self.update()
 
     # -- pings ------------------------------------------------------------------
@@ -241,7 +262,14 @@ class PatternCard(QFrame):
                 self._reveal.snap(1.0)
         if self._ping_at is not None and not self._sky_on():
             self._ping_timer.start()
+        self._sync_view()
         self._run_sky()
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        if self._view is not None:
+            self._view.setGeometry(self.rect())
+            self._show_sky_frame()
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
         self._ping_timer.stop()   # e.g. hidden to the tray: no wake-ups
@@ -273,7 +301,7 @@ class PatternCard(QFrame):
                 >= PULSE_FADE_MS):
             self._clear_pings()   # faded back to gold: the breath ends
         self._run_sky()
-        self.update()
+        self._changed()
 
     def _pulse_gain(self, index: int, now: float) -> float:
         """How much of breath `index`'s pulse to show: all of it while
@@ -334,7 +362,8 @@ class PatternCard(QFrame):
         if w < 40 or h < 40:
             return
         if self._sky_on():
-            self._paint_sky(w, h)
+            if self._view is None:
+                self._paint_sky(w, h)
             return
         palette = current_theme()
         color = _mix(QColor(palette["secondary"]), QColor(palette["accent"]),
@@ -351,6 +380,15 @@ class PatternCard(QFrame):
 
     def _paint_sky(self, w: int, h: int) -> None:
         """The night sky, centred on the dial and clipped to the card."""
+        box, clip, centre, k, ui, now, look = self._sky_moment(w, h)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._sky.paint(p, box, clip, centre, k, ui, now, look)
+        p.end()
+
+    def _sky_moment(self, w: int, h: int):
+        """(box, clip, centre, k, ui, now, look): where the sky goes in
+        the card and the moment to draw (see NightSky.frame)."""
         from ..styles import _card_border_width
         ui = ui_scale()
         b = float(_card_border_width(ui))
@@ -384,11 +422,93 @@ class PatternCard(QFrame):
             "accent": QColor(palette["accent"]),
             "accent_light": QColor(palette["accent_light"]),
         }
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._sky.paint(p, box, clip, centre, k, ui,
-                        now * 1000.0 if moving else 0.0, look)
-        p.end()
+        return (box, clip, centre, k, ui, now * 1000.0 if moving else 0.0,
+                look)
+
+    # -- the sky on the GPU ----------------------------------------------------------
+    def _sync_view(self) -> None:
+        """A GPU sky while the sky is the backdrop and Qt Quick can draw
+        it here (made when first shown); none otherwise."""
+        if not self._sky_on():
+            self._drop_view()
+            return
+        if (self._view is not None or self._view_failed or self._making_view
+                or not self.isVisible()):
+            return
+        # The first view in a window makes Qt recreate it for the GPU,
+        # showing this card again: no second view from in there.
+        self._making_view = True
+        try:
+            from .sky_gpu import SkyView, gpu_sky_wanted
+            if not gpu_sky_wanted():
+                self._view_failed = True
+                return
+            view = SkyView(self)
+        except Exception as e:   # no Qt Quick here
+            _logger.warning(f"Night sky on the CPU (no Qt Quick: {e})")
+            self._view_failed = True
+            return
+        finally:
+            self._making_view = False
+        if not view.ok:
+            _logger.warning("Night sky on the CPU (its shader did not load: "
+                            f"{[str(e.toString()) for e in view.errors()]})")
+            view.deleteLater()
+            self._view_failed = True
+            return
+        view.failed.connect(self._view_fallback)
+        view.setGeometry(self.rect())
+        view.lower()               # under the dial and the headline
+        self._view = view
+        self._show_sky_frame()
+        view.show()
+
+    def _view_fallback(self) -> None:
+        _logger.warning("Night sky on the CPU (Qt Quick has no GPU here)")
+        self._view_failed = True
+        self._drop_view()
+
+    def _drop_view(self) -> None:
+        if self._view is not None:
+            self._view.hide()
+            self._view.deleteLater()
+            self._view = None
+            self.update()
+
+    def _show_sky_frame(self) -> None:
+        w, h = self.width(), self.height()
+        if w < 40 or h < 40:
+            return
+        if self._sky is None:
+            self._sky = NightSky()
+        box, _, centre, k, ui, now, look = self._sky_moment(w, h)
+        self._view.show_frame(self._sky.frame(box, centre, k, ui, now, look),
+                              box, self._view_base(w, h, ui))
+
+    def _view_base(self, w: int, h: int, ui: float) -> dict:
+        """The card the GPU sky draws under itself, and the page around
+        its corners (see sky_gpu.card_base)."""
+        page = self.parentWidget()
+        while page is not None and page.objectName() != "page":
+            page = page.parentWidget()
+        page = page or self.window()
+        at = self.mapTo(page, QPoint(0, 0))
+        palette = current_theme()
+        key = (w, h, ui, at.x(), at.y(), page.width(), page.height(),
+               id(palette))
+        if key != self._base_key:
+            from ..styles import _card_border_width
+            from .sky_gpu import card_base
+            border = QColor(*(int(v) for v in
+                              palette["border_rgb"].split(",")))
+            border.setAlphaF(float(palette["border_alpha"]))
+            self._base_key = key
+            self._base = card_base(
+                (w, h), round(CARD_RADIUS * ui), _card_border_width(ui),
+                border, theme_style("card_fill") or palette["card"],
+                theme_style("window_fill") or palette["bg"],
+                (at.x(), at.y()), (page.width(), page.height()))
+        return self._base
 
     def _paint_ping(self, p, w, h, centre, radius, alpha) -> None:
         """The accent lattice, seen only through a ring around `centre`."""
