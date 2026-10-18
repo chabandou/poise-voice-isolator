@@ -21,7 +21,7 @@ Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
 
-A theme whose backdrop is "sky" (Vigil, Mono) gets the night sky instead (see
+A theme whose backdrop is "sky" (Vigil, Eclipse) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
 shown (SKY_FRAME_MS, faster while starting and isolating, and for the
 moment a shooting star crosses). Its pulses

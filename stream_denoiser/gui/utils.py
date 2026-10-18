@@ -6,12 +6,13 @@ Shared utility functions for the GUI package.
 import os
 from typing import Optional
 
-#: Theme ids with a dedicated icon variant. All other themes (including
-#: Mono) use the signature cyan icon; the light-gray gradient tip is
-#: identical in every variant.
+#: Theme ids with a dedicated icon variant. All other themes use the
+#: signature cyan icon; the light-gray gradient tip is identical in every
+#: variant (Eclipse's wave takes its deep blue: silver would melt into it).
 THEME_ICON_VARIANTS = {
     "verdant": "icon-verdant.svg",
     "vigil": "icon-vigil.svg",
+    "eclipse": "icon-eclipse.svg",
     "ember": "icon-ember.svg",
     "orchid": "icon-orchid.svg",
 }

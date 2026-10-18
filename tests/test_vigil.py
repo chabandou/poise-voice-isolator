@@ -538,3 +538,14 @@ def test_saved_ultraviolet_opens_as_vigil(app):
         assert settings.theme == "vigil"
     finally:
         settings.set(settings.KEY_THEME, before or "abyss")
+
+
+def test_saved_mono_opens_as_eclipse(app):
+    from stream_denoiser.gui.settings import Settings
+    settings = Settings()
+    before = settings.get(settings.KEY_THEME, None)
+    try:
+        settings.set(settings.KEY_THEME, "mono")
+        assert settings.theme == "eclipse"
+    finally:
+        settings.set(settings.KEY_THEME, before or "abyss")

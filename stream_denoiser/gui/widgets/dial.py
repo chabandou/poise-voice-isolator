@@ -40,7 +40,7 @@ Motion, phase by phase:
   cutting off, and no new charge starts;
 - error: lit ticks flash white then settle red and the disc shakes.
 
-A theme whose motion is "breath" (Vigil, Mono) moves the same phases slower
+A theme whose motion is "breath" (Vigil, Eclipse) moves the same phases slower
 and softer, on the night sky's rhythm (widgets/sky.py): idle, the lit
 ticks breathe; starting, light gathers from the ends of the lit arc
 inward; live, it blooms from the middle out, the disc swells (no pop),

@@ -1,7 +1,7 @@
 """
 Poise Voice Isolator - Night Sky
 
-The backdrop of Vigil and Mono for the dial card (PatternCard paints it in
+The backdrop of Vigil and Eclipse for the dial card (PatternCard paints it in
 place of the lattice): a soft aura and quiet geometry around the dial
 (a ring with beads on it and an eight-point star turning slowly, its
 sides touching the ticks' outer edge), small eight-point sparkles scattered over the
