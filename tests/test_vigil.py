@@ -123,7 +123,8 @@ def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
     night = sky.NightSky()
     seen = []    # (glow, star scale) per frame
     box = QRectF(0, 0, 900, 520)
-    cycles = [0, 500, 1000, 4000, 6000, 7000, 7900]
+    later = sky.BREATH_MS     # the second pulse on (the first lights up)
+    cycles = [later + ms for ms in (0, 500, 1000, 4000, 6000, 7000, 7900)]
     for cycle in cycles:
         frame = night.frame(box, QPointF(450, 280), 1.0, 1.0, 1000.0, {
             "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
@@ -132,11 +133,34 @@ def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
             "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
             "accent_light": QColor("#e4dcff")})
         seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
-    glow = dict(zip(cycles, (g for g, _ in seen)))
+    glow = {cycle - later: g for cycle, (g, _) in zip(cycles, seen)}
     assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
     assert glow[0] == pytest.approx(1.0)              # full as it leaves
     assert glow[4000] == 0.0                          # gone mid-breath
     assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again
+
+
+def test_the_star_holds_its_size_starting_and_lights_with_the_first_pulse(
+        app):
+    from PyQt6.QtCore import QPointF, QRectF
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+
+    def frame(gather_ms, cycle, live):
+        look = dict(_idle_look(), live=live, gather=1.0 - live,
+                    gather_ms=gather_ms, cycle=cycle)
+        return night.frame(QRectF(0, 0, 900, 520), QPointF(450, 280), 1.0,
+                           1.0, 1000.0, look)
+
+    for ms in range(0, sky.GATHER_MS, 150):          # loading, switching
+        f = frame(ms, None, 0.0)
+        assert f["geometry"]["stars_scale"] == 1.0
+        assert f["glow"] == 0.0
+    assert frame(0.0, None, 0.4)["glow"] == 0.0       # dark until it leaves
+    lit = [frame(0.0, ms, 0.4)["glow"]
+           for ms in range(0, sky.FIRST_GLOW_MS + 1, 20)]
+    assert lit[0] == 0.0 and lit == sorted(lit)       # lights up quickly...
+    assert lit[-1] == pytest.approx(1.0, abs=0.02)    # ...full with the pulse
 
 
 def _idle_look(moving=True):
@@ -292,7 +316,7 @@ def test_the_raster_sky_paints_the_shooting_star(app, monkeypatch):
 
 def test_the_charge_fades_from_where_stop_caught_it(app):
     from stream_denoiser.gui.widgets import sky
-    assert sky.charge(None) == 1.0                # gathering for the first
+    assert sky.charge(None) == 0.0                # dark until the first
     stopped = sky.BREATH_MS * 0.99                # just before a pulse
     held = sky.charge(stopped)
     assert held > 0.9

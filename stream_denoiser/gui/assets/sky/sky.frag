@@ -74,15 +74,11 @@ layout(std140, binding = 0) uniform buf {
     // The ring: radius and its pens' widths, then the pens.
     vec4 ring;
     vec4 ringPen0; vec4 ringPen1; vec4 ringPen2;
-    // The dashed ring: radius, width, turn (deg); its colour.
-    vec4 dash;
-    vec4 dashRgba;
-    // The stars: scale, turn (deg); each square's own turn (deg); per
-    // star the pens' widths + half its side, then the pens.
+    // The star: scale, turn (deg); its two squares' own turns (deg);
+    // the pens' widths + half its side, then the pens.
     vec4 stars;
     vec4 squares;
-    vec4 starW0; vec4 starPen00; vec4 starPen01; vec4 starPen02;
-    vec4 starW1; vec4 starPen10; vec4 starPen11; vec4 starPen12;
+    vec4 starW; vec4 starPen0; vec4 starPen1; vec4 starPen2;
     // Beads (alphas), their rgb, radius and the flares' radius; flares.
     vec4 beadsA; vec4 beadsB; vec4 beadRgb; vec4 beadGeo; vec4 flare;
     // Halos: radius, width unit, alpha, on; their colours.
@@ -456,43 +452,21 @@ vec3 sky(vec3 col, vec2 p) {
     col = aura(col, d, auraRgb0, auraA0, auraP0);
     col = aura(col, d, auraRgb1, auraA1, auraP1);
 
-    // The ring, its dashed twin, the stars, the beads.
+    // The ring, the star, the beads.
     col = circle(col, d, ring.x, ring.y, ringPen0);
     col = circle(col, d, ring.x, ring.z, ringPen1);
     col = circle(col, d, ring.x, ring.w, ringPen2);
 
-    if (dashRgba.a > 0.0 && abs(d - dash.x) < dash.y + px) {
-        // QPainterPath::addEllipse runs clockwise from 3 o'clock; the
-        // pen's dashes (1.5 on, 10 off, in widths) get square caps.
-        vec2 v = unrotate(p - c, dash.z);
-        float w = dash.y;
-        float s = atan(v.y, v.x);
-        if (s < 0.0) s += 6.28318531;
-        s *= dash.x;
-        float period = 11.5 * w;
-        float m = mod(s + 0.5 * w, period);
-        float along = m < 2.5 * w ? max(-m, m - 2.5 * w)
-                                  : min(m - 2.5 * w, period - m);
-        float sd = max(abs(length(v) - dash.x) - 0.5 * w, along);
-        col = over(col, dashRgba, cover(sd));
-    }
-
-    // The stars, where their squares can reach: from inside the inner
-    // one's sides to the outer one's corners, plus the widest pen.
-    float wide = max(max(starW0.x, starW0.y), max(starW0.z, max(starW1.x,
-                     max(starW1.y, starW1.z)))) * 0.5 + px / stars.x;
+    // The star, where its squares can reach: from inside their sides to
+    // their corners, plus the widest pen.
+    float wide = max(starW.x, max(starW.y, starW.z)) * 0.5 + px / stars.x;
     float dl = d / stars.x;
-    if (dl > min(starW0.w, starW1.w) - wide
-            && dl < max(starW0.w, starW1.w) * 1.41421356 + wide) {
+    if (dl > starW.w - wide && dl < starW.w * 1.41421356 + wide) {
         vec2 q = unrotate((p - c) / stars.x, stars.y);
-        col = square(col, unrotate(q, squares.x), starW0.w, stars.x, starW0,
-                     starPen00, starPen01, starPen02);
-        col = square(col, unrotate(q, squares.y), starW0.w, stars.x, starW0,
-                     starPen00, starPen01, starPen02);
-        col = square(col, unrotate(q, squares.z), starW1.w, stars.x, starW1,
-                     starPen10, starPen11, starPen12);
-        col = square(col, unrotate(q, squares.w), starW1.w, stars.x, starW1,
-                     starPen10, starPen11, starPen12);
+        col = square(col, unrotate(q, squares.x), starW.w, stars.x, starW,
+                     starPen0, starPen1, starPen2);
+        col = square(col, unrotate(q, squares.y), starW.w, stars.x, starW,
+                     starPen0, starPen1, starPen2);
     }
 
     float reach = max(beadGeo.x, beadGeo.y) + px;
