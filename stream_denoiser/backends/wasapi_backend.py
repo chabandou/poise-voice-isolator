@@ -15,7 +15,6 @@ unprocessed for that moment, the delay stays put, and the clocks are
 bridged by slow resampling.
 """
 import ctypes
-import os
 import sys
 import time
 from contextlib import contextmanager
@@ -29,12 +28,11 @@ from ..constants import (
     WIN_FIFO_SAFETY_SAMPLES,
     WIN_MARGIN_SAMPLES,
     WIN_RENDER_FILL_SAMPLES,
-    WINDOWS_BACKENDS,
 )
 from ..logging_config import get_logger, get_log_file_path
 from ._loop_util import margin_samples, ms
 from .node_loop import log_core_events, worker_loop
-from .pipewire_backend import BACKEND_ENV
+from .choice import windows_backend_preference  # noqa: F401 (re-export)
 from .wasapi_node import WasapiError, WasapiNode, WasapiUnavailable, load_library
 
 _logger = get_logger(__name__)
@@ -53,16 +51,6 @@ class WasapiStartError(WasapiError):
 # ---------------------------------------------------------------------------
 # Backend selection
 # ---------------------------------------------------------------------------
-
-def windows_backend_preference(requested: Optional[str] = None) -> str:
-    """The requested Windows backend: CLI value, else POISE_BACKEND, else auto."""
-    value = (requested or os.environ.get(BACKEND_ENV) or "auto").strip().lower()
-    if value not in WINDOWS_BACKENDS:
-        raise ValueError(
-            f"Unknown backend {value!r} "
-            f"(choose from {', '.join(WINDOWS_BACKENDS)})")
-    return value
-
 
 def wasapi_status() -> Tuple[bool, str]:
     """Whether the native path can run here: (ok, detail)."""
