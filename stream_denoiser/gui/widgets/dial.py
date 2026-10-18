@@ -31,9 +31,9 @@ Motion, phase by phase:
   label's three dots light up in step with it;
 - live: ticks ignite one after another; when the sweep closes the needle
   flashes, the disc pops, a ripple leaves it and `ignited` fires (the
-  lattice pings follow it, see PatternCard). A slow brightness crest
-  then flows over the lit ticks, and the disc charges up (glow and rim)
-  in the second before each later ping;
+  lattice pings follow it, see PatternCard). In the second before each
+  later ping the disc charges up (glow and rim) and the lit ticks all
+  brighten with it, fading together as the ping leaves;
 - stopping: the accent drains back from the head; the dots settle; a
   charge glow caught mid-way fades out (CHARGE_DROP_MS) rather than
   cutting off, and no new charge starts;
@@ -116,8 +116,6 @@ DOT_STEP = 330            # the label's dots, a third of a lap apart
 IGNITE_STEP = 14          # live: between ticks igniting
 IGNITE_MS = 520           # one tick's ignition
 IGNITE_TAIL = 100         # the sweep "closes" this long after the last tick
-FLOW_MS = 3190            # live: the brightness crest's lap
-FLOW_STEP = 58
 NEEDLE_IN_MS = 460
 POP_MS = 480
 RIPPLE_MS = 1050
@@ -141,7 +139,7 @@ TRAIL_PEAK = 0.14         # ...reaching full flash this far in
 PLUCK_BIG_MS = 420
 BUMP_MS = 340
 FRAME_MS = 16             # transitions
-LOOP_FRAME_MS = 33        # steady loops (the live crest and charge)
+LOOP_FRAME_MS = 33        # steady loops (the live charge)
 
 # -- the breathing rhythm (themes whose motion is "breath") --------------------
 BLOOM_STEP = 18           # live: between ticks, outward from the middle
@@ -926,11 +924,8 @@ class DialButton(PowerButton):
                 scale = 1.07 - 0.07 * v
             else:
                 colour, scale = col["accent"], 1.0
-            # A brightness crest flows clockwise over the lit ticks.
-            ph = ((t + (TICKS - 1 - i) * FLOW_STEP) % FLOW_MS) / FLOW_MS
-            crest = (_ease_in_out(_rise_fall(ph / 0.32, 0.375))
-                     if ph < 0.32 else 0.0)
-            return colour, 0.78 + 0.22 * crest, scale
+            # The lit ticks brighten together with the disc's charge.
+            return colour, 0.78 + 0.22 * self._charge(t), scale
         if phase == "error":
             return (mix_rgba(col["white"], col["error"],
                              _ease_out(t / ERROR_FLASH_MS)), 1.0, 1.0)
