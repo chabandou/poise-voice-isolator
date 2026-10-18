@@ -974,7 +974,7 @@ class MainWindow(QMainWindow):
             crossfade_from(self, snapshot)
 
     def _sync_home_pace(self) -> None:
-        """A breathing theme (Vigil, Mono) dissolves the headline slowly
+        """A breathing theme (Vigil, Eclipse) dissolves the headline slowly
         like smoke from one state to the next (as the dial's readout) and
         tracks it wider; the others roll it."""
         from PyQt6.QtGui import QFont

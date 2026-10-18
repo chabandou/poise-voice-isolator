@@ -45,19 +45,19 @@
 	--color-divider: rgb(140 205 185 / 0.3);
 }
 
-[data-theme="mono"] {
-	--color-bg: #0e1014;
-	--color-deep: #0b0d10;
-	--color-card: #15171c;
-	--color-pill: #16191e;
-	--color-groove: #2a2e36;
-	--color-ink: #e8eaed;
-	--color-muted: #8f959e;
-	--color-accent: #98c5cd;
-	--color-accent-light: #cbe7eb;
-	--color-secondary: #c0b8a8;
-	--color-edge: rgb(200 210 222 / 0.14);
-	--color-divider: rgb(200 210 222 / 0.2);
+[data-theme="eclipse"] {
+	--color-bg: #0a0a0a;
+	--color-deep: #070707;
+	--color-card: #111111;
+	--color-pill: #141414;
+	--color-groove: #282828;
+	--color-ink: #e6e6e6;
+	--color-muted: #a3a3a3;
+	--color-accent: #c8c8c8;
+	--color-accent-light: #ececec;
+	--color-secondary: #4a83c9;
+	--color-edge: rgb(220 220 220 / 0.14);
+	--color-divider: rgb(220 220 220 / 0.2);
 	--color-success: #86d0ae;
 	--color-warning: #e2c983;
 	--color-error: #e89aa2;
