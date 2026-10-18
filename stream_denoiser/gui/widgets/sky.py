@@ -10,9 +10,9 @@ candle gold and breathes slowly; while isolating it turns lavender and
 moves on the dial's breathing cycle (BREATH_MS): the ring and the stars
 gather light with the dial's disc before each breath's pulse (CHARGE),
 and as it leaves, a soft band of light and three halos leave the dial,
-the stars kick round (holding their size), the beads flare as the band
-passes them, and each sparkle flashes and is pushed outward as the band
-reaches it, springing back.
+each star kicks round the way it turns (holding its size), the beads
+flare as the band passes them, and each sparkle flashes and is pushed
+outward as the band reaches it, springing back.
 
 The dial itself breathes on the same cycle (see DialButton); the shared
 timelines live here. Ported from the design's CSS (the Vigil board), so
@@ -505,8 +505,8 @@ class NightSky:
         dash = QPen(_alpha(colour, DASH_ALPHA * reveal), width)
         dash.setDashPattern([1.5, 10.0])
         # The stars: one swell (idle) and kick for both, each turning on
-        # its own, charged with the ring.
-        scale, turn = stars
+        # its own (and kicked the way it turns), charged with the ring.
+        scale, kick = stars
         squares = []
         for half, period, sense, (idle_a, live_a), angles in (
                 (STAR_HALF, STAR_TURN_MS, 1.0, STAR_ALPHA, (0.0, 45.0)),
@@ -514,9 +514,9 @@ class NightSky:
                  (22.5, 67.5))):
             a = (idle_a + (live_a - idle_a) * live) * reveal
             pens = _charged_pens(colour, light, a, 1.0 / scale, glow)
+            turn = sense * (360.0 * now / period + kick)
             for angle in angles:
-                squares.append((half, angle + sense * 360.0 * now / period,
-                                pens))
+                squares.append((half, angle + turn, pens))
         beads = [_alpha(colour, keyframes(breath_pos(now - i * BEAD_STEP,
                                                      BEAD_MS), BEAD) * reveal)
                  for i in range(8)]
@@ -526,7 +526,7 @@ class NightSky:
             "ring_r": RING_R * k,
             "dash": dash, "dash_r": DASH_R * k,
             "dash_turn": -360.0 * now / DASH_TURN_MS,
-            "stars_scale": k * scale, "stars_turn": turn,
+            "stars_scale": k * scale,
             "squares": squares,
             "beads": beads, "bead_r": BEAD_R * k}
 
@@ -638,7 +638,6 @@ class NightSky:
         p.save()
         p.translate(centre)
         p.scale(g["stars_scale"], g["stars_scale"])
-        p.rotate(g["stars_turn"])
         outlines = {}
         for half, angle, pens in g["squares"]:
             key = (half, id(pens))

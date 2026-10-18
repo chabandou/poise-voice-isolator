@@ -142,7 +142,8 @@ def frame_uniforms(frame, box) -> dict:
     u["ring"] = QVector4D(g["ring_r"], *widths)
     u["dash"] = QVector4D(g["dash_r"], g["dash"].widthF(), g["dash_turn"], 0)
     u["dashRgba"] = _rgba(g["dash"].color())
-    u["stars"] = QVector4D(g["stars_scale"], g["stars_turn"], 0, 0)
+    # No shared turn: each square's angle carries its star's own kick.
+    u["stars"] = QVector4D(g["stars_scale"], 0, 0, 0)
     squares = g["squares"]
     u["squares"] = QVector4D(*(angle for _, angle, _ in squares))
     for star, (half, _, pens) in enumerate((squares[0], squares[2])):
