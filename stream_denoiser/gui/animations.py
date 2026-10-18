@@ -42,12 +42,14 @@ Usage:
     slide_stack(self.stack, index)
 """
 
+import math
 import os
 
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
     QObject,
+    QPointF,
     QPropertyAnimation,
     Qt,
     QTimer,
@@ -1117,12 +1119,68 @@ class _RollEffect(QGraphicsOpacityEffect):
         painter.restore()
 
 
+_SMOKE_SPREAD = cubic_bezier_fn(0.3, 0.6, 0.2, 1.0)
+# Smoke's two rings of faint copies: (radius as a fraction of the reach,
+# copies, alpha weight, twist in radians at full smoke).
+_SMOKE_RINGS = ((0.45, 6, 0.2, 0.6), (1.0, 10, 0.11, 1.4))
+
+
+def smoke_wisps(smoke: float, reach: float):
+    """Text dissolving like smoke, the stand-in for a CSS blur: at `smoke`
+    0..1 (0 sharp), the sharp copy's alpha factor and [(alpha factor, dx,
+    dy)] of the faint copies around it. They spread up to `reach` px in
+    place, their rings curling round as they thin; nothing moves."""
+    spread = reach * _SMOKE_SPREAD(smoke)
+    wisps = []
+    for radius, count, weight, twist in _SMOKE_RINGS:
+        spin = twist * smoke
+        for k in range(count):
+            a = spin + 2.0 * math.pi * k / count
+            wisps.append((weight * smoke, spread * radius * math.cos(a),
+                          spread * radius * math.sin(a)))
+    return (1.0 - smoke) ** 2, wisps
+
+
+class _SmokeEffect(QGraphicsOpacityEffect):
+    """Opacity that dissolves like smoke as it falls (smoke_wisps): TextSwap
+    with `smoke`. Drawn in place, so the layout never moves; the bounding
+    rect grows by the reach so the wisps never clip."""
+
+    def __init__(self, parent=None, reach: float = 6.0):
+        super().__init__(parent)
+        self._reach = float(reach)
+
+    def boundingRectFor(self, rect):  # noqa: N802 (Qt override)
+        pad = self._reach + 1.0
+        return super().boundingRectFor(rect).adjusted(-pad, -pad, pad, pad)
+
+    def draw(self, painter):
+        alpha = float(self.opacity())
+        smoke = 1.0 - alpha
+        if smoke < 0.03:
+            super().draw(painter)
+            return
+        pixmap, offset = self.sourcePixmap(
+            Qt.CoordinateSystem.LogicalCoordinates)
+        core, wisps = smoke_wisps(smoke, self._reach)
+        painter.save()
+        base = painter.opacity() * alpha
+        painter.setOpacity(base * core)
+        painter.drawPixmap(offset, pixmap)
+        for weight, dx, dy in wisps:
+            painter.setOpacity(base * weight)
+            painter.drawPixmap(QPointF(offset) + QPointF(dx, dy), pixmap)
+        painter.restore()
+
+
 class TextSwap(QObject):
     """Change a label's text with a quick fade out, then fade in.
 
     Opacity only (layout-safe), and the effect is removed once settled.
     With `rise` (px) the text also rolls: the old one leaves upward and
     the new one rises into place, still without touching the layout.
+    With `smoke` (px) it instead dissolves in place like smoke and the
+    new text condenses out of it (smoke_wisps); smoke wins over rise.
     Updates coalesce: text that arrives while the old text is fading out
     replaces the pending one, so a burst of status messages shows only the
     newest instead of flashing through each. Hidden labels and reduced
@@ -1140,10 +1198,11 @@ class TextSwap(QObject):
     IN_MS = 170
 
     def __init__(self, label, out_ms: int = OUT_MS, in_ms: int = IN_MS,
-                 rise: float = 0.0):
+                 rise: float = 0.0, smoke: float = 0.0):
         super().__init__(label)
         self._label = label
         self._rise = float(rise)
+        self._smoke = float(smoke)
         self._out_ms, self._in_ms = out_ms, in_ms
         self._easing = EASE_OUT
         self._text = label.text()
@@ -1153,13 +1212,15 @@ class TextSwap(QObject):
         self._apply = None   # pending styling for the new text
 
     def set_timing(self, out_ms: int, in_ms: int, rise: float = None,
-                   easing=EASE_OUT) -> None:
+                   easing=EASE_OUT, smoke: float = None) -> None:
         """Change the swap's pace (e.g. a theme with a slower rhythm);
         applies from the next swap."""
         self._out_ms, self._in_ms = out_ms, in_ms
         self._easing = easing
         if rise is not None and (rise > 0) == (self._rise > 0):
             self._rise = float(rise)   # (a roll stays a roll)
+        if smoke is not None:
+            self._smoke = float(smoke)
 
     @property
     def busy(self) -> bool:
@@ -1200,8 +1261,12 @@ class TextSwap(QObject):
         if self._anim is not None:
             self._anim.stop()
         if self._eff is None or self._label.graphicsEffect() is not self._eff:
-            self._eff = (_RollEffect(self._label) if self._rise
-                         else QGraphicsOpacityEffect(self._label))
+            if self._smoke:
+                self._eff = _SmokeEffect(self._label, self._smoke)
+            elif self._rise:
+                self._eff = _RollEffect(self._label)
+            else:
+                self._eff = QGraphicsOpacityEffect(self._label)
             self._label.setGraphicsEffect(self._eff)
         self._eff.setOpacity(start)
         self._phase = phase
@@ -1212,7 +1277,7 @@ class TextSwap(QObject):
         anim.setStartValue(start)
         anim.setEndValue(end)
         anim.setEasingCurve(self._easing)
-        if self._rise:
+        if isinstance(self._eff, _RollEffect):
             anim.valueChanged.connect(self._roll)
         anim.finished.connect(self._step)
         self._anim = anim

@@ -210,11 +210,20 @@ def test_label_and_readout_mist_instead_of_rolling(app, vigil):
     _pump(app, 0.7)
     assert dial._label_mist.value == pytest.approx(1.0)
     dial.set_transitioning(False)
-    dial._nudge_to(dial.strength_db() + 1)        # one step gentler
-    assert len(dial._mists) == 2                  # old misting out, new in
+    dial._nudge_to(-50)
+    _pump(app, 0.7)
+    dial._nudge_to(-49)                           # both digits change
+    assert [len(column) for column in dial._mists] == [2, 2]
     dial.grab()
-    _pump(app, 0.9)
-    assert list(dial._mists) == [dial.strength_db()]
+    _pump(app, 0.7)
+    assert [list(column) for column in dial._mists] == [[4], [9]]
+    tens = dial._mists[0]
+    dial._nudge_to(-48)                           # only the ones change
+    assert [len(column) for column in dial._mists] == [1, 2]
+    assert dial._mists[0] is tens                 # the tens hold still
+    dial.grab()
+    _pump(app, 0.7)
+    assert [list(column) for column in dial._mists] == [[4], [8]]
     dial.close()
 
 
