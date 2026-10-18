@@ -156,18 +156,15 @@ def frame_uniforms(frame, box) -> dict:
         u[f"ringPen{i}"] = _rgba(pen.color())
         widths[i] = pen.widthF()
     u["ring"] = QVector4D(g["ring_r"], *widths)
-    u["dash"] = QVector4D(g["dash_r"], g["dash"].widthF(), g["dash_turn"], 0)
-    u["dashRgba"] = _rgba(g["dash"].color())
     # No shared turn: each square's angle carries its star's own kick.
     u["stars"] = QVector4D(g["stars_scale"], 0, 0, 0)
-    squares = g["squares"]
-    u["squares"] = QVector4D(*(angle for _, angle, _ in squares))
-    for star, (half, _, pens) in enumerate((squares[0], squares[2])):
-        widths = [0.0, 0.0, 0.0]
-        for i, pen in enumerate(pens):
-            u[f"starPen{star}{i}"] = _rgba(pen.color())
-            widths[i] = pen.widthF()
-        u[f"starW{star}"] = QVector4D(*widths, half)
+    (half, first, pens), (_, second, _) = g["squares"]
+    u["squares"] = QVector4D(first, second, 0, 0)
+    widths = [0.0, 0.0, 0.0]
+    for i, pen in enumerate(pens):
+        u[f"starPen{i}"] = _rgba(pen.color())
+        widths[i] = pen.widthF()
+    u["starW"] = QVector4D(*widths, half)
     beads = [c.alphaF() for c in g["beads"]]
     u["beadsA"] = QVector4D(*beads[:4])
     u["beadsB"] = QVector4D(*beads[4:])
@@ -238,14 +235,14 @@ _SKY_UNIFORMS = (
     ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "meteor",
      "meteorEnd", "meteorRgba", "meteorGeo", "meteorHead", "meteorStyle",
      "ring",
-     "ringPen0", "ringPen1", "ringPen2", "dash", "dashRgba", "stars",
-     "squares", "beadsA", "beadsB", "beadRgb", "beadGeo", "flare",
+     "ringPen0", "ringPen1", "ringPen2", "stars",
+     "squares", "starW", "starPen0", "starPen1", "starPen2", "beadsA",
+     "beadsB", "beadRgb", "beadGeo", "flare",
      "haloAcc", "haloLight"]
     + [f"m{i}" for i in range(SHADER_MOTES)]
     + [f"s{i}" for i in range(SHADER_SPARKLES)]
     + [f"{name}{i}" for i in range(2)
-       for name in ("auraRgb", "auraA", "auraP", "starW")]
-    + [f"starPen{s}{i}" for s in range(2) for i in range(3)]
+       for name in ("auraRgb", "auraA", "auraP")]
     + [f"halo{i}" for i in range(3)])
 
 

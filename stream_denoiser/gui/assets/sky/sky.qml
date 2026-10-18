@@ -80,18 +80,12 @@ ShaderEffect {
     property vector4d ringPen0
     property vector4d ringPen1
     property vector4d ringPen2
-    property vector4d dash
-    property vector4d dashRgba
     property vector4d stars
     property vector4d squares
-    property vector4d starW0
-    property vector4d starPen00
-    property vector4d starPen01
-    property vector4d starPen02
-    property vector4d starW1
-    property vector4d starPen10
-    property vector4d starPen11
-    property vector4d starPen12
+    property vector4d starW
+    property vector4d starPen0
+    property vector4d starPen1
+    property vector4d starPen2
     property vector4d beadsA
     property vector4d beadsB
     property vector4d beadRgb
