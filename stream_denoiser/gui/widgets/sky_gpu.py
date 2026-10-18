@@ -6,7 +6,9 @@ QQuickWidget that covers the card. A widget window composes such a view
 as a texture under its other widgets, in a rectangle, so the shader also
 draws what the view hides: the page's gradient around the card's rounded
 corners and the card's own fill and border. The dial and the headline
-stay ordinary widgets over it.
+stay ordinary widgets over it, except for the dial's ring of ticks and
+its needle, which the shader draws too (show_ring): they change on most
+frames, and so the dial need not repaint with the sky to breathe.
 
 NightSky.frame still works out every layer at each moment, so the sky
 moves exactly as the QPainter one does; only the drawing leaves the CPU.
@@ -21,11 +23,13 @@ renderer, which has no shaders).
 """
 import os
 import re
+import struct
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QVector4D
-from PyQt6.QtQuick import QSGRendererInterface
+from PyQt6.QtGui import QColor, QImage, QVector4D
+from PyQt6.QtQml import QQmlImageProviderBase
+from PyQt6.QtQuick import QQuickImageProvider, QSGRendererInterface
 from PyQt6.QtQuickWidgets import QQuickWidget
 
 from .sky import MOTE_COUNT, SPARKLE_COUNT
@@ -35,6 +39,8 @@ SHADER_MOTES = 18       # m0..m17 in sky.frag
 SHADER_SPARKLES = 26    # s0..s25
 assert MOTE_COUNT <= SHADER_MOTES and SPARKLE_COUNT <= SHADER_SPARKLES
 
+RING_COLUMNS, RING_ROWS = 56, 7   # ringData in sky.frag
+NEEDLE_COLUMN = 55
 _OFF = QVector4D(0.0, 0.0, 0.0, 0.0)
 _SOFTWARE = {QSGRendererInterface.GraphicsApi.Unknown,
              QSGRendererInterface.GraphicsApi.Software}
@@ -164,6 +170,53 @@ def frame_uniforms(frame, box) -> dict:
     return u
 
 
+# -- the dial's ring as a texture ----------------------------------------------------
+def ring_image(strokes) -> QImage:
+    """DialButton._ring_strokes as sky.frag's ringData: a column per tick
+    and one for the needle; rows: the stroke's rgb, its glow's rgb, (the
+    stroke's alpha, the glow's, which breathe: 128 the stroke, 64 the
+    glow), the stroke's inner and outer radius and the glow's (two bytes
+    each, x 256). Missing strokes stay clear."""
+    data = bytearray(RING_COLUMNS * RING_ROWS * 4)
+    row = RING_COLUMNS * 4
+    pack = struct.pack_into
+    for _, r0, r1, rgba, _, slot, breathes in strokes:
+        column, tick = divmod(slot, 2)        # even slots are glows
+        at = column * 4
+        # rgb (0xAARRGGBB -> R, G, B, X), the alpha, the radii (x 256).
+        pack(">I", data, (0 if tick else row) + at, (rgba << 8) & 0xFFFFFFFF)
+        data[2 * row + at + (0 if tick else 1)] = rgba >> 24
+        if breathes:
+            data[2 * row + at + 2] |= 128 if tick else 64
+        pack(">H", data, (3 if tick else 5) * row + at,
+             max(0, min(0xFFFF, round(r0 * 256))))
+        pack(">H", data, (4 if tick else 6) * row + at,
+             max(0, min(0xFFFF, round(r1 * 256))))
+    return QImage(bytes(data), RING_COLUMNS, RING_ROWS, row,
+                  QImage.Format.Format_RGBX8888).copy()
+
+
+def ring_uniform(over: float, strokes) -> QVector4D:
+    """tickRing: the stretch, the needle's angle and glow width, on."""
+    angle = glow = 0.0
+    for stroke_angle, _, _, _, width, slot, _ in strokes:
+        if slot == 2 * NEEDLE_COLUMN:
+            angle, glow = stroke_angle, width
+    return QVector4D(over, angle, glow, 1.0)
+
+
+class _RingImages(QQuickImageProvider):
+    """Hands the view's Image the ring's latest texture (the id changes
+    with each, so it reloads; nothing is cached)."""
+
+    def __init__(self):
+        super().__init__(QQmlImageProviderBase.ImageType.Image)
+        self.image = ring_image(())
+
+    def requestImage(self, image_id, requested_size):  # noqa: N802 (Qt)
+        return self.image, self.image.size()
+
+
 _SKY_UNIFORMS = (
     ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "ring",
      "ringPen0", "ringPen1", "ringPen2", "dash", "dashRgba", "stars",
@@ -188,9 +241,13 @@ class SkyView(QQuickWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        self._ring_images = _RingImages()     # (kept: Qt does not own it)
+        self.engine().addImageProvider("sky", self._ring_images)
         self.setSource(QUrl.fromLocalFile(str(SKY_QML)))
         self._root = self.rootObject()
         self._sent = {}
+        self._ring_key = None
+        self._ring_n = 0
         self._checked = False
         window = self.quickWindow()
         window.sceneGraphError.connect(lambda *_: self.failed.emit())
@@ -209,6 +266,38 @@ class SkyView(QQuickWidget):
         api = self.quickWindow().rendererInterface().graphicsApi()
         if api in _SOFTWARE:
             self.failed.emit()
+
+    def show_ring(self, over, strokes, breath: float = 1.0) -> None:
+        """The dial's ring (DialButton.ring_frame), or none: strokes None
+        hands it back to the dial."""
+        key = None if strokes is None else (over, strokes)
+        if strokes is not None:
+            self.show_breath(breath)
+        if key == self._ring_key:
+            return
+        self._ring_key = key
+        if strokes is None:
+            self._set("tickRing", _OFF)
+            return
+        self._ring_images.image = ring_image(strokes)
+        self._ring_n += 1
+        self._root.setProperty("ringDataSource",
+                               f"image://sky/ringData/{self._ring_n}")
+        self._set("tickRing", ring_uniform(over, strokes))
+
+    def show_breath(self, breath: float) -> None:
+        """The idle breath's alpha, for the strokes marked breathing."""
+        self._set("tickBreath", breath)
+
+    def place_ring(self, x: float, y: float, k: float) -> None:
+        """Where the dial is: its exact centre in the card and its
+        scale (dial units to px)."""
+        self._set("tickAt", QVector4D(x, y, k, 0.0))
+
+    def _set(self, name, value) -> None:
+        if self._sent.get(name) != value:
+            self._root.setProperty(name, value)
+            self._sent[name] = value
 
     def show_frame(self, frame, box, base: dict) -> None:
         """Send what changed since the last frame."""

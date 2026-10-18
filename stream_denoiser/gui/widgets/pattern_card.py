@@ -28,12 +28,13 @@ follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
 than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
 draw in while starting. Where Qt Quick can run, the sky is drawn on the
 GPU by a view covering the card (widgets/sky_gpu.py; it draws the card
-too); otherwise, or with POISE_SKY_RASTER=1, it is painted here.
+too, and the dial's ring of ticks: see DialButton.set_ring_sink);
+otherwise, or with POISE_SKY_RASTER=1, it is painted here.
 """
 import time
 
 from PyQt6.QtWidgets import QFrame
-from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPen, QRadialGradient, QTransform)
 
@@ -203,7 +204,11 @@ class PatternCard(QFrame):
     # -- pings ------------------------------------------------------------------
     def set_ping_origin(self, widget) -> None:
         """The (descendant) widget whose centre the pings leave from."""
+        if self._view is not None:
+            self._hand_ring(False)
         self._origin = widget
+        if self._view is not None:
+            self._hand_ring(True)
 
     def start_pings(self) -> None:
         """First ping now, then one every PING_PERIOD_MS until stopped."""
@@ -460,6 +465,7 @@ class PatternCard(QFrame):
         view.setGeometry(self.rect())
         view.lower()               # under the dial and the headline
         self._view = view
+        self._hand_ring(True)
         self._show_sky_frame()
         view.show()
 
@@ -468,8 +474,27 @@ class PatternCard(QFrame):
         self._view_failed = True
         self._drop_view()
 
+    def _hand_ring(self, to_view: bool) -> None:
+        """The dial's ring drawn by the GPU sky (to_view) or by the dial."""
+        origin = self._origin
+        if origin is not None and hasattr(origin, "set_ring_sink"):
+            origin.set_ring_sink(self._view.show_ring if to_view else None)
+            # Where the ticks go follows the dial (an error line under the
+            # headline moves it), even when no sky frame is coming.
+            if to_view:
+                origin.installEventFilter(self)
+            else:
+                origin.removeEventFilter(self)
+
+    def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
+        if (watched is self._origin and self._view is not None
+                and event.type() in (QEvent.Type.Move, QEvent.Type.Resize)):
+            self._show_sky_frame()
+        return super().eventFilter(watched, event)
+
     def _drop_view(self) -> None:
         if self._view is not None:
+            self._hand_ring(False)
             self._view.hide()
             self._view.deleteLater()
             self._view = None
@@ -484,6 +509,20 @@ class PatternCard(QFrame):
         box, _, centre, k, ui, now, look = self._sky_moment(w, h)
         self._view.show_frame(self._sky.frame(box, centre, k, ui, now, look),
                               box, self._view_base(w, h, ui))
+        # Each of the dial's paints sends its ring; while its own clock
+        # rests only the idle breath moves, sent with each sky frame.
+        origin = self._origin
+        if (origin is not None and hasattr(origin, "ring_frame")
+                and origin.isVisible()):
+            # The ring is drawn about the dial's exact centre (the sky's
+            # is the centre pixel of the widget, half a pixel off).
+            at = QPointF(origin.mapTo(self, QPoint(0, 0)))
+            self._view.place_ring(at.x() + origin.width() / 2,
+                                  at.y() + origin.height() / 2,
+                                  min(origin.width(), origin.height())
+                                  / 300.0)
+            if not origin.ring_animating():
+                self._view.show_breath(origin.ring_breath())
 
     def _view_base(self, w: int, h: int, ui: float) -> dict:
         """The card the GPU sky draws under itself, and the page around

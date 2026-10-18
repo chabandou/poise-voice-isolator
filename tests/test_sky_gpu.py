@@ -68,13 +68,133 @@ def test_every_uniform_is_sent_and_none_clashes_with_qml(app):
     from PyQt6.QtQuick import QQuickItem
     from stream_denoiser.gui.widgets.sky_gpu import frame_uniforms
     box, frame = _live_frame(app, 300.0)       # a pulse in flight
-    sent = set(frame_uniforms(frame, box)) | set(_base())
+    # Each frame and the card's base, plus the dial's ring (show_ring,
+    # show_breath, place_ring).
+    sent = (set(frame_uniforms(frame, box)) | set(_base())
+            | {"tickRing", "tickBreath", "tickAt"})
     assert sent == _shader_uniforms() - {"size"}
     # A uniform named like an Item property (clip, opacity...) would
     # set that property instead of reaching the shader.
     meta = QQuickItem().metaObject()
     item = {meta.property(i).name() for i in range(meta.propertyCount())}
-    assert not (_shader_uniforms() & item)
+    frag = (SKY / "sky.frag").read_text(encoding="utf-8")
+    assert not ((_shader_uniforms() | set(_bake_tool().samplers(frag)))
+                & item)
+
+
+def _breathing_dial(phase: str):
+    """A Vigil dial, its ring fully drawn, long into `phase` (live: the
+    lit ticks glow; idle: they breathe), and its theme to restore."""
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.dial import DialButton
+    before = themes.current_id()
+    themes.set_current("vigil")
+    dial = DialButton()
+    dial._sweep_at = None                      # the ring fully drawn
+    dial._phase = phase
+    dial._phase_at -= 20.0                     # long after the bloom
+    return dial, before
+
+
+def _ring_strokes(app, phase="live"):
+    """A breathing dial's strokes (glows, ticks and the needle)."""
+    from stream_denoiser.gui import themes
+    dial, before = _breathing_dial(phase)
+    try:
+        over, strokes, _ = dial.ring_frame()
+        dial.deleteLater()
+    finally:
+        themes.set_current(before)
+    return over, strokes
+
+
+def test_the_ring_packs_into_its_texture(app):
+    from stream_denoiser.gui.widgets.dial import TICKS
+    from stream_denoiser.gui.widgets.sky_gpu import (
+        RING_COLUMNS, RING_ROWS, ring_image, ring_uniform)
+    over, strokes = _ring_strokes(app)
+    idle = _ring_strokes(app, "idle")[1]
+    assert any(stroke[6] for stroke in idle)   # the lit ticks breathe
+    assert not any(stroke[6] for stroke in strokes)
+    # Two breathing ticks (and their glows) among the live ones.
+    strokes = (tuple(s for s in idle if s[5] < 4)
+               + tuple(s for s in strokes if s[5] >= 4))
+    slots = [stroke[5] for stroke in strokes]
+    assert len(set(slots)) == len(slots)       # one stroke per slot
+    assert 2 * TICKS + 1 in slots              # the needle is there
+    image = ring_image(strokes)
+    assert (image.width(), image.height()) == (RING_COLUMNS, RING_ROWS)
+
+    def texel(column, row):
+        c = image.pixelColor(column, row)
+        return c.red(), c.green(), c.blue()
+
+    for angle, r0, r1, rgba, width, slot, breathes in strokes:
+        column, glow = slot // 2, slot % 2 == 0
+        assert texel(column, 1 if glow else 0) == (
+            (rgba >> 16) & 0xFF, (rgba >> 8) & 0xFF, rgba & 0xFF)
+        assert texel(column, 2)[1 if glow else 0] == (rgba >> 24) & 0xFF
+        assert bool(texel(column, 2)[2] & (64 if glow else 128)) == breathes
+        hi, lo, _ = texel(column, 5 if glow else 3)
+        assert abs((hi * 256 + lo) / 256 - r0) <= 1 / 512
+        hi, lo, _ = texel(column, 6 if glow else 4)
+        assert abs((hi * 256 + lo) / 256 - r1) <= 1 / 512
+    needle = [s for s in strokes if s[5] == 2 * TICKS][0]
+    u = ring_uniform(over, strokes)
+    assert (u.y(), u.z(), u.w()) == (pytest.approx(needle[0]),
+                                     needle[4], 1.0)
+
+
+def test_the_dial_hands_its_ring_to_a_sink(app):
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.widgets.dial import DialButton
+    before = themes.current_id()
+    themes.set_current("vigil")
+    try:
+        dial = DialButton()
+        got = []
+        dial.set_ring_sink(lambda over, strokes, breath:
+                           got.append(strokes))
+        drawn = []
+        draw = dial._draw_ring
+        dial._draw_ring = lambda *a: drawn.append(1) or draw(*a)
+        dial.grab()
+        assert got and not drawn               # handed over, not painted
+        dial.set_ring_sink(None)
+        dial._ring_key = None
+        dial.grab()
+        assert drawn                           # painted here again
+        dial.deleteLater()
+    finally:
+        themes.set_current(before)
+
+
+def test_the_idle_breath_scales_the_strokes_it_leaves_out(app):
+    """Lifted out (for the shader's tickBreath), the idle breath leaves
+    the strokes still, and scaling those it marks draws what the dial
+    paints itself."""
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.themes import current
+    dial, before = _breathing_dial("idle")
+    try:
+        col, t = dial._colours(current()), dial._ms()
+        dial._idle_breath = lambda: 1.0
+        still = dial._ring_strokes(col, t, True)
+        dial._idle_breath = lambda: 0.84
+        assert dial._ring_strokes(col, t, True) == still
+        painted = dial._ring_strokes(col, t)
+        dial.deleteLater()
+    finally:
+        themes.set_current(before)
+    assert [s[5] for s in painted] == [s[5] for s in still]
+    for lifted, own in zip(still, painted):
+        a, b = QColor.fromRgba(lifted[3]), QColor.fromRgba(own[3])
+        assert (a.red(), a.green(), a.blue()) == (b.red(), b.green(), b.blue())
+        scale = 0.84 if lifted[6] else 1.0
+        assert abs(a.alphaF() * scale - b.alphaF()) <= 1.5 / 255
+        assert lifted[:3] == own[:3] and lifted[4:6] == own[4:6]
+        assert not own[6]
 
 
 def test_a_pulse_reaches_the_shader(app):
