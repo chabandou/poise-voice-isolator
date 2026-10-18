@@ -27,8 +27,9 @@ Motion, phase by phase:
   trail), it plucks and the ticks around it lift as in a drag, the end
   it heads for lights, and a step past either end stretches the ring and
   springs back. NUDGE_HOLD_MS after the last step it all fades away;
-- starting: lit ticks dim and a comet laps the ring once a second; the
-  label's three dots light up in step with it;
+- starting: lit ticks dim and a comet sweeps the ring in about a second,
+  resting a beat before the next sweep; the label's three dots light up
+  in step with it;
 - live: ticks ignite one after another; when the sweep closes the needle
   flashes, the disc pops, a ripple leaves it and `ignited` fires (the
   lattice pings follow it, see PatternCard). In the second before each
@@ -110,9 +111,15 @@ SWEEP_MS = 900
 SWELL_PX = 3.4            # hover lift of the ticks nearest the pointer
 SWELL_DEG = 13.0          # ...and how far it spreads
 OVERSHOOT_MAX = 4.0       # degrees the ring stretches past an end
-COMET_MS = 990            # starting: one lap of the comet
+COMET_MS = 990            # starting: one sweep of the comet
 COMET_STEP = 18           # ...the delay between neighbouring ticks
-DOT_STEP = 330            # the label's dots, a third of a lap apart
+COMET_REST_MS = 330       # ...and the pause before the next sweep
+COMET_LAP_MS = COMET_MS + COMET_REST_MS
+COMET_FLASH_MS = 69       # a tick flashes, fades to gold...
+COMET_TAIL_MS = 178       # ...and is back to its own colour by here
+DOT_STEP = 330            # the label's dots, a third of a sweep apart
+DOT_LIFT_MS = 327         # one dot's lift...
+DOT_FLASH_MS = 119        # ...brightest over its first part
 IGNITE_STEP = 14          # live: between ticks igniting
 IGNITE_MS = 520           # one tick's ignition
 IGNITE_TAIL = 100         # the sweep "closes" this long after the last tick
@@ -897,12 +904,13 @@ class DialButton(PowerButton):
         u = t - i * COMET_STEP
         if u < 0 or not ambient_ok():
             return base, 1.0
-        ph = (u % COMET_MS) / COMET_MS
-        if ph < 0.07:
-            return (mix_rgba(col["comet"], col["gold"], ph / 0.07),
-                    1.0 + 0.05 * (1 - ph / 0.07))
-        if ph < 0.18:
-            return mix_rgba(col["gold"], base, (ph - 0.07) / 0.11), 1.0
+        ms = u % COMET_LAP_MS
+        if ms < COMET_FLASH_MS:
+            v = ms / COMET_FLASH_MS
+            return mix_rgba(col["comet"], col["gold"], v), 1.0 + 0.05 * (1 - v)
+        if ms < COMET_TAIL_MS:
+            return mix_rgba(col["gold"], base, (ms - COMET_FLASH_MS)
+                            / (COMET_TAIL_MS - COMET_FLASH_MS)), 1.0
         return base, 1.0
 
     def _lit_look(self, i: int, col: dict, t: float):
@@ -1559,16 +1567,17 @@ class DialButton(PowerButton):
                 colour, alpha = QColor(col["gold"]), 0.3
                 u = t - j * DOT_STEP
                 if u >= 0:
-                    ph = (u % COMET_MS) / COMET_MS
-                    if ph < 0.33:
-                        v = ph / 0.33
+                    ms = u % COMET_LAP_MS
+                    if ms < DOT_LIFT_MS:
+                        v = ms / DOT_LIFT_MS
                         lift, scale = -4.0 * (1 - v), 1.25 - 0.25 * v
-                        if ph < 0.12:
+                        if ms < DOT_FLASH_MS:
                             colour = mix_rgba(col["comet"], col["gold"],
-                                              ph / 0.12)
+                                              ms / DOT_FLASH_MS)
                             alpha = 1.0
                         else:
-                            alpha = 1.0 - 0.7 * (ph - 0.12) / 0.21
+                            alpha = 1.0 - 0.7 * ((ms - DOT_FLASH_MS)
+                                                 / (DOT_LIFT_MS - DOT_FLASH_MS))
             elif self._phase == "stopping":
                 q = _ease_in((t - (2 - j) * 110) / DOTS_OUT_MS)
                 colour = mix_rgba(col["accent"], col["gold"], q)
