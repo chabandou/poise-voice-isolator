@@ -18,10 +18,9 @@ from typing import Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from ..audio_host import AudioHost
-from ..engines import DEFAULT_DF3_ONNX
 from ..backends.platform.windows import VBCableSwitcher
 from ..constants import (
-    DEFAULT_SAMPLE_RATE, DEVICE_SWITCH_INIT_DELAY_SEC,
+    DEFAULT_DF3_ONNX, DEFAULT_SAMPLE_RATE, DEVICE_SWITCH_INIT_DELAY_SEC,
     DEVICE_SWITCH_SUCCESS_HOLD_SEC, STATS_UPDATE_INTERVAL_SEC,
     MSG_NO_BACKEND, DEFAULT_MODEL, MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHED
 )
@@ -236,7 +235,7 @@ class AudioWorker(QThread):
 
     def _run_session(self, input_dev_id: int, output_dev_id: int) -> None:
         """One session in the audio process, until it ends or stop()."""
-        from ..backends.wasapi_backend import windows_backend_preference
+        from ..backends.choice import windows_backend_preference
 
         try:
             backend = windows_backend_preference()

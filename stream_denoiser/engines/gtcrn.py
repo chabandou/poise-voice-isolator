@@ -22,9 +22,9 @@ import numpy as np
 
 from .base import DelayLine, DenoiseEngine, dry_mix_fraction, mix_dry
 from .onnx_model import find_model_file, load_session
-from ..constants import DEFAULT_SAMPLE_RATE, MODEL_GTCRN
+from .availability import gtcrn_available
+from ..constants import DEFAULT_SAMPLE_RATE, GTCRN_ONNX, MODEL_GTCRN
 
-GTCRN_ONNX = 'gtcrn.onnx'
 
 #: The model's sample rate and STFT (as in the upstream stream export).
 MODEL_SAMPLE_RATE = 16000
@@ -154,11 +154,7 @@ class GTCRNEngine(DenoiseEngine):
     @classmethod
     def is_available(cls) -> bool:
         """True if the vendored GTCRN model file can be found."""
-        try:
-            find_model_file(GTCRN_ONNX, "GTCRN")
-            return True
-        except FileNotFoundError:
-            return False
+        return gtcrn_available()
 
     def _reset_caches(self) -> None:
         self._caches = {name: np.zeros(shape, dtype=np.float32)
