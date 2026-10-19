@@ -66,12 +66,12 @@ LATTICE_OFFSET = (-14.0, -6.0)
 LATTICE_STROKE = 1.0
 LATTICE_DOT_RADIUS = 2.5
 LATTICE_OPACITY = 0.20
-#: Where the lattice fades in down the rail (fractions of its height):
-#: clear behind the brand block, full behind the empty lower half. The
-#: Home card masks its lattice radially around the dial; the rail's
-#: content is a full-width block, so a vertical fade keeps it just as
-#: legible without depending on the rail's width.
-LATTICE_FADE = (0.50, 0.70)
+#: Radial mask over the lattice, in box units: (centre x, centre y,
+#: radius, clear stop). The Home card keeps its lattice off the dial this
+#: way; here the centre sits low on the left-aligned text block, so the
+#: pattern opens up earlier towards the rail's right edge and its top.
+#: None paints the pattern everywhere.
+LATTICE_MASK = (0.22, 0.43, 0.57, 0.32)
 
 
 def _lattice_tile() -> QPainterPath:
@@ -113,7 +113,7 @@ class Rail(QWidget):
         outer.setSpacing(0)
 
         emblem = QLabel()
-        emblem.setFixedSize(96, 96)
+        emblem.setFixedSize(108, 108)
         # The About page's mark: the vector waveform (gui/utils.py prefers
         # icon.svg over the raster app icon). No tile behind it - the glow
         # is part of the artwork.
@@ -122,19 +122,19 @@ class Rail(QWidget):
             pixmap = QPixmap(brand.asset("icon.png"))
         if not pixmap.isNull():
             emblem.setPixmap(pixmap.scaled(
-                96, 96, Qt.AspectRatioMode.KeepAspectRatio,
+                108, 108, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         outer.addWidget(emblem)
 
         outer.addSpacing(18)
         wordmark = QLabel("POISE")
         wordmark.setObjectName("wordmark")
-        wordmark.setFont(heading_font(38, spacing=7.0))
+        wordmark.setFont(heading_font(42, spacing=7.0))
         outer.addWidget(wordmark)
 
         wordsub = QLabel("VOICE ISOLATOR")
         wordsub.setObjectName("wordsub")
-        wordsub.setFont(ui_font(9.5, QFont.Weight.DemiBold, spacing=3.2))
+        wordsub.setFont(ui_font(10.5, QFont.Weight.DemiBold, spacing=3.4))
         outer.addWidget(wordsub)
 
         outer.addSpacing(16)
@@ -143,12 +143,12 @@ class Rail(QWidget):
 
         tagline = QLabel("Take back control.")
         tagline.setObjectName("tagline")
-        tagline.setFont(ui_font(13, QFont.Weight.Medium))
+        tagline.setFont(ui_font(14.5, QFont.Weight.Medium))
         outer.addWidget(tagline)
 
         blurb = QLabel("Everything your PC plays,\nwith the noise taken out.")
         blurb.setObjectName("tagline")
-        blurb.setFont(ui_font(11.5))
+        blurb.setFont(ui_font(12.5))
         blurb.setContentsMargins(0, 6, 0, 0)
         outer.addWidget(blurb)
 
@@ -156,12 +156,12 @@ class Rail(QWidget):
 
         version = QLabel(f"Version {brand.version()}")
         version.setObjectName("version")
-        version.setFont(ui_font(10.5))
+        version.setFont(ui_font(11))
         outer.addWidget(version)
 
         fine = QLabel("Runs locally  ·  MIT licensed")
         fine.setObjectName("version")
-        fine.setFont(ui_font(10))
+        fine.setFont(ui_font(10.5))
         fine.setContentsMargins(0, 4, 0, 0)
         outer.addWidget(fine)
 
@@ -202,18 +202,22 @@ class Rail(QWidget):
                                     LATTICE_DOT_RADIUS)
                 painter.restore()
 
-        if LATTICE_FADE is not None:
-            start, full = LATTICE_FADE
-            gradient = QLinearGradient(QPointF(0, start * height),
-                                       QPointF(0, full * height))
-            gradient.setColorAt(0.0, QColor(255, 255, 255, 0))
+        if LATTICE_MASK is not None:
+            centre_x, centre_y, radius, clear = LATTICE_MASK
+            gradient = QRadialGradient(QPointF(0, 0), 1.0)
+            gradient.setColorAt(clear, QColor(255, 255, 255, 0))
             gradient.setColorAt(1.0, QColor(255, 255, 255, 255))
-            gradient.setSpread(QLinearGradient.Spread.PadSpread)
+            gradient.setSpread(QRadialGradient.Spread.PadSpread)
+            brush = QBrush(gradient)
+            # Stretched to the rail (elliptical), as the card's SVG mask is
+            # stretched to its box.
+            brush.setTransform(
+                QTransform().scale(radius * width, radius * height)
+                * QTransform().translate(centre_x * width, centre_y * height))
             painter.setClipping(False)
             painter.setCompositionMode(
                 QPainter.CompositionMode.CompositionMode_DestinationIn)
-            painter.fillRect(QRectF(0, 0, width, height),
-                             QBrush(gradient))
+            painter.fillRect(QRectF(0, 0, width, height), brush)
         painter.end()
 
         tinted = image.copy()
@@ -282,6 +286,9 @@ class Check(QAbstractButton):
     """A themed checkbox: painted box, painted label, keyboard friendly."""
 
     BOX = 18
+    #: Room for the focus ring, so the widget's own edge cannot clip it.
+    RING = 2.4
+    INSET = 3
 
     def __init__(self, text: str, parent=None):
         super().__init__(parent)
@@ -294,13 +301,15 @@ class Check(QAbstractButton):
 
     def sizeHint(self) -> QSize:  # noqa: N802
         metrics = QFontMetrics(self.font())
-        return QSize(self.BOX + 12 + metrics.horizontalAdvance(self.text()) + 4,
+        return QSize(self.INSET + self.BOX + 12
+                     + metrics.horizontalAdvance(self.text()) + 4,
                      self.height())
 
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        box = QRectF(0, (self.height() - self.BOX) / 2, self.BOX, self.BOX)
+        box = QRectF(self.INSET, (self.height() - self.BOX) / 2,
+                     self.BOX, self.BOX)
         checked = self.isChecked()
         hovered = self.underMouse()
 
@@ -327,12 +336,14 @@ class Check(QAbstractButton):
             painter.setPen(QPen(rgba((95, 213, 235), 120), 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(
-                box.adjusted(-2.4, -2.4, 2.4, 2.4), 7, 7)
+                box.adjusted(-self.RING, -self.RING,
+                             self.RING, self.RING), 7, 7)
 
         painter.setFont(self.font())
         painter.setPen(TEXT if (checked or hovered) else DEVICE_TITLE)
         painter.drawText(
-            QRectF(self.BOX + 10, 0, self.width() - self.BOX - 10, self.height()),
+            QRectF(self.INSET + self.BOX + 10, 0,
+                   self.width() - self.INSET - self.BOX - 10, self.height()),
             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
             self.text())
 
