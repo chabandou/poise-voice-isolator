@@ -20,7 +20,16 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 OutputDir=installer
+; Two builds share this script:
+;   (default)  Poise_Setup.exe - the plain Inno installer, kept working
+;              as a fallback and for CI smoke checks.
+;   /DCORE    PoiseCore.exe    - the silent engine behind Poise_Setup.exe,
+;              which is now the PyQt setup window (installer/bootstrapper).
+#ifdef CORE
+OutputBaseFilename=PoiseCore
+#else
 OutputBaseFilename=Poise_Setup
+#endif
 SetupIconFile=stream_denoiser\gui\assets\icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -102,8 +111,22 @@ var
   SetupExe: String;
   ResultCode: Integer;
 begin
+  { Progress markers for the setup window (installer/bootstrapper). It
+    runs this script silently, so these log lines are the only way it can
+    see progress: keep the format in step with core.py's parse_marker. }
+  if CurStep = ssInstall then
+  begin
+    Log('POISE:phase=files');
+    Exit;
+  end;
+  if CurStep = ssDone then
+  begin
+    Log('POISE:phase=finish');
+    Exit;
+  end;
   if CurStep <> ssPostInstall then
     Exit;
+  Log('POISE:phase=driver');
   { Canonical location (remapped by [Files] above); fall back to the raw
     PyInstaller >= 6 layout in case the remap was skipped. }
   SetupExe := ExpandConstant('{app}\vbcable\VBCABLE_Setup_x64.exe');
@@ -112,10 +135,15 @@ begin
   if not FileExists(SetupExe) then
   begin
     Log('Poise: vendored VB-Cable setup not found, skipping driver install');
+    Log('POISE:driver=skip');
     Exit;
   end;
   if not NeedsVbcableInstall() then
+  begin
+    Log('POISE:driver=skip');
     Exit;
+  end;
+  Log('POISE:driver=install');
   Log('Poise: running vendored VB-Cable setup (silent)');
   { Run from the setup's own directory: it resolves its sibling driver
     files (.sys/.cat/.inf) relative to the working directory. }
@@ -124,10 +152,18 @@ begin
   begin
     Log(Format('Poise: VB-Cable setup exited with code %d', [ResultCode]));
     if (ResultCode = 3010) or (ResultCode = 1641) then
+    begin
       VbcableNeedsReboot := True;
+      Log('POISE:driver=reboot');
+    end
+    else
+      Log('POISE:driver=done');
   end
   else
+  begin
     Log('Poise: failed to launch VB-Cable setup');
+    Log('POISE:driver=failed');
+  end;
 end;
 
 function NeedRestart(): Boolean;
