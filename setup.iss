@@ -3,7 +3,7 @@
 
 #define MyAppName "Poise Voice Isolator"
 ; Keep in step with version in pyproject.toml (release checklist there)
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "Poise"
 #define MyAppExeName "Poise.exe"
 
