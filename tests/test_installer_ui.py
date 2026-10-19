@@ -15,7 +15,7 @@ window = installer_harness.load("window")
 core = installer_harness.load("core")
 engine = installer_harness.load("engine")
 
-from PyQt6.QtCore import QObject, pyqtSignal  # noqa: E402
+from PyQt6.QtCore import QObject, Qt, pyqtSignal  # noqa: E402
 from PyQt6.QtTest import QSignalSpy, QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
@@ -48,6 +48,27 @@ def test_window_opens_on_the_welcome_page(app):
         assert w.welcome.target_dir()
         assert w.width() == window.WIDTH
         assert w.height() == window.HEIGHT
+    finally:
+        w.deleteLater()
+
+
+def test_window_has_no_native_title_bar(app):
+    w = window.SetupWindow()
+    try:
+        assert w.windowFlags() & Qt.WindowType.FramelessWindowHint
+        assert w.close_button.isVisibleTo(w)
+        assert w.close_button.toolTip() == "Close"
+        assert w.close_button.x() + w.close_button.width() <= w.width()
+    finally:
+        w.deleteLater()
+
+
+def test_close_control_closes_an_idle_window(app):
+    w = window.SetupWindow()
+    w.show()
+    try:
+        w.close_button.click()
+        assert not w.isVisible()
     finally:
         w.deleteLater()
 
@@ -154,10 +175,12 @@ def test_close_is_refused_while_installing(app, tmp_path):
     try:
         w.start_install()
         assert w._installing
+        assert not w.close_button.isEnabled()
         w.close()
         assert w.isVisible(), "the window must stay open mid-install"
         fake.finished.emit("cancelled")
         assert not w._installing
+        assert w.close_button.isEnabled()
         assert w.stack.currentWidget() is w.welcome
     finally:
         w.close()

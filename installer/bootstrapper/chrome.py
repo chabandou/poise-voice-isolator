@@ -1,31 +1,58 @@
 """
-Poise Setup - native window chrome.
+Poise Setup - frameless window chrome.
 
-A trimmed mirror of stream_denoiser/gui/titlebar.py: the setup window
-keeps the real system frame (drag, snap, close) and only recolours it, so
-a dark installer never opens with a white title bar. Best effort
-everywhere - any failure simply leaves the default frame.
+The setup window draws its own frame (no title bar, no controls), so this
+asks DWM for the two things a borderless window still wants: round corners
+on Windows 11 and the standard drop shadow. Everything is best effort -
+any failure just leaves a plain borderless window.
 """
 from __future__ import annotations
 
+import ctypes
 import sys
+from ctypes import wintypes
 
-from . import brand
-
-DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
-DWMWA_CAPTION_COLOR = 35
-DWMWA_TEXT_COLOR = 36
-
+DWMWCP_ROUND = 2
 WIN11_BUILD = 22000
+
+#: The hairline DWM draws around the frame, matched to the rail.
+FRAME_COLOR = "#16233a"
+
+
+class _Margins(ctypes.Structure):
+    _fields_ = [
+        ("cxLeftWidth", ctypes.c_int),
+        ("cxRightWidth", ctypes.c_int),
+        ("cyTopHeight", ctypes.c_int),
+        ("cyBottomHeight", ctypes.c_int),
+    ]
 
 
 def colorref(hex_color: str) -> int:
     """'#RRGGBB' -> Win32 COLORREF (0x00BBGGRR)."""
-    h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return (b << 16) | (g << 8) | r
+    value = hex_color.lstrip("#")
+    red, green, blue = (int(value[0:2], 16), int(value[2:4], 16),
+                        int(value[4:6], 16))
+    return (blue << 16) | (green << 8) | red
+
+
+def _set_attr(hwnd: int, attr: int, value: int) -> bool:
+    data = wintypes.DWORD(value)
+    result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+        wintypes.HWND(hwnd), wintypes.DWORD(attr),
+        ctypes.byref(data), ctypes.sizeof(data))
+    return result == 0
+
+
+def _extend_frame(hwnd: int) -> bool:
+    """One-pixel frame: what gives a borderless window its shadow."""
+    margins = _Margins(1, 1, 1, 1)
+    result = ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+        wintypes.HWND(hwnd), ctypes.byref(margins))
+    return result == 0
 
 
 def windows_build() -> int:
@@ -37,34 +64,22 @@ def windows_build() -> int:
         return 0
 
 
-def _set_attr(hwnd: int, attr: int, value: int) -> bool:
-    import ctypes
-    from ctypes import wintypes
-    data = wintypes.DWORD(value)
-    result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-        wintypes.HWND(hwnd), wintypes.DWORD(attr),
-        ctypes.byref(data), ctypes.sizeof(data))
-    return result == 0
-
-
-def apply_titlebar(widget, palette: dict = None) -> bool:
-    """Paint `widget`'s native title bar in the brand palette."""
-    palette = palette or brand.PALETTE
-    build = windows_build()
-    if not build:
-        return False
+def apply_window_chrome(widget) -> None:
+    """Dark, rounded, shadowed - as far as the OS allows."""
+    if sys.platform != "win32":
+        return
     try:
         hwnd = int(widget.winId())
-        ok = _set_attr(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
-        if not ok:
-            ok = _set_attr(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, 1)
-        if build >= WIN11_BUILD:
-            ok = _set_attr(hwnd, DWMWA_CAPTION_COLOR,
-                           colorref(brand.RAIL_BOTTOM)) or ok
-            ok = _set_attr(hwnd, DWMWA_TEXT_COLOR,
-                           colorref(palette["text"])) or ok
-            ok = _set_attr(hwnd, DWMWA_BORDER_COLOR,
-                           colorref(brand.RAIL_BOTTOM)) or ok
-        return ok
     except Exception:
-        return False
+        return
+    try:
+        _set_attr(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
+        if windows_build() >= WIN11_BUILD:
+            _set_attr(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)
+            _set_attr(hwnd, DWMWA_BORDER_COLOR, colorref(FRAME_COLOR))
+            # Windows 10 has no border colour to match, and its extended
+            # frame shows up as a light hairline: only ask for the shadow
+            # where it can be tinted.
+            _extend_frame(hwnd)
+    except Exception:
+        pass

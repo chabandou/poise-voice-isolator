@@ -8,10 +8,10 @@ application's widgets.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import (
-    QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath,
-    QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter,
+    QPainterPath, QPen, QPixmap, QRadialGradient, QTransform,
 )
 from PyQt6.QtWidgets import QAbstractButton, QLabel, QSizePolicy, QWidget
 
@@ -19,7 +19,6 @@ from . import brand
 
 ACCENT = QColor(95, 213, 235)
 ACCENT_LIGHT = QColor(165, 243, 252)
-GOLD = QColor(232, 196, 104)
 TEXT = QColor(248, 250, 252)
 MUTED = QColor(139, 148, 163)
 DEVICE_TITLE = QColor(154, 163, 178)
@@ -49,6 +48,46 @@ def heading_font(px: float, weight: QFont.Weight = QFont.Weight.Bold,
     return ui_font(px, weight, spacing, family=brand.heading_family())
 
 
+# --------------------------------------------------------------------------
+# The Home card's lattice, reproduced from gui/widgets/pattern_card.py:
+# a 64px tile of a square, its 45-degree twin, spokes to the tile edges and
+# a centre dot, in the theme's secondary colour. The numbers are the
+# design's own (tile 64, offset -14/-6, stroke 1, dot r 2.5, opacity .2).
+# --------------------------------------------------------------------------
+
+LATTICE_TILE = 64.0
+LATTICE_OFFSET = (-14.0, -6.0)
+LATTICE_STROKE = 1.0
+LATTICE_DOT_RADIUS = 2.5
+LATTICE_OPACITY = 0.20
+#: Where the lattice fades in down the rail (fractions of its height):
+#: clear behind the brand block, full behind the empty lower half. The
+#: Home card masks its lattice radially around the dial; the rail's
+#: content is a full-width block, so a vertical fade keeps it just as
+#: legible without depending on the rail's width.
+LATTICE_FADE = (0.50, 0.70)
+
+
+def _lattice_tile() -> QPainterPath:
+    """Line work of one 64x64 tile, in design units."""
+    path = QPainterPath()
+    path.addRect(QRectF(21, 21, 22, 22))
+    diamond = QTransform().translate(32, 32).rotate(45).translate(-32, -32)
+    square = QPainterPath()
+    square.addRect(QRectF(21, 21, 22, 22))
+    path.addPath(diamond.map(square))
+    for x1, y1, x2, y2 in ((32, 0, 32, 16.4), (32, 47.6, 32, 64),
+                           (0, 32, 16.4, 32), (47.6, 32, 64, 32),
+                           (0, 0, 21, 21), (64, 0, 43, 21),
+                           (0, 64, 21, 43), (64, 64, 43, 43)):
+        path.moveTo(x1, y1)
+        path.lineTo(x2, y2)
+    return path
+
+
+_TILE_PATH = _lattice_tile()
+
+
 class Rail(QWidget):
     """The brand rail: lattice texture, emblem, wordmark, tagline."""
 
@@ -58,23 +97,30 @@ class Rail(QWidget):
         super().__init__(parent)
         self.setFixedWidth(self.WIDTH)
         self.setObjectName("rail")
+        self._lattice = None
+        self._lattice_key = None
 
-        from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout
+        from PyQt6.QtWidgets import QVBoxLayout
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(36, 42, 36, 30)
+        outer.setContentsMargins(36, 40, 36, 30)
         outer.setSpacing(0)
 
         emblem = QLabel()
-        emblem.setFixedSize(78, 78)
-        pixmap = QPixmap(brand.asset("icon.png"))
+        emblem.setFixedSize(96, 96)
+        # The About page's mark: the vector waveform (gui/utils.py prefers
+        # icon.svg over the raster app icon). No tile behind it - the glow
+        # is part of the artwork.
+        pixmap = QPixmap(brand.asset("icon.svg"))
+        if pixmap.isNull():
+            pixmap = QPixmap(brand.asset("icon.png"))
         if not pixmap.isNull():
             emblem.setPixmap(pixmap.scaled(
-                78, 78, Qt.AspectRatioMode.KeepAspectRatio,
+                96, 96, Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation))
         outer.addWidget(emblem)
 
-        outer.addSpacing(22)
+        outer.addSpacing(18)
         wordmark = QLabel("POISE")
         wordmark.setObjectName("wordmark")
         wordmark.setFont(heading_font(38, spacing=7.0))
@@ -113,6 +159,67 @@ class Rail(QWidget):
         fine.setContentsMargins(0, 4, 0, 0)
         outer.addWidget(fine)
 
+    def _lattice_image(self) -> QImage:
+        """The tile lattice, tinted in the theme's gold, cached per size."""
+        width, height = self.width(), self.height()
+        ratio = self.devicePixelRatioF() or 1.0
+        key = (width, height, ratio)
+        if key == self._lattice_key:
+            return self._lattice
+
+        image = QImage(int(width * ratio), int(height * ratio),
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(ratio)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        painter.scale(ratio, ratio)
+        pen = QPen(QColor(255, 255, 255), LATTICE_STROKE)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        origin_x, origin_y = LATTICE_OFFSET
+        # One extra row/column so the pattern bleeds past both edges.
+        columns = int(width / LATTICE_TILE) + 2
+        rows = int(height / LATTICE_TILE) + 2
+        for column in range(columns):
+            for row in range(rows):
+                painter.save()
+                painter.translate(origin_x + column * LATTICE_TILE,
+                                  origin_y + row * LATTICE_TILE)
+                painter.setClipRect(QRectF(0, 0, LATTICE_TILE, LATTICE_TILE),
+                                    Qt.ClipOperation.IntersectClip)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawPath(_TILE_PATH)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 255))
+                painter.drawEllipse(QPointF(32, 32), LATTICE_DOT_RADIUS,
+                                    LATTICE_DOT_RADIUS)
+                painter.restore()
+
+        if LATTICE_FADE is not None:
+            start, full = LATTICE_FADE
+            gradient = QLinearGradient(QPointF(0, start * height),
+                                       QPointF(0, full * height))
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 0))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 255))
+            gradient.setSpread(QLinearGradient.Spread.PadSpread)
+            painter.setClipping(False)
+            painter.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_DestinationIn)
+            painter.fillRect(QRectF(0, 0, width, height),
+                             QBrush(gradient))
+        painter.end()
+
+        tinted = image.copy()
+        tint = QPainter(tinted)
+        tint.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceIn)
+        tint.fillRect(QRectF(0, 0, width, height),
+                      QColor(brand.PALETTE["secondary"]))
+        tint.end()
+        self._lattice_key, self._lattice = key, tinted
+        return tinted
+
     def paintEvent(self, event):  # noqa: N802 (Qt override)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -123,22 +230,19 @@ class Rail(QWidget):
         background.setColorAt(1.0, QColor(brand.RAIL_BOTTOM))
         painter.fillRect(rect, background)
 
-        glow = QRadialGradient(rect.width() / 2, 138, 250)
-        glow.setColorAt(0.0, QColor(95, 213, 235, 30))
+        glow = QRadialGradient(rect.width() / 2, 132, 250)
+        glow.setColorAt(0.0, QColor(95, 213, 235, 26))
         glow.setColorAt(1.0, QColor(95, 213, 235, 0))
         painter.fillRect(rect, glow)
 
-        # The banner's diamond lattice, faint enough to sit behind text.
-        painter.setPen(QPen(rgba(BORDER_RGB, 11), 1))
-        step = 56
-        height = int(rect.height())
-        width = int(rect.width())
-        for x in range(-height, width + height, step):
-            painter.drawLine(x, 0, x + height, height)
-            painter.drawLine(x, 0, x - height, height)
+        # The Home card's lattice, at the design's 20% over the whole rail.
+        painter.setOpacity(LATTICE_OPACITY)
+        painter.drawImage(0, 0, self._lattice_image())
+        painter.setOpacity(1.0)
 
         painter.setPen(QPen(rgba(BORDER_RGB, 24), 1))
-        painter.drawLine(width - 1, 0, width - 1, height)
+        painter.drawLine(int(rect.width()) - 1, 0,
+                         int(rect.width()) - 1, int(rect.height()))
 
 
 class Ornament(QWidget):
@@ -225,6 +329,50 @@ class Check(QAbstractButton):
             QRectF(self.BOX + 10, 0, self.width() - self.BOX - 10, self.height()),
             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
             self.text())
+
+
+class WindowButton(QAbstractButton):
+    """The frameless window's only control: a close glyph."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip("Close")
+        self.setAccessibleName("Close")
+
+    def enterEvent(self, event):  # noqa: N802
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):  # noqa: N802
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        enabled = self.isEnabled()
+        hovered = self.underMouse() and enabled
+        if hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(rgba(BORDER_RGB, 26))
+            painter.drawEllipse(QRectF(1, 1, self.width() - 2,
+                                       self.height() - 2))
+        if not enabled:
+            colour = rgba(TEXT, 70)
+        else:
+            colour = TEXT if hovered else DEVICE_TITLE
+        pen = QPen(colour, 1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        centre = QRectF(self.rect()).center()
+        arm = 4.6
+        painter.drawLine(QPointF(centre.x() - arm, centre.y() - arm),
+                         QPointF(centre.x() + arm, centre.y() + arm))
+        painter.drawLine(QPointF(centre.x() - arm, centre.y() + arm),
+                         QPointF(centre.x() + arm, centre.y() - arm))
 
 
 class Progress(QWidget):

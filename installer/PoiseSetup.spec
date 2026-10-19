@@ -46,6 +46,7 @@ with open(_version_file, "w", encoding="utf-8") as fh:
 
 datas = [
     (os.path.join(ASSETS, "icon.png"), "assets"),
+    (os.path.join(ASSETS, "icon.svg"), "assets"),
     (os.path.join(ASSETS, "icon.ico"), "assets"),
     (os.path.join(ASSETS, "fonts", "Rajdhani-Bold.ttf"), "assets/fonts"),
     (os.path.join(ASSETS, "fonts", "Rajdhani-SemiBold.ttf"), "assets/fonts"),

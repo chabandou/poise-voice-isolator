@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from . import brand, core, engine
 from .pages import ErrorPage, FinishPage, ProgressPage, WelcomePage
-from .widgets import Rail
+from .widgets import Rail, WindowButton
 
 #: Design size; the window is not resizable, so the layout never reflows.
 WIDTH = 912
@@ -61,6 +61,9 @@ class SetupWindow(QWidget):
         super().__init__(parent)
         self.setObjectName("shell")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # No Windows title bar: the rail and the page headers are the frame.
+        self.setWindowFlags(Qt.WindowType.Window
+                            | Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle("Poise Setup")
         self.setWindowIcon(QIcon(brand.asset("icon.ico")))
         self.setFixedSize(WIDTH, HEIGHT)
@@ -73,6 +76,7 @@ class SetupWindow(QWidget):
         self._log_path = ""
         self._fade = None
         self._animation = None
+        self._drag_offset = None
 
         self._existing = core.existing_install()
         if not target_dir:
@@ -113,6 +117,10 @@ class SetupWindow(QWidget):
         self._fade.setOpacity(1.0)
         self.stack.setGraphicsEffect(self._fade)
 
+        # The frameless window's only control, floated over the page margin.
+        self.close_button = WindowButton(self)
+        self.close_button.move(WIDTH - 38 - self.close_button.width(), 14)
+
         self._pump = QTimer(self)
         self._pump.setInterval(16)
         self._pump.timeout.connect(self._advance)
@@ -121,6 +129,7 @@ class SetupWindow(QWidget):
         self.welcome.browse_clicked.connect(self._choose_dir)
         self.welcome.install_clicked.connect(self.start_install)
         self.welcome.cancel_clicked.connect(self.close)
+        self.close_button.clicked.connect(self._request_close)
         self.finish.done_clicked.connect(self._done)
         self.error.retry_clicked.connect(self.start_install)
         self.error.close_clicked.connect(self.close)
@@ -146,6 +155,7 @@ class SetupWindow(QWidget):
         )
         self.progress.reset()
         self.welcome.set_installing(True)
+        self.close_button.setEnabled(False)
         self._value = 0.0
         self._target = 8.0
         self._installing = True
@@ -176,6 +186,7 @@ class SetupWindow(QWidget):
         self._installing = False
         self._pump.stop()
         self.welcome.set_installing(False)
+        self.close_button.setEnabled(True)
 
         if status in (core.OK, core.REBOOT):
             self._value = 100.0
@@ -197,6 +208,14 @@ class SetupWindow(QWidget):
             engine.reboot_now()
         elif launch:
             engine.launch_app(self.welcome.target_dir())
+        self.close()
+
+    def _request_close(self) -> None:
+        """The custom close control, with the same guard as the window X."""
+        if self._installing:
+            self.progress.set_note(
+                "Setup is still running - please let it finish.")
+            return
         self.close()
 
     def _choose_dir(self) -> None:
@@ -248,10 +267,39 @@ class SetupWindow(QWidget):
             return
         super().keyPressEvent(event)
 
+    # A borderless window has to move itself: dragging the background,
+    # the rail or any non-interactive label moves the window.
+    def mousePressEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.windowHandle()
+            try:
+                if handle is not None and handle.startSystemMove():
+                    event.accept()
+                    return
+            except Exception:
+                pass
+            self._drag_offset = (event.globalPosition().toPoint()
+                                 - self.frameGeometry().topLeft())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if (self._drag_offset is not None
+                and event.buttons() & Qt.MouseButton.LeftButton):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
     def showEvent(self, event):  # noqa: N802
         super().showEvent(event)
-        from .chrome import apply_titlebar
-        apply_titlebar(self, brand.PALETTE)
+        from .chrome import apply_window_chrome
+        apply_window_chrome(self)
 
     # -- previews ----------------------------------------------------------
 

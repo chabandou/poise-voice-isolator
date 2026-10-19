@@ -1,8 +1,9 @@
 # Poise Setup
 
-`Poise_Setup.exe` is the only thing users run. It is a PyQt6 window that
-looks like Poise, and behind it sits an Inno Setup core that does the
-actual installing.
+`Poise_Setup.exe` is the only thing users see. It is a PyQt6 window that
+looks like Poise - frameless, with the app's About-page mark, its gold
+lattice and its own close control - and behind it sits an Inno Setup core
+that does the actual installing.
 
 ```
 Poise_Setup.exe  (PyQt6, installer/bootstrapper/)
