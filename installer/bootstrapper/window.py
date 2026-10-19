@@ -326,6 +326,8 @@ class SetupWindow(QWidget):
         self.progress.rows["driver"].set_state("active")
         self.progress.set_value(64)
         self.progress.detail.setText(core.driver_text("install"))
+        # Mid-install the close control is disabled, as in a real run.
+        self.close_button.setEnabled(False)
         self._show_now(self.progress)
         snap("02-progress.png")
 
@@ -335,6 +337,7 @@ class SetupWindow(QWidget):
         self.progress.detail.setText("Finishing up...")
         self._show_now(self.progress)
         snap("03-progress-finish.png")
+        self.close_button.setEnabled(True)
 
         self.finish.configure(self.welcome.target_dir(), reboot=False)
         self._show_now(self.finish)

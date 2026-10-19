@@ -28,9 +28,15 @@ ERROR = QColor(248, 113, 113)
 WARNING = QColor(250, 204, 21)
 
 
-def rgba(rgb, alpha: int) -> QColor:
-    """QColor from an (r, g, b) tuple and a 0-255 alpha."""
-    return QColor(rgb[0], rgb[1], rgb[2], alpha)
+def rgba(colour, alpha: int) -> QColor:
+    """A colour at a given 0-255 alpha.
+
+    Accepts either an (r, g, b) tuple or an existing QColor, so call sites
+    can pass the module's colour constants directly.
+    """
+    if isinstance(colour, QColor):
+        return QColor(colour.red(), colour.green(), colour.blue(), alpha)
+    return QColor(colour[0], colour[1], colour[2], alpha)
 
 
 def ui_font(px: float, weight: QFont.Weight = QFont.Weight.Normal,

@@ -63,6 +63,18 @@ def test_window_has_no_native_title_bar(app):
         w.deleteLater()
 
 
+def test_disabled_close_control_paints(app):
+    """Regression: the disabled glyph passed a QColor to rgba()."""
+    w = window.SetupWindow()
+    w.show()
+    try:
+        w.close_button.setEnabled(False)
+        QTest.qWait(30)
+        assert not w.close_button.grab().isNull()
+    finally:
+        w.deleteLater()
+
+
 def test_close_control_closes_an_idle_window(app):
     w = window.SetupWindow()
     w.show()
