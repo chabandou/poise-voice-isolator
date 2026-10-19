@@ -65,7 +65,7 @@ class SetupWindow(QWidget):
         self.setWindowFlags(Qt.WindowType.Window
                             | Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle("Poise Setup")
-        self.setWindowIcon(QIcon(brand.asset("icon.ico")))
+        self.setWindowIcon(QIcon(brand.asset("icon-setup.ico")))
         self.setFixedSize(WIDTH, HEIGHT)
 
         self._installer = installer

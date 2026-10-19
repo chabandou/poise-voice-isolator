@@ -30,7 +30,7 @@ OutputBaseFilename=PoiseCore
 #else
 OutputBaseFilename=Poise_Setup
 #endif
-SetupIconFile=stream_denoiser\gui\assets\icon.ico
+SetupIconFile=stream_denoiser\gui\assets\icon-setup.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

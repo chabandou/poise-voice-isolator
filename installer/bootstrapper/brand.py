@@ -68,7 +68,7 @@ def repo_root() -> str:
 
 
 def asset_root() -> str:
-    """Directory holding icon.png, icon.ico and fonts/."""
+    """Directory holding icon.svg, icon-setup.ico and fonts/."""
     bundled = getattr(sys, "_MEIPASS", None)
     if bundled:
         return os.path.join(bundled, "assets")
@@ -76,7 +76,7 @@ def asset_root() -> str:
 
 
 def asset(name: str) -> str:
-    """Absolute path of an asset ('icon.png', 'fonts/Rajdhani-Bold.ttf')."""
+    """Absolute path of an asset ('icon.svg', 'icon-setup.ico', a font)."""
     return os.path.join(asset_root(), *name.split("/"))
 
 

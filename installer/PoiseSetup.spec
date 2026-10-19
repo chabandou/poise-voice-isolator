@@ -21,7 +21,10 @@ ROOT = SPECPATH                     # .../installer
 PROJECT = os.path.dirname(ROOT)
 CORE = os.path.join(ROOT, "PoiseCore.exe")
 ASSETS = os.path.join(PROJECT, "stream_denoiser", "gui", "assets")
-ICON = os.path.join(ASSETS, "icon.ico")
+# The setup window's own mark (the About page's glyph), not the app's
+# tiled icon.ico: the file-system icon matches what the screen shows.
+# Regenerate with tools/bake_setup_icon.py when icon.svg changes.
+ICON = os.path.join(ASSETS, "icon-setup.ico")
 DEV = os.environ.get("POISE_SETUP_DEV") == "1"
 
 if not os.path.isfile(CORE) and not DEV:
@@ -48,6 +51,7 @@ datas = [
     (os.path.join(ASSETS, "icon.png"), "assets"),
     (os.path.join(ASSETS, "icon.svg"), "assets"),
     (os.path.join(ASSETS, "icon.ico"), "assets"),
+    (ICON, "assets"),
     (os.path.join(ASSETS, "fonts", "Rajdhani-Bold.ttf"), "assets/fonts"),
     (os.path.join(ASSETS, "fonts", "Rajdhani-SemiBold.ttf"), "assets/fonts"),
     (_version_file, "."),

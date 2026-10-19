@@ -59,7 +59,7 @@ def main(argv=None) -> int:
     app.setStyle("Fusion")
     brand.load_fonts()
     app.setStyleSheet(brand.stylesheet())
-    app.setWindowIcon(QIcon(brand.asset("icon.ico")))
+    app.setWindowIcon(QIcon(brand.asset("icon-setup.ico")))
 
     if args.screenshot:
         window = SetupWindow()
