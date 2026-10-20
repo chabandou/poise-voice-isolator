@@ -5,6 +5,7 @@ Exports the main entry point function.
 """
 import sys
 
+from PyQt6 import sip
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QSharedMemory, QByteArray
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -18,6 +19,16 @@ _logger = get_logger(__name__)
 _main_window = None
 _shared_memory = None
 _local_server = None
+
+
+def delete_window(window) -> None:
+    """Delete the window now, while Python is whole. Left alive, it goes
+    in PyQt's exit sweep, which walks sip's map of wrappers: tearing the
+    window down there runs our hideEvents and event filters, and the
+    wrappers they make can grow the map under the walk (an access
+    violation as Poise exits, now and then)."""
+    if window is not None and not sip.isdeleted(window):
+        sip.delete(window)
 
 def _send_activate_message():
     """Send message to existing instance to activate its window."""
@@ -228,5 +239,8 @@ def run_gui():
     _setup_local_server(_main_window)
     
     _logger.info("Starting Qt application event loop...")
-    sys.exit(app.exec())
+    code = app.exec()
+    delete_window(_main_window)
+    _main_window = None
+    sys.exit(code)
 
