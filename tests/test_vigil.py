@@ -116,12 +116,13 @@ def test_keyframes_interpolate_between_frames(app):
     assert keyframes(1.0, CHARGE) == 1.0
 
 
-def test_live_star_swells_with_each_pulse_and_charges_with_the_disc(app):
+def test_live_star_and_ring_swell_with_each_pulse_and_charge(app):
     from PyQt6.QtCore import QPointF, QRectF
     from PyQt6.QtGui import QColor
     from stream_denoiser.gui.widgets import sky
     night = sky.NightSky()
     seen = []    # (glow, star scale) per frame
+    rings = []   # the ring's radius over its rest
     box = QRectF(0, 0, 900, 520)
     later = sky.BREATH_MS     # the second pulse on (the first lights up)
     cycles = [later + ms
@@ -134,6 +135,7 @@ def test_live_star_swells_with_each_pulse_and_charges_with_the_disc(app):
             "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
             "accent_light": QColor("#e4dcff")})
         seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
+        rings.append(frame["geometry"]["ring_r"] / sky.RING_R)
     glow = {cycle - later: g for cycle, (g, _) in zip(cycles, seen)}
     scale = {cycle - later: s for cycle, (_, s) in zip(cycles, seen)}
     assert scale[0] == 1.0                            # swells as the band
@@ -142,6 +144,7 @@ def test_live_star_swells_with_each_pulse_and_charges_with_the_disc(app):
     assert scale[1000] < 1.0                          # ...dips a hair...
     assert all(scale[ms] == 1.0                       # ...and holds
                for ms in (1400, 4000, 6000, 7000, 7900))
+    assert rings == pytest.approx(list(scale.values()))   # the ring too
     assert glow[0] == pytest.approx(1.0)              # full as it leaves
     assert glow[4000] == 0.0                          # gone mid-breath
     assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again

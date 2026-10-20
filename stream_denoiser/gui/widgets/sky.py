@@ -11,8 +11,8 @@ candle gold and breathes slowly; while isolating it turns lavender and
 moves on the dial's breathing cycle (BREATH_MS): the ring and the star
 light up with the first pulse and gather light with the dial's disc
 before each one after (CHARGE), and as it leaves, a soft band of light and three halos leave the dial,
-the star swells as the band reaches it and settles back, the beads flare
-as the band passes them, and each sparkle flashes and is pushed outward
+the star and the ring swell as the band reaches them and settle back,
+the beads flare as the band passes them, and each sparkle flashes and is pushed outward
 as the band reaches it, springing back.
 
 The dial itself breathes on the same cycle (see DialButton); the shared
@@ -161,11 +161,12 @@ AURA_LIVE = (((0, 1.06, BREATH), (0.12, 0.96, BREATH), (0.75, 0.96, BREATH),
              ((0, 1.0, BREATH), (0.12, 0.72, BREATH), (0.75, 0.72, BREATH),
               (1, 1.0, BREATH)))
 STARS_IDLE = ((0, 0.985, BREATH), (0.45, 1.02, BREATH), (1, 0.985, BREATH))
-# Live, the star swells as each pulse's band reaches it (~85-170 ms in,
-# see band_arrival) and settles back, dipping a hair under on the way.
-STARS_LIVE_SWELL = ((0, 1.0, _KICK), (0.02, 1.05, _RECOIL),
-                    (0.1, 0.995, EASE_IN_OUT), (0.16, 1.0, _linear),
-                    (1, 1.0, _linear))
+# Live, the star and the ring swell as each pulse's band reaches them
+# (~85-170 ms in, see band_arrival) and settle back, dipping a hair under
+# on the way.
+LIVE_SWELL = ((0, 1.0, _KICK), (0.02, 1.05, _RECOIL),
+              (0.1, 0.995, EASE_IN_OUT), (0.16, 1.0, _linear),
+              (1, 1.0, _linear))
 BEAD = ((0, 0.1, BREATH), (0.12, 0.6, BREATH), (0.3, 0.1, BREATH),
         (1, 0.1, BREATH))
 FLARE = ((0, 0.25, _linear), (0.04, 0.9, _linear), (0.16, 0.0, _linear),
@@ -468,11 +469,11 @@ def _square_outline(half: float, pen: QPen):
     return flat, pen.color(), edges, corners
 
 
-def _bead(centre: QPointF, k: float, i: int) -> QPointF:
-    """Bead i of 8 on the ring, clockwise from the top."""
+def _bead(centre: QPointF, ring_r: float, i: int) -> QPointF:
+    """Bead i of 8 on the ring (radius ring_r), clockwise from the top."""
     angle = math.radians(i * 45.0)
-    return QPointF(centre.x() + RING_R * k * math.sin(angle),
-                   centre.y() - RING_R * k * math.cos(angle))
+    return QPointF(centre.x() + ring_r * math.sin(angle),
+                   centre.y() - ring_r * math.cos(angle))
 
 
 class NightSky:
@@ -540,9 +541,10 @@ class NightSky:
         aura_gather = keyframes2(u_gather, *AURA_GATHER)
         aura_live = keyframes2(u_live, *AURA_LIVE)
         # Starting, the star holds its size; live, each pulse swells it
-        # and lights it, from the first.
-        stars = blend(keyframes(u_idle, STARS_IDLE), 1.0,
-                      keyframes(u_live, STARS_LIVE_SWELL))
+        # and the ring, and lights them, from the first.
+        swell = keyframes(u_live, LIVE_SWELL)
+        stars = (blend(keyframes(u_idle, STARS_IDLE), 1.0, swell),
+                 1.0 + (swell - 1.0) * live)
         glow = charge(cycle, look["stopped"]) if look["moving"] else 0.0
         mote_tone = mix_rgba(sec, acc, live)
         sparkle_tone = mix_rgba(sec, light, live)
@@ -715,8 +717,9 @@ class NightSky:
         """The ring, the star and the beads."""
         width = max(1.0, k)
         # The star: its two squares swell together (idle, and with each
-        # pulse), turning slowly, charged with the ring.
-        scale = stars
+        # pulse), turning slowly, charged with the ring, which swells with
+        # each pulse too, its beads riding on it.
+        scale, ring = stars
         idle_a, live_a = STAR_ALPHA
         pens = _charged_pens(colour, light,
                              (idle_a + (live_a - idle_a) * live) * reveal,
@@ -729,7 +732,7 @@ class NightSky:
         return {
             "ring": _charged_pens(colour, light, RING_ALPHA * reveal, width,
                                   glow),
-            "ring_r": RING_R * k,
+            "ring_r": RING_R * k * ring,
             "stars_scale": k * scale,
             "squares": squares,
             "beads": beads, "bead_r": BEAD_R * k}
@@ -821,8 +824,9 @@ class NightSky:
             colour, r = f["flares"]
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(colour)
+            ring_r = f["geometry"]["ring_r"]
             for i in range(8):
-                p.drawEllipse(_bead(centre, k, i), r, r)
+                p.drawEllipse(_bead(centre, ring_r, i), r, r)
         p.setBrush(Qt.BrushStyle.NoBrush)
         for r, pens in f["halos"]:
             for pen in pens:
@@ -908,4 +912,5 @@ class NightSky:
         p.setPen(Qt.PenStyle.NoPen)
         for i, colour in enumerate(g["beads"]):
             p.setBrush(colour)
-            p.drawEllipse(_bead(centre, k, i), g["bead_r"], g["bead_r"])
+            p.drawEllipse(_bead(centre, g["ring_r"], i), g["bead_r"],
+                          g["bead_r"])
