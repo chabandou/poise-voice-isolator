@@ -4,7 +4,7 @@ Poise Setup - brand tokens, assets and stylesheet.
 Standalone on purpose. Importing stream_denoiser.gui would execute
 gui/__init__.py, which imports MainWindow and drags the entire
 application (audio backends, models, Qt Quick) into a 40 MB setup
-window. PALETTE therefore repeats gui/themes.py's "abyss" entry verbatim;
+window. PALETTE therefore repeats gui/themes.py's "halcyon" entry verbatim;
 tests/test_installer_ui.py asserts the two stay identical.
 
 Colours that are not palette tokens (washes, hairlines, the dark ink on
@@ -17,9 +17,9 @@ import os
 import re
 import sys
 
-#: gui/themes.py, THEMES["abyss"] - the signature palette.
+#: gui/themes.py, THEMES["halcyon"] - the signature palette.
 PALETTE = {
-    "label": "Abyss",
+    "label": "Halcyon",
     "blurb": "Signature cyan on deep navy.",
     "bg": "#0a111e", "sidebar": "#080e18",
     "card": "#0f1828", "pill": "#111c30", "groove": "#1d2a3b",

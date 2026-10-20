@@ -179,7 +179,7 @@ def test_tail_reads_a_utf16_log(tmp_path):
 def test_palette_matches_the_application_theme():
     """The setup window must not drift from the app's signature palette."""
     themes = installer_harness.load_gui("themes")
-    assert brand.PALETTE == themes.THEMES["abyss"]
+    assert brand.PALETTE == themes.THEMES["halcyon"]
 
 
 def test_stylesheet_has_no_unresolved_tokens():
