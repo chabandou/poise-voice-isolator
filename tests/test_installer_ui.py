@@ -247,3 +247,35 @@ def test_render_pages_writes_every_screen(app, tmp_path):
             assert os.path.getsize(path) > 5000, path
     finally:
         w.deleteLater()
+
+
+def test_finish_badge_draws_itself_in(app, tmp_path):
+    from installer_harness import load
+    widgets = load("widgets")
+    fake = FakeInstaller()
+    w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))
+    try:
+        w.start_install()
+        fake.finished.emit("ok")
+        QTest.qWait(420)
+        assert w.stack.currentWidget() is w.finish
+        if widgets.motion_enabled():
+            # Mid-reveal: started from nothing and still going.
+            assert 0.0 <= w.finish.badge.progress() < 1.0
+        QTest.qWait(widgets.Badge.REVEAL_MS + 200)
+        assert w.finish.badge.progress() == 1.0
+    finally:
+        w.deleteLater()
+
+
+def test_running_step_spins_and_stops_when_done(app):
+    from installer_harness import load
+    widgets = load("widgets")
+    row = widgets.StepRow("Configuring audio")
+    try:
+        row.set_state(widgets.StepRow.ACTIVE)
+        assert row._timer.isActive() == widgets.motion_enabled()
+        row.set_state(widgets.StepRow.DONE)
+        assert not row._timer.isActive()
+    finally:
+        row.deleteLater()

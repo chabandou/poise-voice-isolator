@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import brand, core, engine
-from .pages import ErrorPage, FinishPage, ProgressPage, WelcomePage
+from .pages import ErrorPage, FinishPage, Page, ProgressPage, WelcomePage
 from .widgets import Rail, WindowButton
 
 #: Design size; the window is not resizable, so the layout never reflows.
@@ -100,7 +100,9 @@ class SetupWindow(QWidget):
         panel.setObjectName("panel")
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(40, 34, 40, 28)
+        # Pages keep a gutter on the top and left for their badges.
+        gutter = Page.GUTTER
+        panel_layout.setContentsMargins(40 - gutter, 34 - gutter, 40, 28)
         panel_layout.setSpacing(0)
 
         self.stack = QStackedWidget()
@@ -245,6 +247,9 @@ class SetupWindow(QWidget):
     def _show(self, page: QWidget) -> None:
         self.stack.setCurrentWidget(page)
         page.focus_primary()
+        if page is self.finish:
+            # The tick draws itself in as the page fades up.
+            self.finish.badge.play()
         if self._fade is None:
             return
         self._fade.setOpacity(0.0)

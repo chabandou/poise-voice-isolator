@@ -48,13 +48,30 @@ def _chip(text: str, foreground: str, background: str) -> QLabel:
 
 
 class Page(QWidget):
-    """Common rhythm: header, body, stretch, action row."""
+    """Common rhythm: header, body, stretch, action row.
+
+    Pages reach GUTTER px past the text column on the top and left (the
+    window's margins are smaller by as much), so an outcome badge's halo
+    has room to glow without pushing the text column out of line.
+    """
+
+    GUTTER = Badge.BLEED
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(0, 0, 0, 0)
+        self._outer = QVBoxLayout(self)
+        self._outer.setContentsMargins(0, 0, 0, 0)
+        self._outer.setSpacing(0)
+        self.body = QVBoxLayout()
+        self.body.setContentsMargins(self.GUTTER, self.GUTTER, 0, 0)
         self.body.setSpacing(0)
+        self._outer.addLayout(self.body, 1)
+
+    def hero(self, widget: QWidget) -> None:
+        """Place a badge in the gutter, above the text column."""
+        self.body.setContentsMargins(self.GUTTER, 0, 0, 0)
+        self._outer.insertWidget(0, widget, 0, Qt.AlignmentFlag.AlignLeft)
+        self._outer.insertSpacing(1, 4)
 
     def header(self, eyebrow: str, title: str, subtitle: str):
         self.body.addWidget(_label(eyebrow, ui_font(10, QFont.Weight.DemiBold,
@@ -327,8 +344,7 @@ class FinishPage(Page):
         super().__init__(parent)
 
         self.badge = Badge("success")
-        self.body.addWidget(self.badge)
-        self.body.addSpacing(20)
+        self.hero(self.badge)
 
         self.heading, self.subtitle = self.header(
             "COMPLETE", "Poise is installed",
@@ -399,8 +415,7 @@ class ErrorPage(Page):
         super().__init__(parent)
 
         self.badge = Badge("error")
-        self.body.addWidget(self.badge)
-        self.body.addSpacing(20)
+        self.hero(self.badge)
 
         self.heading, self.subtitle = self.header(
             "SETUP FAILED", "Setup could not finish",

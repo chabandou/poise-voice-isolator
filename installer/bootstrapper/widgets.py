@@ -8,7 +8,13 @@ application's widgets.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
+import math
+import sys
+
+from PyQt6.QtCore import (
+    QEasingCurve, QElapsedTimer, QPointF, QRectF, QSize, Qt, QTimer,
+    QVariantAnimation,
+)
 from PyQt6.QtGui import (
     QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter,
     QPainterPath, QPen, QPixmap, QRadialGradient, QTransform,
@@ -39,6 +45,35 @@ def rgba(colour, alpha: int) -> QColor:
     return QColor(colour[0], colour[1], colour[2], alpha)
 
 
+def motion_enabled() -> bool:
+    """False when Windows' "Show animations in Windows" is off.
+
+    The setup window runs before Poise's own Reduce motion setting exists,
+    so it follows the system switch (SPI_GETCLIENTAREAANIMATION) instead.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        enabled = ctypes.c_int(1)
+        ok = ctypes.windll.user32.SystemParametersInfoW(
+            0x1042, 0, ctypes.byref(enabled), 0)
+        return bool(enabled.value) if ok else True
+    except Exception:
+        return True
+
+
+def _ease_out(t: float) -> float:
+    """Cubic ease-out on 0..1, clamped."""
+    t = max(0.0, min(1.0, t))
+    return 1.0 - (1.0 - t) ** 3
+
+
+def _span(t: float, start: float, end: float) -> float:
+    """Where t falls inside [start, end], as 0..1."""
+    return max(0.0, min(1.0, (t - start) / (end - start)))
+
+
 def ui_font(px: float, weight: QFont.Weight = QFont.Weight.Normal,
             spacing: float = 0.0, family: str = "Segoe UI") -> QFont:
     font = QFont(family)
@@ -66,6 +101,9 @@ LATTICE_OFFSET = (-14.0, -6.0)
 LATTICE_STROKE = 1.0
 LATTICE_DOT_RADIUS = 2.5
 LATTICE_OPACITY = 0.20
+#: The rail is narrower than the Home card, so its tile is drawn a little
+#: smaller than the design's 64px; the line weight stays at 1px.
+LATTICE_SCALE = 0.8
 #: Radial mask over the lattice, in box units: (centre x, centre y,
 #: radius, clear stop). The Home card keeps its lattice off the dial this
 #: way; here the centre sits low on the left-aligned text block, so the
@@ -179,18 +217,21 @@ class Rail(QWidget):
         image.fill(Qt.GlobalColor.transparent)
         painter = QPainter(image)
         painter.scale(ratio, ratio)
-        pen = QPen(QColor(255, 255, 255), LATTICE_STROKE)
+        scale = LATTICE_SCALE
+        tile = LATTICE_TILE * scale
+        pen = QPen(QColor(255, 255, 255), LATTICE_STROKE / scale)
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-        origin_x, origin_y = LATTICE_OFFSET
+        origin_x, origin_y = (v * scale for v in LATTICE_OFFSET)
         # One extra row/column so the pattern bleeds past both edges.
-        columns = int(width / LATTICE_TILE) + 2
-        rows = int(height / LATTICE_TILE) + 2
+        columns = int(width / tile) + 2
+        rows = int(height / tile) + 2
         for column in range(columns):
             for row in range(rows):
                 painter.save()
-                painter.translate(origin_x + column * LATTICE_TILE,
-                                  origin_y + row * LATTICE_TILE)
+                painter.translate(origin_x + column * tile,
+                                  origin_y + row * tile)
+                painter.scale(scale, scale)
                 painter.setClipRect(QRectF(0, 0, LATTICE_TILE, LATTICE_TILE),
                                     Qt.ClipOperation.IntersectClip)
                 painter.setPen(pen)
@@ -446,17 +487,22 @@ class StepRow(QWidget):
         self._label = label
         self._detail = ""
         self._state = self.PENDING
-        self._pulse = 0.0
+        self._clock = QElapsedTimer()
         self._timer = QTimer(self)
-        self._timer.setInterval(30)
-        self._timer.timeout.connect(self._tick)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self.update)
         self.setFixedHeight(34)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def set_state(self, state: str, detail: str = "") -> None:
         self._state = state
         self._detail = detail
-        if state == self.ACTIVE and not self._timer.isActive():
+        if state != self.ACTIVE:
+            self._clock.invalidate()
+        elif not self._clock.isValid():
+            self._clock.start()
+        if (state == self.ACTIVE and not self._timer.isActive()
+                and motion_enabled()):
             self._timer.start()
         elif state != self.ACTIVE:
             self._timer.stop()
@@ -468,10 +514,6 @@ class StepRow(QWidget):
     def detail(self) -> str:
         return self._detail
 
-    def _tick(self) -> None:
-        self._pulse = (self._pulse + 0.04) % 1.0
-        self.update()
-
     def paintEvent(self, event):  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -479,14 +521,7 @@ class StepRow(QWidget):
         centre = QRectF(2, mid - 4, 8, 8)
 
         if self._state == self.ACTIVE:
-            halo = QRadialGradient(centre.center(), 13)
-            halo.setColorAt(0.0, QColor(95, 213, 235, 60))
-            halo.setColorAt(1.0, QColor(95, 213, 235, 0))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(halo)
-            painter.drawEllipse(QRectF(centre.center().x() - 13, mid - 13, 26, 26))
-            painter.setBrush(ACCENT)
-            painter.drawEllipse(centre)
+            self._paint_spinner(painter, centre.center())
         elif self._state == self.DONE:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(ACCENT)
@@ -524,50 +559,189 @@ class StepRow(QWidget):
                 self._detail)
 
 
+    #: Spinner geometry and timing: one turn per ROTATE_MS while the arc
+    #: breathes between ARC_MIN and ARC_MAX degrees every BREATH_MS.
+    SPIN_RADIUS = 6.0
+    ROTATE_MS = 1100.0
+    BREATH_MS = 1700.0
+    ARC_MIN, ARC_MAX = 50.0, 230.0
+
+    def _paint_spinner(self, painter: QPainter, centre: QPointF) -> None:
+        """The running phase: a soft halo, a faint track, a turning arc."""
+        running = self._clock.isValid() and self._timer.isActive()
+        elapsed = float(self._clock.elapsed()) if running else 0.0
+        radius = self.SPIN_RADIUS
+
+        halo = QRadialGradient(centre, 13)
+        halo.setColorAt(0.0, QColor(95, 213, 235, 46))
+        halo.setColorAt(1.0, QColor(95, 213, 235, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(halo)
+        painter.drawEllipse(centre, 13, 13)
+
+        ring = QRectF(centre.x() - radius, centre.y() - radius,
+                      radius * 2, radius * 2)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(rgba(ACCENT, 46), 1.6))
+        painter.drawEllipse(ring)
+
+        # The arc's length eases in and out while the whole thing turns,
+        # so it reads as work in progress rather than a ticking clock.
+        breath = 0.5 - 0.5 * math.cos(2 * math.pi * elapsed / self.BREATH_MS)
+        length = self.ARC_MIN + (self.ARC_MAX - self.ARC_MIN) * breath
+        head = (90.0 - 360.0 * elapsed / self.ROTATE_MS) % 360.0
+        pen = QPen(ACCENT, 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(ring, int(head * 16), int(-length * 16))
+
+
 class Badge(QWidget):
-    """Round outcome glyph: success tick, error mark or warning mark."""
+    """Round outcome glyph: success tick, error mark or warning mark.
+
+    The widget is larger than the glyph by BLEED on every side so the halo
+    and the success ripple are never clipped; pages give it that room in
+    the margin they keep for it (see pages.Page.hero).
+    """
+
+    SIZE = 80
+    BLEED = 16
+    #: The success reveal (ring, tick, then one ripple), in ms.
+    REVEAL_MS = 1150
 
     def __init__(self, kind: str = "success", parent=None):
         super().__init__(parent)
         self.kind = kind
-        self.setFixedSize(64, 64)
+        side = self.SIZE + 2 * self.BLEED
+        self.setFixedSize(side, side)
+        self._t = 1.0
+        self._animation = None
+
+    def progress(self) -> float:
+        """Where the reveal is, 0..1 (1 when drawn in full)."""
+        return self._t
+
+    def play(self) -> None:
+        """Draw the glyph in. Shown complete at once without motion."""
+        if self._animation is not None:
+            self._animation.stop()
+        if not motion_enabled():
+            self._set_t(1.0)
+            return
+        animation = QVariantAnimation(self)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setDuration(self.REVEAL_MS)
+        animation.valueChanged.connect(self._set_t)
+        self._animation = animation
+        self._set_t(0.0)
+        animation.start()
+
+    def _set_t(self, value) -> None:
+        self._t = float(value)
+        self.update()
+
+    @staticmethod
+    def _tick_path(centre: QPointF) -> QPainterPath:
+        """The tick: a short leg and a long one, meeting below centre."""
+        path = QPainterPath()
+        path.moveTo(centre.x() - 13.0, centre.y() + 0.5)
+        path.lineTo(centre.x() - 4.0, centre.y() + 9.5)
+        path.lineTo(centre.x() + 14.0, centre.y() - 9.0)
+        return path
+
+    @staticmethod
+    def _trim(path: QPainterPath, amount: float) -> QPainterPath:
+        """The first `amount` (0..1) of a polyline path, by length."""
+        if amount >= 1.0:
+            return path
+        points = []
+        for index in range(path.elementCount()):
+            element = path.elementAt(index)
+            points.append(QPointF(element.x, element.y))
+        lengths = [math.hypot(b.x() - a.x(), b.y() - a.y())
+                   for a, b in zip(points, points[1:])]
+        remaining = sum(lengths) * max(0.0, amount)
+        out = QPainterPath(points[0])
+        for (a, b), length in zip(zip(points, points[1:]), lengths):
+            if remaining >= length:
+                out.lineTo(b)
+                remaining -= length
+                continue
+            if remaining > 0 and length > 0:
+                f = remaining / length
+                out.lineTo(QPointF(a.x() + (b.x() - a.x()) * f,
+                                   a.y() + (b.y() - a.y()) * f))
+            break
+        return out
 
     def paintEvent(self, event):  # noqa: N802
         colour = {"success": SUCCESS, "error": ERROR,
                   "warning": WARNING}.get(self.kind, ACCENT)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        bleed = self.BLEED
+        rect = QRectF(bleed, bleed, self.SIZE, self.SIZE)
+        centre = rect.center()
+        radius = self.SIZE / 2.0
+        t = self._t if self.kind == "success" else 1.0
 
-        halo = QRadialGradient(rect.center(), 34)
-        halo.setColorAt(0.0, QColor(colour.red(), colour.green(), colour.blue(), 60))
-        halo.setColorAt(1.0, QColor(colour.red(), colour.green(), colour.blue(), 0))
+        # Timeline, as fractions of REVEAL_MS: the ring sweeps round, the
+        # fill and halo settle under it, the tick strokes in as the ring
+        # closes, and one ripple leaves as the tick lands.
+        ring = _ease_out(_span(t, 0.0, 0.40))
+        fill = _ease_out(_span(t, 0.12, 0.55))
+        tick = _ease_out(_span(t, 0.34, 0.66))
+        ripple = _span(t, 0.56, 1.0)
+        pop = 1.0 + 0.05 * math.sin(math.pi * _span(t, 0.50, 0.80))
+
+        painter.translate(centre)
+        painter.scale(pop, pop)
+        painter.translate(-centre)
+
+        halo = QRadialGradient(centre, radius + bleed)
+        halo.setColorAt(0.0, rgba(colour, int(58 * fill)))
+        halo.setColorAt(0.62, rgba(colour, int(22 * fill)))
+        halo.setColorAt(1.0, rgba(colour, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(halo)
-        painter.drawEllipse(QRectF(-10, -10, self.width() + 20, self.height() + 20))
+        painter.drawEllipse(centre, radius + bleed / 1.1, radius + bleed / 1.1)
 
-        painter.setBrush(QColor(colour.red(), colour.green(), colour.blue(), 22))
-        painter.setPen(QPen(QColor(colour.red(), colour.green(), colour.blue(), 150), 1.2))
+        if 0.0 < ripple < 1.0:
+            reach = radius + 2 + (bleed - 4) * _ease_out(ripple)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(rgba(colour, int(110 * (1.0 - ripple))), 1.4))
+            painter.drawEllipse(centre, reach, reach)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(rgba(colour, int(26 * fill)))
         painter.drawEllipse(rect)
 
-        pen = QPen(colour, 2.4)
+        if ring > 0.0:
+            ring_pen = QPen(rgba(colour, 165), 1.6)
+            ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(ring_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            inset = rect.adjusted(0.8, 0.8, -0.8, -0.8)
+            if ring >= 1.0:
+                painter.drawEllipse(inset)
+            else:
+                painter.drawArc(inset, 90 * 16, int(-360 * 16 * ring))
+
+        pen = QPen(colour, 3.2)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        centre = rect.center()
         if self.kind == "success":
-            tick = QPainterPath()
-            tick.moveTo(centre.x() - 9, centre.y() + 0.5)
-            tick.lineTo(centre.x() - 3, centre.y() + 6.5)
-            tick.lineTo(centre.x() + 9.5, centre.y() - 6.5)
-            painter.drawPath(tick)
+            if tick > 0.0:
+                painter.drawPath(self._trim(self._tick_path(centre), tick))
         else:
-            painter.drawLine(int(centre.x()), int(centre.y() - 8),
-                             int(centre.x()), int(centre.y() + 3))
+            painter.drawLine(QPointF(centre.x(), centre.y() - 12),
+                             QPointF(centre.x(), centre.y() + 4))
             painter.setBrush(colour)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawEllipse(QRectF(centre.x() - 1.6, centre.y() + 7.6, 3.2, 3.2))
+            painter.drawEllipse(QPointF(centre.x(), centre.y() + 12), 2.2, 2.2)
 
 
 class ElidedLabel(QWidget):
