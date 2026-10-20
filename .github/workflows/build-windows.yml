@@ -1,9 +1,10 @@
 name: Build Windows installer
 
-# Builds Poise.exe with PyInstaller and compiles Poise_Setup.exe with
-# Inno Setup on a GitHub-hosted Windows runner. No Windows PC needed:
-# push a tag (or click Run workflow) and download the installer from
-# the run's artifacts or the GitHub Release.
+# Builds Poise.exe with PyInstaller, compiles the silent Inno core
+# (PoiseCore.exe) and wraps it in the PyQt setup window (Poise_Setup.exe)
+# on a GitHub-hosted Windows runner. No Windows PC needed: push a tag
+# (or click Run workflow) and download the installer from the run's
+# artifacts or the GitHub Release.
 #
 # Triggers:
 #   - GitHub web UI -> Actions -> Build Windows installer -> Run workflow
@@ -56,13 +57,27 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
-      - name: Compile installer (Inno Setup)
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" setup.iss'
+      - name: Compile installer core (Inno Setup)
+        # The core is the silent engine behind Poise_Setup.exe: it still
+        # owns files, shortcuts, the uninstaller and the driver.
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DCORE setup.iss'
+
+      - name: Verify installer core
+        run: |
+          if (-not (Test-Path "installer/PoiseCore.exe")) {
+            Write-Error "installer/PoiseCore.exe missing after ISCC compile"
+            exit 1
+          }
+          Get-Item installer/PoiseCore.exe | Format-Table Name, Length
+
+      - name: Build setup window (PyInstaller)
+        # Produces installer/Poise_Setup.exe with PoiseCore.exe embedded.
+        run: pyinstaller installer/PoiseSetup.spec --noconfirm --distpath installer --workpath build/installer
 
       - name: Verify installer
         run: |
           if (-not (Test-Path "installer/Poise_Setup.exe")) {
-            Write-Error "installer/Poise_Setup.exe missing after ISCC compile"
+            Write-Error "installer/Poise_Setup.exe missing after PyInstaller build"
             exit 1
           }
           Get-Item installer/Poise_Setup.exe | Format-Table Name, Length

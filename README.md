@@ -104,6 +104,11 @@ and run it.
 > so SmartScreen does not recognise it. Click **More info**, then
 > **Run anyway**.
 
+Setup is a single Poise-branded window: choose a location (or keep the
+default), press **Install**, and it copies the app, registers the
+uninstaller and sets up audio without any further prompts. If Poise is
+already installed, the same window offers to update it in place.
+
 The installer bundles the VB-Cable driver (by VB-Audio,
 https://vb-audio.com/Cable/ — donationware, consider supporting them)
 and installs it automatically when CABLE endpoints are missing
