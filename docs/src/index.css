@@ -482,6 +482,11 @@ body {
 	animation-duration: 900ms;
 }
 
+[data-reveal="tilt"][data-revealed] {
+	animation-name: reveal-tilt;
+	animation-duration: 1100ms;
+}
+
 [data-reveal="spin"][data-revealed] {
 	animation-name: reveal-spin;
 	animation-duration: 1300ms;
@@ -526,6 +531,21 @@ body {
 	to {
 		opacity: 1;
 		scale: 1 1;
+	}
+}
+
+@keyframes reveal-tilt {
+	from {
+		opacity: 0;
+		rotate: x 9deg;
+		translate: 0 36px;
+		scale: 0.97;
+	}
+	to {
+		opacity: 1;
+		rotate: x 0deg;
+		translate: 0 0;
+		scale: 1;
 	}
 }
 
@@ -793,12 +813,102 @@ body {
 	100% { opacity: 0.6; transform: scale(1.08); }
 }
 
+/* ---------------------------------------------------------------------
+   App preview window motion (see src/windowMotion.ts): a slow idle
+   float on the breathing cycle, a slight lean toward the pointer with a
+   sheen on the glass and a shadow shifting the other way, and while
+   isolating a glow behind the window that swells with each pulse.
+   --------------------------------------------------------------------- */
+.app-stage {
+	isolation: isolate;
+}
+
+.app-float {
+	animation: app-float 7s var(--breath-ease) infinite;
+}
+
+@keyframes app-float {
+	0%, 100% { translate: 0 0; }
+	45% { translate: 0 -3px; }
+}
+
+.app-tilt {
+	--rx: 0;
+	--ry: 0;
+	--mx: 50%;
+	--my: 50%;
+	--sheen: 0;
+	transform: perspective(1400px) rotateX(calc(var(--rx) * 1deg)) rotateY(calc(var(--ry) * 1deg));
+}
+
+.app-tilt .app-window {
+	box-shadow:
+		calc(var(--ry) * -5px) calc(40px + var(--rx) * 5px) 120px -40px rgb(0 0 0 / 0.8),
+		0 0 0 1px rgb(255 255 255 / 0.02);
+}
+
+.app-sheen {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	border-radius: inherit;
+	opacity: var(--sheen);
+	background: radial-gradient(
+		circle 380px at var(--mx) var(--my),
+		color-mix(in srgb, var(--color-accent-light) 12%, transparent),
+		transparent 70%
+	);
+	mix-blend-mode: screen;
+}
+
+.app-glow {
+	position: absolute;
+	/* Past the window's sides, so its light spills round them. */
+	inset: 10% -5% 0;
+	z-index: -1;
+	opacity: 0;
+	transition: opacity 1200ms var(--breath-ease);
+	pointer-events: none;
+}
+
+.app-glow--live {
+	opacity: 1;
+}
+
+.app-glow__pulse {
+	position: absolute;
+	inset: 0;
+	border-radius: 40%;
+	background: radial-gradient(closest-side, color-mix(in srgb, var(--color-accent) 30%, transparent), transparent);
+	filter: blur(44px);
+	opacity: 0.28;
+}
+
+/* In step with the lattice's pings (5.2 s) or the sky's breaths (8 s):
+   bright as each pulse leaves, easing down, gathering before the next. */
+.app-glow--live .app-glow__pulse {
+	animation: app-glow 5.2s infinite;
+}
+
+.app-glow--live .app-glow__pulse--breath {
+	animation-duration: 8s;
+}
+
+@keyframes app-glow {
+	0% { opacity: 0.75; scale: 1.04; animation-timing-function: cubic-bezier(0.3, 0.6, 0.2, 1); }
+	30% { opacity: 0.28; scale: 0.98; }
+	75% { opacity: 0.28; scale: 0.98; animation-timing-function: ease-in; }
+	100% { opacity: 0.75; scale: 1.04; }
+}
+
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;
 	}
 
 	.dial__tick,
+	.app-float,
+	.app-glow__pulse,
 	.sky,
 	.sky *,
 	.header-enter,

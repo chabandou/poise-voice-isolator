@@ -1,9 +1,10 @@
 import { useId, useMemo, type CSSProperties } from 'react';
-import { Lattice, LatticeTile } from './Brand';
+import { LatticeTile } from './Brand';
+import { DOME_CLEAR, DOME_FULL, DOME_MASK_R, latticeArt, SPECS, type LatticeKind } from '../lattice';
 
 // What the app's Home card shows behind the dial (themes.py "backdrop"):
-// the gilded lattice (stream_denoiser/gui/widgets/pattern_card.py), which
-// pings while isolating, or for Vigil and Eclipse the night sky
+// the theme's lattice (stream_denoiser/gui/widgets/pattern_card.py and
+// lattice.py), which pings while isolating, or for Vigil and Eclipse the night sky
 // (widgets/sky.py). Both are ports, so the numbers are the app's own; the
 // geometry around the dial is in dial units (the dial is 300 across) and
 // scaled by k, the preview dial's size against the app's.
@@ -11,26 +12,114 @@ import { Lattice, LatticeTile } from './Brand';
 /** Where the dial sits on the card, in card px. */
 export type DialAnchor = { w: number; h: number; cx: number; cy: number; k: number };
 
-type BackdropProps = { kind: 'lattice' | 'sky'; live: boolean; anchor: DialAnchor | null };
+type BackdropProps = {
+	kind: 'lattice' | 'sky';
+	/** The theme's pattern (themes.py "lattice"). */
+	lattice: LatticeKind;
+	live: boolean;
+	anchor: DialAnchor | null;
+};
 
-const HomeBackdrop = ({ kind, live, anchor }: BackdropProps) =>
+const HomeBackdrop = ({ kind, lattice, live, anchor }: BackdropProps) =>
 	kind === 'sky' ? (
 		anchor && <NightSky anchor={anchor} live={live} />
 	) : (
 		<>
-			<Lattice className={`backdrop-lattice ${live ? 'text-accent' : 'text-secondary'}`} />
-			{live && anchor && <LatticePing anchor={anchor} />}
+			<LatticeLayer anchor={anchor} kind={lattice} live={live} />
+			{live && anchor && <LatticePing anchor={anchor} kind={lattice} />}
 		</>
 	);
 
 export default HomeBackdrop;
 
-// -- the lattice's ping --------------------------------------------------------
+// -- the lattice ---------------------------------------------------------------
+// The theme's pattern at its own opacity through a radial mask, clear in the
+// middle and full strength at the edges: an ellipse over the card, or for
+// the dome a circle round the dial. Gold at rest, the accent while
+// isolating. The Islamic patterns are centred on the dial, so they wait
+// for it to be measured.
+
+/** The bare line work (white-on-nothing, coloured by currentColor). */
+const LatticeLines = ({ kind, anchor }: { kind: LatticeKind; anchor: DialAnchor | null }) => {
+	const id = useId();
+	const art = useMemo(
+		() => (kind === 'rub_el_hizb' || !anchor ? null : latticeArt(kind, anchor.w, anchor.h, anchor.cx, anchor.cy, anchor.k)),
+		[kind, anchor],
+	);
+
+	if (kind === 'rub_el_hizb') {
+		return (
+			<>
+				<defs>
+					<pattern height="64" id={`${id}-tile`} patternUnits="userSpaceOnUse" width="64" x="-14" y="-6">
+						<LatticeTile />
+					</pattern>
+				</defs>
+				<rect fill={`url(#${id}-tile)`} height="100%" width="100%" />
+			</>
+		);
+	}
+	if (!art || !anchor) {
+		return null;
+	}
+	const spec = SPECS[kind];
+	const line = { d: art.d, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
+	const dots = art.dots.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} />);
+
+	return (
+		<>
+			{spec.gap ? (
+				// Strapwork: each line a band of two fine lines.
+				<>
+					<defs>
+						<mask height={anchor.h} id={`${id}-strap`} maskUnits="userSpaceOnUse" width={anchor.w} x="0" y="0">
+							<path {...line} stroke="#fff" strokeWidth={spec.stroke * anchor.k} />
+							<path {...line} stroke="#000" strokeWidth={spec.gap * anchor.k} />
+						</mask>
+					</defs>
+					<rect fill="currentColor" height={anchor.h} mask={`url(#${id}-strap)`} width={anchor.w} />
+				</>
+			) : (
+				<path {...line} stroke="currentColor" strokeWidth={spec.stroke * anchor.k} />
+			)}
+			<g fill="currentColor">{dots}</g>
+		</>
+	);
+};
+
+const LatticeLayer = ({ kind, live, anchor }: { kind: LatticeKind; live: boolean; anchor: DialAnchor | null }) => {
+	const id = useId();
+	const spec = SPECS[kind];
+
+	return (
+		<svg aria-hidden="true" className={`backdrop-lattice pointer-events-none absolute inset-0 h-full w-full ${live ? 'text-accent' : 'text-secondary'}`}>
+			<defs>
+				{spec.mask === 'dial' && anchor ? (
+					<radialGradient cx={anchor.cx} cy={anchor.cy} gradientUnits="userSpaceOnUse" id={`${id}-fade`} r={DOME_MASK_R * anchor.k}>
+						<stop offset={DOME_CLEAR} stopColor="#000" />
+						<stop offset={DOME_FULL} stopColor="#fff" />
+					</radialGradient>
+				) : (
+					<radialGradient cx="0.5" cy="0.55" id={`${id}-fade`} r="0.72">
+						<stop offset="0.4" stopColor="#000" />
+						<stop offset="1" stopColor="#fff" />
+					</radialGradient>
+				)}
+				<mask id={`${id}-mask`}>
+					<rect fill={`url(#${id}-fade)`} height="100%" width="100%" />
+				</mask>
+			</defs>
+			<g mask={`url(#${id}-mask)`} opacity={spec.opacity}>
+				<LatticeLines anchor={anchor} kind={kind} />
+			</g>
+		</svg>
+	);
+};
+
 // While isolating a ring of accent lattice leaves the dial and crosses the
 // card: the first as isolating begins, then a fainter one every 5.2 s. The
 // ring is the bare lattice seen through a moving radial band (index.css).
-const LatticePing = ({ anchor }: { anchor: DialAnchor }) => {
-	const id = useId();
+const LatticePing = ({ anchor, kind }: { anchor: DialAnchor; kind: LatticeKind }) => {
 	const style = {
 		'--cx': `${anchor.cx}px`,
 		'--cy': `${anchor.cy}px`,
@@ -41,12 +130,7 @@ const LatticePing = ({ anchor }: { anchor: DialAnchor }) => {
 		<div aria-hidden="true" className="pointer-events-none absolute inset-0" style={style}>
 			{['lattice-ping--first', 'lattice-ping--loop'].map((variant) => (
 				<svg key={variant} className={`lattice-ping ${variant} absolute inset-0 h-full w-full text-accent`}>
-					<defs>
-						<pattern height="64" id={`${id}-${variant}`} patternUnits="userSpaceOnUse" width="64" x="-14" y="-6">
-							<LatticeTile />
-						</pattern>
-					</defs>
-					<rect fill={`url(#${id}-${variant})`} height="100%" width="100%" />
+					<LatticeLines anchor={anchor} kind={kind} />
 				</svg>
 			))}
 		</div>
