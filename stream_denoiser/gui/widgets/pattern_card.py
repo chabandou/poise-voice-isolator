@@ -21,15 +21,18 @@ Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
 
-A theme whose backdrop is "sky" (Vigil, Mono) gets the night sky instead (see
+A theme whose backdrop is "sky" (Vigil, Eclipse) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
-shown (SKY_FRAME_MS, faster while starting and isolating). Its pulses
+shown (SKY_FRAME_MS, faster while starting and isolating, and for the
+moment a shooting star crosses). Its pulses
 follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
 than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
 draw in while starting. Where Qt Quick can run, the sky is drawn on the
 GPU by a view covering the card (widgets/sky_gpu.py; it draws the card
 too, and the dial's ring of ticks: see DialButton.set_ring_sink);
-otherwise, or with POISE_SKY_RASTER=1, it is painted here.
+otherwise, or with POISE_SKY_RASTER=1, it is painted here. With the
+ambient motion still (animations.ambient_ok: Reduce motion in Settings)
+there is no GPU view: one still sky is painted here and kept.
 """
 import time
 
@@ -38,11 +41,11 @@ from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPen, QRadialGradient, QTransform)
 
-from ..animations import Blend, EASE_BREATHE, motion_ok
+from ..animations import Blend, EASE_BREATHE, ambient_ok
 from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import current as current_theme, style as theme_style
-from .sky import BREATH_MS, PULSE_FADE_MS, NightSky
+from .sky import BREATH_MS, PULSE_FADE_MS, NightSky, meteor_due
 
 TILE = 64.0                 # design px per tile
 TILE_OFFSET = (-14.0, -6.0)  # pattern x/y: where the first tile starts
@@ -68,7 +71,8 @@ PING_FRAME_MS = 33
 PING_FADE_MS = 420          # a ring in flight when pings stop fades out
 
 SKY_FRAME_MS = 60           # the night sky's slow loops, at rest...
-SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in
+SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in...
+SKY_METEOR_FRAME_MS = 16    # ...and a shooting star's second of flight
 SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
@@ -148,6 +152,7 @@ class PatternCard(QFrame):
         self._view = None
         self._view_failed = self._making_view = False
         self._base_key = self._base = None
+        self._still_key = self._still = None   # the sky holding still
 
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
@@ -163,7 +168,7 @@ class PatternCard(QFrame):
     def set_live(self, live: bool, animated: bool = True) -> None:
         """Secondary colour when idle, the accent while isolating."""
         self._live.set_target(
-            1.0 if live else 0.0, animated,
+            1.0 if live else 0.0, animated and ambient_ok(),
             duration_ms=SKY_LIVE_FADE_MS if self._sky_on() else LIVE_FADE_MS)
         if not live:
             self.stop_pings(fade=animated)
@@ -177,10 +182,27 @@ class PatternCard(QFrame):
         self._phase = phase
         if phase == "starting":
             self._gather_at = time.monotonic()
-        animated = self.isVisible()
+        animated = self.isVisible() and ambient_ok()
         self._gather.set_target(1.0 if phase == "starting" else 0.0, animated)
         self._error.set_target(1.0 if phase == "error" else 0.0, animated)
         self._run_sky()
+
+    def refresh_motion(self) -> None:
+        """Reduce motion changed (animations.set_still): the GPU sky
+        goes (one still sky painted here) or comes back, and the clocks
+        follow."""
+        if not ambient_ok():
+            self._ping_timer.stop()
+            self._reveal.snap(1.0)
+            for blend in (self._live, self._gather, self._error):
+                blend.snap(blend.target)
+            if self._ping_end is not None:
+                self._clear_pings()
+        elif self._ping_at is not None and not self._sky_on()                 and self.isVisible():
+            self._ping_timer.start()
+        self._sync_view()
+        self._run_sky()
+        self._changed()
 
     def refresh_theme(self) -> None:
         """The theme changed: switch backdrops (and their clocks)."""
@@ -212,7 +234,7 @@ class PatternCard(QFrame):
 
     def start_pings(self) -> None:
         """First ping now, then one every PING_PERIOD_MS until stopped."""
-        if not motion_ok():
+        if not ambient_ok():
             return
         self._ping_at = time.monotonic()
         self._ping_end = None
@@ -232,13 +254,13 @@ class PatternCard(QFrame):
         if self._sky_on():
             # The sky keeps its rhythm while it fades back to gold; only
             # the pulse in flight fades and no new one leaves.
-            if fade and motion_ok():
+            if fade and ambient_ok():
                 self._ping_end = time.monotonic()
                 self._run_sky()
             else:
                 self._clear_pings()
             return
-        if fade and motion_ok() and self._ping_frame() is not None:
+        if fade and ambient_ok() and self._ping_frame() is not None:
             self._ping_end = time.monotonic()
             if self.isVisible():
                 self._ping_timer.start()
@@ -261,7 +283,7 @@ class PatternCard(QFrame):
         super().showEvent(event)
         if not self._revealed:
             self._revealed = True
-            if self._sky_on() and motion_ok():
+            if self._sky_on() and ambient_ok():
                 QTimer.singleShot(SKY_REVEAL_DELAY_MS, self._begin_reveal)
             else:
                 self._reveal.snap(1.0)
@@ -283,18 +305,20 @@ class PatternCard(QFrame):
 
     # -- the night sky's clock -----------------------------------------------------
     def _begin_reveal(self) -> None:
-        self._reveal.set_target(1.0, self.isVisible())
+        self._reveal.set_target(1.0, self.isVisible() and ambient_ok())
 
     def _run_sky(self) -> None:
         """Run the sky's clock while it is shown (faster while it pulses
         or draws in)."""
-        if not (self._sky_on() and motion_ok() and self.isVisible()):
+        if not (self._sky_on() and ambient_ok() and self.isVisible()):
             self._sky_timer.stop()
             return
         busy = (self._ping_at is not None or self._live.target > 0
                 or self._live.value > 0.001 or self._phase == "starting"
                 or self._gather.value > 0.001)
         interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
+        if meteor_due(time.monotonic() * 1000.0, interval):
+            interval = SKY_METEOR_FRAME_MS
         if self._sky_timer.interval() != interval:
             self._sky_timer.setInterval(interval)
         if not self._sky_timer.isActive():
@@ -385,11 +409,35 @@ class PatternCard(QFrame):
 
     def _paint_sky(self, w: int, h: int) -> None:
         """The night sky, centred on the dial and clipped to the card."""
-        box, clip, centre, k, ui, now, look = self._sky_moment(w, h)
+        moment = self._sky_moment(w, h)
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._sky.paint(p, box, clip, centre, k, ui, now, look)
+        if moment[-1]["moving"]:
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self._sky.paint(p, *moment)
+        else:
+            p.drawImage(0, 0, self._still_sky(w, h, moment))
         p.end()
+
+    def _still_sky(self, w: int, h: int, moment) -> QImage:
+        """The sky holding still (at `moment`, see _sky_moment), painted
+        once and kept until what it shows changes: the dial repaints over
+        it on every hover."""
+        box, clip, centre, k, ui, now, look = moment
+        dpr = self.devicePixelRatioF()
+        key = (w, h, dpr, centre.x(), centre.y(), k, ui) + tuple(
+            (name, v.rgba() if isinstance(v, QColor) else v)
+            for name, v in sorted(look.items()) if not callable(v))
+        if key != self._still_key:
+            image = QImage(round(w * dpr), round(h * dpr),
+                           QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+            image.fill(Qt.GlobalColor.transparent)
+            q = QPainter(image)
+            q.setRenderHint(QPainter.RenderHint.Antialiasing)
+            self._sky.paint(q, *moment)
+            q.end()
+            self._still_key, self._still = key, image
+        return self._still
 
     def _sky_moment(self, w: int, h: int):
         """(box, clip, centre, k, ui, now, look): where the sky goes in
@@ -408,7 +456,7 @@ class PatternCard(QFrame):
         if self._sky is None:
             self._sky = NightSky()
         palette = current_theme()
-        moving = motion_ok()
+        moving = ambient_ok()
         now = time.monotonic()
         cycle = stopped = None
         if moving and self._ping_at is not None:
@@ -434,8 +482,8 @@ class PatternCard(QFrame):
     def _sync_view(self) -> None:
         """A GPU sky while the sky is the backdrop and Qt Quick can draw
         it here (made when first shown); none otherwise."""
-        if not self._sky_on():
-            self._drop_view()
+        if not (self._sky_on() and ambient_ok()):
+            self._drop_view()     # (a still sky is painted here)
             return
         if (self._view is not None or self._view_failed or self._making_view
                 or not self.isVisible()):

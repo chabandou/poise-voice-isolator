@@ -32,7 +32,10 @@ from PyQt6.QtQml import QQmlImageProviderBase
 from PyQt6.QtQuick import QQuickImageProvider, QSGRendererInterface
 from PyQt6.QtQuickWidgets import QQuickWidget
 
-from .sky import MOTE_COUNT, SPARKLE_COUNT
+from .sky import (
+    METEOR_GLOW_ALPHA, METEOR_HEAD_GLOW_ALPHA, METEOR_TAPER, METEOR_WHITE,
+    MOTE_COUNT, SPARKLE_COUNT,
+)
 
 SKY_QML = Path(__file__).resolve().parent.parent / "assets" / "sky" / "sky.qml"
 SHADER_MOTES = 18       # m0..m17 in sky.frag
@@ -42,6 +45,9 @@ assert MOTE_COUNT <= SHADER_MOTES and SPARKLE_COUNT <= SHADER_SPARKLES
 RING_COLUMNS, RING_ROWS = 56, 7   # ringData in sky.frag
 NEEDLE_COLUMN = 55
 _OFF = QVector4D(0.0, 0.0, 0.0, 0.0)
+# The shooting star's look, as sky.py draws it (meteorStyle in sky.frag).
+_METEOR_STYLE = QVector4D(METEOR_TAPER, METEOR_WHITE, METEOR_GLOW_ALPHA,
+                          METEOR_HEAD_GLOW_ALPHA)
 _SOFTWARE = {QSGRendererInterface.GraphicsApi.Unknown,
              QSGRendererInterface.GraphicsApi.Software}
 
@@ -127,6 +133,16 @@ def frame_uniforms(frame, box) -> dict:
     for i, (x, y, size, _, colour) in enumerate(frame["sparkles"]):
         u["sparkRgb"] = _rgb(colour)
         u[f"s{i}"] = QVector4D(x, y, size, colour.alphaF())
+    m = frame["meteor"]
+    if m is not None:
+        a, b, c = m["arc"]
+        u["meteor"] = QVector4D(a.x(), a.y(), b.x(), b.y())
+        u["meteorEnd"] = QVector4D(c.x(), c.y(), m["s0"], m["s1"])
+        u["meteorRgba"] = _rgba(m["colour"])
+        u["meteorGeo"] = QVector4D(m["width"], m["glow"], m["head_r"],
+                                   m["head_glow"])
+        u["meteorHead"] = QVector4D(m["head"], m["white"], 0.0, 1.0)
+        u["meteorStyle"] = _METEOR_STYLE
 
     for i, (r, ray, stops) in enumerate(frame["aura"]):
         (_, c0), (p1, c1), (p2, c2) = stops
@@ -140,17 +156,15 @@ def frame_uniforms(frame, box) -> dict:
         u[f"ringPen{i}"] = _rgba(pen.color())
         widths[i] = pen.widthF()
     u["ring"] = QVector4D(g["ring_r"], *widths)
-    u["dash"] = QVector4D(g["dash_r"], g["dash"].widthF(), g["dash_turn"], 0)
-    u["dashRgba"] = _rgba(g["dash"].color())
-    u["stars"] = QVector4D(g["stars_scale"], g["stars_turn"], 0, 0)
-    squares = g["squares"]
-    u["squares"] = QVector4D(*(angle for _, angle, _ in squares))
-    for star, (half, _, pens) in enumerate((squares[0], squares[2])):
-        widths = [0.0, 0.0, 0.0]
-        for i, pen in enumerate(pens):
-            u[f"starPen{star}{i}"] = _rgba(pen.color())
-            widths[i] = pen.widthF()
-        u[f"starW{star}"] = QVector4D(*widths, half)
+    # No shared turn: each square's angle carries its star's own kick.
+    u["stars"] = QVector4D(g["stars_scale"], 0, 0, 0)
+    (half, first, pens), (_, second, _) = g["squares"]
+    u["squares"] = QVector4D(first, second, 0, 0)
+    widths = [0.0, 0.0, 0.0]
+    for i, pen in enumerate(pens):
+        u[f"starPen{i}"] = _rgba(pen.color())
+        widths[i] = pen.widthF()
+    u["starW"] = QVector4D(*widths, half)
     beads = [c.alphaF() for c in g["beads"]]
     u["beadsA"] = QVector4D(*beads[:4])
     u["beadsB"] = QVector4D(*beads[4:])
@@ -218,15 +232,17 @@ class _RingImages(QQuickImageProvider):
 
 
 _SKY_UNIFORMS = (
-    ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "ring",
-     "ringPen0", "ringPen1", "ringPen2", "dash", "dashRgba", "stars",
-     "squares", "beadsA", "beadsB", "beadRgb", "beadGeo", "flare",
+    ["skyClip", "geo", "band", "bandRgb", "moteRgb", "sparkRgb", "meteor",
+     "meteorEnd", "meteorRgba", "meteorGeo", "meteorHead", "meteorStyle",
+     "ring",
+     "ringPen0", "ringPen1", "ringPen2", "stars",
+     "squares", "starW", "starPen0", "starPen1", "starPen2", "beadsA",
+     "beadsB", "beadRgb", "beadGeo", "flare",
      "haloAcc", "haloLight"]
     + [f"m{i}" for i in range(SHADER_MOTES)]
     + [f"s{i}" for i in range(SHADER_SPARKLES)]
     + [f"{name}{i}" for i in range(2)
-       for name in ("auraRgb", "auraA", "auraP", "starW")]
-    + [f"starPen{s}{i}" for s in range(2) for i in range(3)]
+       for name in ("auraRgb", "auraA", "auraP")]
     + [f"halo{i}" for i in range(3)])
 
 

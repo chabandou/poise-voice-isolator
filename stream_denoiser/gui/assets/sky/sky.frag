@@ -55,6 +55,18 @@ layout(std140, binding = 0) uniform buf {
     vec4 s7; vec4 s8; vec4 s9; vec4 s10; vec4 s11; vec4 s12; vec4 s13;
     vec4 s14; vec4 s15; vec4 s16; vec4 s17; vec4 s18; vec4 s19; vec4 s20;
     vec4 s21; vec4 s22; vec4 s23; vec4 s24; vec4 s25;
+    // The shooting star: its arc's start and control points; its end,
+    // and the trail's stretch of it (s0, s1: the head at s1); the
+    // trail's colour and light; the trail's width at the head and its
+    // glow's, the head's radius and its glow's; the head's light, how
+    // white its core burns, -, on; the look (the taper at the tail,
+    // white by the head, the glows' alphas).
+    vec4 meteor;
+    vec4 meteorEnd;
+    vec4 meteorRgba;
+    vec4 meteorGeo;
+    vec4 meteorHead;
+    vec4 meteorStyle;
     // The aura's two gradients: rgb + on, alpha at three stops, the
     // stops' positions + disc and gradient radius.
     vec4 auraRgb0; vec4 auraA0; vec4 auraP0;
@@ -62,15 +74,11 @@ layout(std140, binding = 0) uniform buf {
     // The ring: radius and its pens' widths, then the pens.
     vec4 ring;
     vec4 ringPen0; vec4 ringPen1; vec4 ringPen2;
-    // The dashed ring: radius, width, turn (deg); its colour.
-    vec4 dash;
-    vec4 dashRgba;
-    // The stars: scale, turn (deg); each square's own turn (deg); per
-    // star the pens' widths + half its side, then the pens.
+    // The star: scale, turn (deg); its two squares' own turns (deg);
+    // the pens' widths + half its side, then the pens.
     vec4 stars;
     vec4 squares;
-    vec4 starW0; vec4 starPen00; vec4 starPen01; vec4 starPen02;
-    vec4 starW1; vec4 starPen10; vec4 starPen11; vec4 starPen12;
+    vec4 starW; vec4 starPen0; vec4 starPen1; vec4 starPen2;
     // Beads (alphas), their rgb, radius and the flares' radius; flares.
     vec4 beadsA; vec4 beadsB; vec4 beadRgb; vec4 beadGeo; vec4 flare;
     // Halos: radius, width unit, alpha, on; their colours.
@@ -201,6 +209,87 @@ vec3 sparkle(vec3 col, vec2 p, vec4 s) {
     if (length(v) > 5.0 * big + px) return col;
     col = over(col, vec4(sparkRgb.rgb, s.w * 0.22), sparkleCover(v, big));
     return over(col, vec4(sparkRgb.rgb, s.w), sparkleCover(v, s.z));
+}
+
+// The point s (0..1) along the shooting star's arc (sky.arc_point).
+vec2 arcAt(float s) {
+    float v = 1.0 - s;
+    return v * v * meteor.xy + 2.0 * v * s * meteor.zw + s * s * meteorEnd.xy;
+}
+
+float arcDistance(vec2 p, float s) { return length(p - arcAt(s)); }
+
+// The point of the arc's stretch s0..s1 nearest p, as its s: the
+// nearest points of the whole curve solve a cubic (in closed form, after
+// Inigo Quilez's sdBezier); clamped into the stretch, with its ends.
+float arcNearest(vec2 p, float s0, float s1) {
+    vec2 a = meteor.zw - meteor.xy;
+    vec2 b = meteor.xy - 2.0 * meteor.zw + meteorEnd.xy;
+    vec2 d = meteor.xy - p;
+    float kk = 1.0 / max(dot(b, b), 1e-6);
+    float kx = kk * dot(a, b);
+    float ky = kk * (2.0 * dot(a, a) + dot(d, b)) / 3.0;
+    float kz = kk * dot(d, a);
+    float q3 = ky - kx * kx;
+    float q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+    float h = q * q + 4.0 * q3 * q3 * q3;
+    vec3 roots;
+    if (h >= 0.0) {
+        h = sqrt(h);
+        vec2 x = (vec2(h, -h) - q) * 0.5;
+        vec2 uv = sign(x) * pow(abs(x), vec2(1.0 / 3.0));
+        roots = vec3(uv.x + uv.y - kx);
+    } else {
+        float z = sqrt(-q3);
+        float v = acos(clamp(q / (q3 * z * 2.0), -1.0, 1.0)) / 3.0;
+        float m = cos(v), n = sin(v) * 1.732050808;
+        roots = vec3(m + m, -n - m, n - m) * z - kx;
+    }
+    roots = clamp(roots, s0, s1);
+    float best = s0, bestD = arcDistance(p, s0);
+    float dist = arcDistance(p, s1);
+    if (dist < bestD) { best = s1; bestD = dist; }
+    dist = arcDistance(p, roots.x);
+    if (dist < bestD) { best = roots.x; bestD = dist; }
+    dist = arcDistance(p, roots.y);
+    if (dist < bestD) { best = roots.y; bestD = dist; }
+    dist = arcDistance(p, roots.z);
+    if (dist < bestD) { best = roots.z; }
+    return best;
+}
+
+// The shooting star as NightSky._paint_meteor draws it: the trail a
+// strip along its arc tapering back from the head, lit (t^2) and
+// whitened (t^3) toward it (sky.meteor_trail_at, t: 0 at the back, 1
+// at the front), its glow first; then the head's soft glow and its core.
+vec3 shootingStar(vec3 col, vec2 p) {
+    if (meteorHead.w <= 0.0) return col;
+    float s0 = meteorEnd.z, s1 = meteorEnd.w;
+    vec2 front = arcAt(s1);
+    // Nothing to draw beyond the stretch's reach (a sub-arc strays from
+    // its chord by at most |b| ds^2 / 4).
+    vec2 b = meteor.xy - 2.0 * meteor.zw + meteorEnd.xy;
+    float ds = s1 - s0;
+    vec2 mid = arcAt(s0 + ds * 0.5);
+    float reach = 0.5 * length(front - arcAt(s0)) + 0.25 * length(b) * ds * ds
+                  + max(meteorGeo.y * 0.5, meteorGeo.w);
+    if (length(p - mid) > reach + px) return col;
+    float s = arcNearest(p, s0, s1);
+    float d = arcDistance(p, s);
+    float t = (s - s0) / max(ds, 1e-5);
+    float taper = meteorStyle.x + (1.0 - meteorStyle.x) * t;
+    vec3 rgb = mix(meteorRgba.rgb, vec3(1.0), meteorStyle.y * t * t * t);
+    float lit = meteorRgba.a * t * t;
+    col = over(col, vec4(rgb, lit * meteorStyle.z),
+               cover(d - meteorGeo.y * 0.5 * taper));
+    col = over(col, vec4(rgb, lit), cover(d - meteorGeo.x * 0.5 * taper));
+    if (meteorHead.x <= 0.0) return col;
+    float hd = length(p - front);
+    float fall = 1.0 - min(hd / meteorGeo.w, 1.0);
+    col = over(col, vec4(meteorRgba.rgb, meteorHead.x * meteorStyle.w
+                         * fall * fall), cover(hd - meteorGeo.w));
+    return over(col, vec4(mix(meteorRgba.rgb, vec3(1.0), meteorHead.y),
+                          meteorHead.x), cover(hd - meteorGeo.z));
 }
 
 vec3 aura(vec3 col, float d, vec4 rgb, vec4 a, vec4 at) {
@@ -358,46 +447,26 @@ vec3 sky(vec3 col, vec2 p) {
     col = sparkle(col, p, near1);
     col = sparkle(col, p, near0);
 
+    col = shootingStar(col, p);
+
     col = aura(col, d, auraRgb0, auraA0, auraP0);
     col = aura(col, d, auraRgb1, auraA1, auraP1);
 
-    // The ring, its dashed twin, the stars, the beads.
+    // The ring, the star, the beads.
     col = circle(col, d, ring.x, ring.y, ringPen0);
     col = circle(col, d, ring.x, ring.z, ringPen1);
     col = circle(col, d, ring.x, ring.w, ringPen2);
 
-    if (dashRgba.a > 0.0 && abs(d - dash.x) < dash.y + px) {
-        // QPainterPath::addEllipse runs clockwise from 3 o'clock; the
-        // pen's dashes (1.5 on, 10 off, in widths) get square caps.
-        vec2 v = unrotate(p - c, dash.z);
-        float w = dash.y;
-        float s = atan(v.y, v.x);
-        if (s < 0.0) s += 6.28318531;
-        s *= dash.x;
-        float period = 11.5 * w;
-        float m = mod(s + 0.5 * w, period);
-        float along = m < 2.5 * w ? max(-m, m - 2.5 * w)
-                                  : min(m - 2.5 * w, period - m);
-        float sd = max(abs(length(v) - dash.x) - 0.5 * w, along);
-        col = over(col, dashRgba, cover(sd));
-    }
-
-    // The stars, where their squares can reach: from inside the inner
-    // one's sides to the outer one's corners, plus the widest pen.
-    float wide = max(max(starW0.x, starW0.y), max(starW0.z, max(starW1.x,
-                     max(starW1.y, starW1.z)))) * 0.5 + px / stars.x;
+    // The star, where its squares can reach: from inside their sides to
+    // their corners, plus the widest pen.
+    float wide = max(starW.x, max(starW.y, starW.z)) * 0.5 + px / stars.x;
     float dl = d / stars.x;
-    if (dl > min(starW0.w, starW1.w) - wide
-            && dl < max(starW0.w, starW1.w) * 1.41421356 + wide) {
+    if (dl > starW.w - wide && dl < starW.w * 1.41421356 + wide) {
         vec2 q = unrotate((p - c) / stars.x, stars.y);
-        col = square(col, unrotate(q, squares.x), starW0.w, stars.x, starW0,
-                     starPen00, starPen01, starPen02);
-        col = square(col, unrotate(q, squares.y), starW0.w, stars.x, starW0,
-                     starPen00, starPen01, starPen02);
-        col = square(col, unrotate(q, squares.z), starW1.w, stars.x, starW1,
-                     starPen10, starPen11, starPen12);
-        col = square(col, unrotate(q, squares.w), starW1.w, stars.x, starW1,
-                     starPen10, starPen11, starPen12);
+        col = square(col, unrotate(q, squares.x), starW.w, stars.x, starW,
+                     starPen0, starPen1, starPen2);
+        col = square(col, unrotate(q, squares.y), starW.w, stars.x, starW,
+                     starPen0, starPen1, starPen2);
     }
 
     float reach = max(beadGeo.x, beadGeo.y) + px;

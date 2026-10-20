@@ -28,7 +28,7 @@ from PyQt6.QtGui import (
 from .styles import get_stylesheet
 from .scaling import init_scaling, sp
 from .fonts import load_fonts
-from .animations import install_hover_fades
+from .animations import install_hover_fades, set_still
 from .titlebar import apply_titlebar
 from . import themes as theme_store
 from .settings import get_settings
@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
         init_scaling()
         load_fonts()
         theme_store.set_current(self.settings.theme)
+        set_still(self.settings.reduce_motion)
 
         self.setWindowTitle("Poise Voice Isolator")
 
@@ -417,8 +418,8 @@ class MainWindow(QMainWindow):
         title = QLabel("Settings")
         title.setObjectName("page-title")
         layout.addWidget(title)
-        subtitle = QLabel("Silence skipping, model, appearance, and app "
-                          "behavior. Reduction strength is the dial on Home.")
+        subtitle = QLabel("Tweak silence skipping, appearance, and other app "
+                          "behavior.")
         subtitle.setObjectName("page-subtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -474,16 +475,30 @@ class MainWindow(QMainWindow):
             "Keep running in the tray when closed",
             "Closing the window does not stop Poise.", self.min_tray_switch)
 
+        self.motion_switch = ToggleSwitch(
+            checked=self.settings.reduce_motion)
+        self.motion_switch.toggled.connect(self._on_reduce_motion_toggled)
+        motion_row = SettingsRow(
+            "Reduce motion",
+            "Saves PC resources by reducing the animations. "
+            "App restarts to apply it.",
+            self.motion_switch)
+        motion_row.setToolTip(
+            "Keeps the UI still by eliminating some animations. Lowers CPU, "
+            "GPU and memory use. Useful on older PCs or while doing heavy "
+            "tasks.")
+
         self.reset_btn = self._icon_button("Reset", "reset")
         self.reset_btn.clicked.connect(self._confirm_reset_defaults)
         reset_row = SettingsRow(
             "Reset to defaults",
             "Restore every setting and the reduction strength. "
-            "Output device and theme stay.",
+            "Output device, theme and motion stay.",
             self.reset_btn)
         self._reset_row = reset_row
 
-        rows = [aad_row, thresh_row, tray_row, min_tray_row, reset_row]
+        rows = [aad_row, thresh_row, tray_row, min_tray_row, motion_row,
+                reset_row]
         for i, row in enumerate(rows):
             row.set_position(i == 0, i == len(rows) - 1)
             list_layout.addWidget(row)
@@ -959,17 +974,18 @@ class MainWindow(QMainWindow):
             crossfade_from(self, snapshot)
 
     def _sync_home_pace(self) -> None:
-        """A breathing theme (Vigil, Mono) mists the headline slowly from one
-        state to the next and tracks it wider; the others roll it."""
+        """A breathing theme (Vigil, Eclipse) dissolves the headline slowly
+        like smoke from one state to the next (as the dial's readout) and
+        tracks it wider; the others roll it."""
         from PyQt6.QtGui import QFont
         from .animations import EASE_BREATHE, EASE_OUT
         breath = theme_store.breathing()
         if breath:
-            self._title_swap.set_timing(420, 760, rise=sp(6),
-                                        easing=EASE_BREATHE)
+            self._title_swap.set_timing(420, 760, easing=EASE_BREATHE,
+                                        smoke=sp(6))
         else:
             self._title_swap.set_timing(120, 240, rise=sp(14),
-                                        easing=EASE_OUT)
+                                        easing=EASE_OUT, smoke=0.0)
         font = self.home_title.font()
         font.setLetterSpacing(QFont.SpacingType.PercentageSpacing,
                               108.0 if breath else 100.0)
@@ -1016,7 +1032,7 @@ class MainWindow(QMainWindow):
             self, "Reset to defaults",
             "Reset reduction strength, silence skipping, tray behavior "
             "and model to their defaults?\n\n"
-            "Your output device and theme stay as they are.",
+            "Your output device, theme and motion setting stay as they are.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
@@ -1040,6 +1056,36 @@ class MainWindow(QMainWindow):
         self.power_btn.set_strength_db(strength)
         self._on_atten_changed(strength)
         _logger.info("Settings reset to defaults")
+
+    RESTART_AFTER_MS = 250   # the switch is seen to flip first
+
+    def _on_reduce_motion_toggled(self, checked: bool):
+        """Hold the ambient motion still, or let it move again, then
+        restart: Qt Quick (the GPU sky) stays loaded once used, so only a
+        fresh start frees its memory."""
+        self.settings.reduce_motion = checked
+        self.settings.sync()
+        set_still(checked)
+        self._stage.refresh_motion()      # drops or brings back the GPU sky
+        self.power_btn.refresh_motion()
+        self.stats_bar.refresh_motion()
+        QTimer.singleShot(self.RESTART_AFTER_MS, self.restart_app)
+
+    def restart_app(self) -> None:
+        """Quit and start Poise again, on Settings, isolating again if
+        it was (see gui.request_restart)."""
+        from . import request_restart
+        request_restart(resume=self.worker.is_running)
+        self._quit_app()
+
+    def resume_after_restart(self, settings_page: bool, isolate: bool):
+        """Just restarted by restart_app: open on Settings, and start
+        isolating again if it was."""
+        if settings_page:
+            self.sidebar.set_active_page(1)
+            self.stack.setCurrentIndex(1)
+        if isolate:
+            QTimer.singleShot(0, self._start_processing)
 
     def _on_tray_toggled(self, checked: bool):
         self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
