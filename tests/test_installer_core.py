@@ -41,10 +41,12 @@ def test_no_desktop_icon_means_no_task():
     assert not any(arg.startswith("/TASKS") for arg in args)
 
 
-def test_default_dir_is_under_program_files():
+def test_default_dir_matches_the_32_bit_core():
+    # setup.iss is 32-bit Inno: {autopf} is Program Files (x86) there.
     assert core.default_dir().endswith(core.APP_NAME)
     assert core.default_dir().startswith(
-        os.environ.get("ProgramFiles") or "C:\\Program Files")
+        os.environ.get("ProgramFiles(x86)")
+        or os.environ.get("ProgramFiles") or "C:\\Program Files")
 
 
 def test_log_path_is_unique_and_in_temp():

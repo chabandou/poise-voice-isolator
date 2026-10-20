@@ -69,8 +69,16 @@ class Existing:
 
 
 def default_dir() -> str:
-    """{autopf}\\Poise Voice Isolator, i.e. Program Files on 64-bit Windows."""
-    base = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    """{autopf}\\Poise Voice Isolator, as the core resolves it.
+
+    setup.iss runs Inno in 32-bit mode (no ArchitecturesInstallIn64BitMode),
+    where {autopf} is Program Files (x86) on 64-bit Windows. This window is
+    64-bit Python, whose %ProgramFiles% is the 64-bit folder, so it asks
+    for the x86 one first to keep installs where the plain installer put
+    them.
+    """
+    base = (os.environ.get("ProgramFiles(x86)")
+            or os.environ.get("ProgramFiles") or r"C:\Program Files")
     return os.path.join(base, APP_NAME)
 
 
@@ -222,9 +230,17 @@ def existing_install() -> Existing | None:
         import winreg
     except ImportError:
         return None
-    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+    # The core is 32-bit Inno, so its HKLM entry lands in the 32-bit view
+    # (WOW6432Node), which a 64-bit process does not see by default.
+    views = (
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+        (winreg.HKEY_CURRENT_USER, 0),
+    )
+    for root, view in views:
         try:
-            key = winreg.OpenKey(root, _UNINSTALL_ROOT + "\\" + UNINSTALL_KEY)
+            key = winreg.OpenKey(root, _UNINSTALL_ROOT + "\\" + UNINSTALL_KEY,
+                                 0, winreg.KEY_READ | view)
         except OSError:
             continue
         with key:
