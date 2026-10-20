@@ -67,12 +67,88 @@ def test_band_arrival_follows_the_band(app):
     assert times == sorted(times) and 0 < times[0] < times[-1] < sky.BAND_MS
 
 
+def test_star_outline_draws_what_the_rotated_rect_did(app):
+    """The stars' squares are drawn as lines and corner pieces (far
+    cheaper rotated): the same pixels as stroking the rect, give or take
+    a seam's rounding where the pieces meet."""
+    import numpy as np
+    from PyQt6.QtCore import QRectF, Qt
+    from PyQt6.QtGui import QColor, QImage, QPainter, QPen
+    from stream_denoiser.gui.widgets.sky import _square_outline
+
+    def draw(width, pieces):
+        image = QImage(420, 420, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.translate(210, 210)
+        p.rotate(17.0)
+        pen = QPen(QColor(200, 180, 255, 70), width)
+        if pieces:
+            flat, brush, edges, corners = _square_outline(150.0, pen)
+            p.setPen(flat)
+            p.drawLines(edges)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(brush)
+            p.drawPath(corners)
+        else:
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(QRectF(-150, -150, 300, 300))
+        p.end()
+        bits = image.constBits()
+        bits.setsize(image.sizeInBytes())
+        return np.frombuffer(bits, np.uint8).astype(int)
+
+    for width in (1.0, 4.0, 10.0):
+        rect, pieces = draw(width, False), draw(width, True)
+        diff = np.abs(rect - pieces)
+        assert (rect > 0).sum() > 1000                # something was drawn
+        assert diff.max() <= 8, width
+        assert (diff > 2).sum() < 0.01 * (rect > 0).sum(), width
+
+
 def test_keyframes_interpolate_between_frames(app):
     from stream_denoiser.gui.widgets.sky import CHARGE, keyframes
     assert keyframes(0.0, CHARGE) == 1.0          # full as the pulse leaves
     assert keyframes(0.5, CHARGE) == 0.0          # gone mid-breath
     assert 0.0 < keyframes(0.9, CHARGE) < 1.0     # gathering again
     assert keyframes(1.0, CHARGE) == 1.0
+
+
+def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+    seen = []    # (glow, star scale) per frame
+    box = QRectF(0, 0, 900, 520)
+    cycles = [0, 500, 1000, 4000, 6000, 7000, 7900]
+    for cycle in cycles:
+        frame = night.frame(box, QPointF(450, 280), 1.0, 1.0, 1000.0, {
+            "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
+            "gather_ms": 0.0, "cycle": cycle, "stopped": None,
+            "gain": lambda index: 1.0, "moving": True,
+            "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
+            "accent_light": QColor("#e4dcff")})
+        seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
+    glow = dict(zip(cycles, (g for g, _ in seen)))
+    assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
+    assert glow[0] == pytest.approx(1.0)              # full as it leaves
+    assert glow[4000] == 0.0                          # gone mid-breath
+    assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again
+
+
+def test_the_charge_fades_from_where_stop_caught_it(app):
+    from stream_denoiser.gui.widgets import sky
+    assert sky.charge(None) == 1.0                # gathering for the first
+    stopped = sky.BREATH_MS * 0.99                # just before a pulse
+    held = sky.charge(stopped)
+    assert held > 0.9
+    after = [sky.charge(stopped + ms, stopped) for ms in range(0, 700, 20)]
+    assert after[0] == pytest.approx(held)
+    assert after == sorted(after, reverse=True)   # fades, no jump at the
+    assert after[-1] == 0.0                       # breath it never takes
 
 
 # -- the dial on the breathing rhythm --------------------------------------------
@@ -151,6 +227,22 @@ def test_tactile_themes_keep_the_odometer_and_ripple(app, monkeypatch):
     dial.set_active(True)
     lit = d.lit_count(dial.strength_db())
     assert dial._ignite_end() == lit * d.IGNITE_STEP + d.IGNITE_TAIL
+    dial.close()
+
+
+def test_dial_reuses_its_ring_while_it_holds_still(app, vigil, monkeypatch):
+    monkeypatch.setenv("POISE_REDUCE_MOTION", "1")   # idle holds still
+    dial = _dial(app)
+    drawn = []
+    draw = dial._draw_ring
+    dial._draw_ring = lambda *a: drawn.append(1) or draw(*a)
+    dial._ring_key = None                         # forget the shown frame
+    dial.grab()
+    dial.grab()
+    assert len(drawn) == 1                        # the same strokes: reused
+    dial.set_strength_db(dial.strength_db() + 10)
+    dial.grab()
+    assert len(drawn) == 2                        # fewer ticks lit: redrawn
     dial.close()
 
 

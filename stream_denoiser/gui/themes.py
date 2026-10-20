@@ -55,20 +55,30 @@ THEMES: Dict[str, Dict] = {
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
     "mono": {
+        # Vigil in graphite: the same sky and breathing Home, its candle
+        # gold a warm pewter and its lavender a muted signature cyan;
+        # soft text and faint edges, nothing pure white.
         "label": "Mono",
-        "blurb": "Neutral grayscale, distraction-free.",
-        "bg": "#101012", "sidebar": "#0c0c0e",
-        "card": "#151517", "pill": "#1a1a1e", "groove": "#2e2e34",
-        "text": "#f5f5f5", "muted": "#a7a7ae",
-        "device_title": "#b5b5bc",
-        "nav_active": "#e4e4e7", "nav_muted": "#a3a3a9",
-        "accent": "#c9d1db", "accent_light": "#eceff3",
-        "accent_rgb": "201, 209, 219",
-        "secondary": "#B9B3A8", "secondary_rgb": "185, 179, 168",
-        "border_rgb": "255, 255, 255", "border_alpha": 0.30,
-        "divider_rgb": "255, 255, 255", "divider_alpha": 0.42,
-        "badge_bg": "#232329", "badge_fg": "#c9d1db",
-        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "blurb": "Soft graphite under a slow night sky, a hint of cyan.",
+        "bg": "#0e1014", "sidebar": "#0b0d10",
+        "card": "#15171c", "pill": "#16191e", "groove": "#2a2e36",
+        "text": "#e8eaed", "muted": "#8f959e",
+        "device_title": "#9ba1aa",
+        "nav_active": "#cbe7eb", "nav_muted": "#9ba1aa",
+        "accent": "#98c5cd", "accent_light": "#cbe7eb",
+        "accent_rgb": "152, 197, 205",
+        "secondary": "#C0B8A8", "secondary_rgb": "192, 184, 168",
+        "border_rgb": "200, 210, 222", "border_alpha": 0.14,
+        "divider_rgb": "200, 210, 222", "divider_alpha": 0.20,
+        "badge_bg": "#1b1f25", "badge_fg": "#98c5cd",
+        "success": "#86d0ae", "warning": "#e2c983", "error": "#e89aa2",
+        "backdrop": "sky", "motion": "breath",
+        "heading_weight": 600,
+        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
+                        "fx:0.62, fy:0.28, stop:0 #1a1d23, stop:0.45 "
+                        "#121418, stop:0.75 #0e1014, stop:1 #0e1014)"),
+        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                      "stop:0 #191c22, stop:1 #121419)"),
     },
     "vigil": {
         "label": "Vigil",

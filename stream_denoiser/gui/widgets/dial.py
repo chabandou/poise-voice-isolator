@@ -38,7 +38,7 @@ Motion, phase by phase:
   cutting off, and no new charge starts;
 - error: lit ticks flash white then settle red and the disc shakes.
 
-A theme whose motion is "breath" (Vigil) moves the same phases slower
+A theme whose motion is "breath" (Vigil, Mono) moves the same phases slower
 and softer, on the night sky's rhythm (widgets/sky.py): idle, the lit
 ticks breathe; starting, light gathers from the ends of the lit arc
 inward; live, it blooms from the middle out, the disc swells (no pop),
@@ -59,7 +59,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QColor, QFont, QFontMetricsF, QPainter, QPen, QRadialGradient,
+    QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QRadialGradient,
 )
 
 from .pattern_card import PING_PERIOD_MS
@@ -302,6 +302,8 @@ class DialButton(PowerButton):
         self._clock = QTimer(self)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)
+        self._ring = self._ring_key = None   # see _paint_ring
+        self._ring_sink = None            # see set_ring_sink
 
         # Eased states.
         self._swell = Blend(self, self.update, 220)
@@ -927,8 +929,17 @@ class DialButton(PowerButton):
                                  _ease_out(max(0.0, d) / DRAIN_MS)), 1.0, 1.0)
         return col["gold"], 1.0, 1.0
 
-    def _breath_look(self, i: int, lit: int, col: dict, t: float):
-        """Breath: (colour, alpha, radial scale, glow 0..1) of tick i."""
+    def _idle_breath(self) -> float:
+        """Breath: the lit ticks' alpha while idle (a slow swell)."""
+        if self._phase != "idle" or not motion_ok():
+            return 1.0
+        return keyframes(breath_pos(time.monotonic() * 1000.0,
+                                    IDLE_BREATH_MS), TICKS_IDLE)
+
+    def _breath_look(self, i: int, lit: int, col: dict, t: float,
+                     idle: float = None):
+        """Breath: (colour, alpha, radial scale, glow 0..1) of tick i;
+        `idle` is the idle breath's alpha (None: _idle_breath's)."""
         if i >= lit:
             return col["unlit"], 1.0, 1.0, 0.0
         phase = self._phase
@@ -976,11 +987,10 @@ class DialButton(PowerButton):
                 v = _breath(max(0.0, d) / SETTLE_MS)
                 colour = mix_rgba(col["accent"], col["gold"], v)
                 glow = GLOW_LIVE + (GLOW_IDLE - GLOW_LIVE) * v
-        alpha = 1.0
-        if phase == "idle" and motion_ok():
-            alpha = keyframes(breath_pos(time.monotonic() * 1000.0,
-                                         IDLE_BREATH_MS), TICKS_IDLE)
-        return colour, alpha, 1.0, glow
+        if phase != "idle":
+            return colour, 1.0, 1.0, glow
+        return (colour, self._idle_breath() if idle is None else idle, 1.0,
+                glow)
 
     def _sweep_visibility(self, i: int) -> float:
         """First show: how much of tick i the entrance sweep has drawn."""
@@ -1143,32 +1153,110 @@ class DialButton(PowerButton):
         p.translate(w / 2, h / 2)
         p.scale(k, k)
         p.translate(-c, -c)
-        self._paint_ring(p, col, t)
+        if self._ring_sink is not None:
+            self._ring_sink(self._over, self._ring_strokes(col, t, True),
+                            self._idle_breath())
+        else:
+            self._paint_ring(p, col, t)
         self._paint_core(p, col, t)
         self._paint_readout(p, col)
         p.end()
 
+    # -- the ring drawn elsewhere ---------------------------------------------------
+    def set_ring_sink(self, sink) -> None:
+        """Hand the ring to `sink(over, strokes, breath)` instead of
+        painting it (see ring_frame): the GPU sky behind the dial draws
+        its ticks and needle under the disc. None paints them here again.
+        """
+        self._ring_sink = sink
+        self.update()
+
+    def ring_frame(self):
+        """(stretch in degrees, strokes, breath): the ring at this moment
+        as the sink gets it, the strokes as _ring_strokes(lift_breath)
+        gives them and the idle breath's alpha for those it marks."""
+        return (self._over,
+                self._ring_strokes(self._colours(current_theme()), self._ms(),
+                                   True),
+                self._idle_breath())
+
+    def ring_breath(self) -> float:
+        """The idle breath's alpha now: all that moves in the ring while
+        the dial's clock rests (the card sends it with each sky frame)."""
+        return self._idle_breath()
+
+    def ring_animating(self) -> bool:
+        """The dial's own clock runs (and hands the ring on each paint)."""
+        return self._clock.isActive()
+
     def _paint_ring(self, p, col, t) -> None:
-        """The ticks (lit ones show the strength) and the head needle."""
+        """The ticks and the head needle, from an image redrawn only when
+        a stroke changes: the dial repaints with every frame of the sky
+        behind it, and these strokes are most of what it costs, yet they
+        often hold still (between breaths, or while a slow breath's
+        alpha stays on the same 8-bit step)."""
+        w, h = self.width(), self.height()
+        dpr = self.devicePixelRatioF()
+        strokes = self._ring_strokes(col, t)
+        key = (w, h, dpr, self._over, strokes)
+        if key != self._ring_key:
+            self._ring_key = key
+            self._ring = self._draw_ring(w, h, dpr, strokes)
+        p.save()
+        p.resetTransform()
+        p.drawImage(QPointF(0, 0), self._ring)
+        p.restore()
+
+    def _draw_ring(self, w, h, dpr, strokes) -> QImage:
+        """The strokes, painted as paintEvent would, into a transparent
+        image the widget's size (the last one is reused)."""
+        size = (math.ceil(w * dpr), math.ceil(h * dpr))
+        image = self._ring
+        if (image is None or (image.width(), image.height()) != size
+                or image.devicePixelRatio() != dpr):
+            image = QImage(*size, QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+        image.fill(Qt.GlobalColor.transparent)
+        k = min(w, h) / REF
         c = REF / 2
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.translate(w / 2, h / 2)
+        p.scale(k, k)
+        p.rotate(self._over)          # stretched past an end
+        p.translate(-c, -c)
+        for angle, r0, r1, rgba, width, _, _ in strokes:
+            self._line(p, angle, r0, r1, QColor.fromRgba(rgba), width)
+        p.end()
+        return image
+
+    def _ring_strokes(self, col, t, lift_breath: bool = False) -> tuple:
+        """The ticks (lit ones show the strength) and the head needle, as
+        the strokes that draw them, in order: (angle, r0, r1, rgba, width,
+        slot, breathes). Slot 2i is tick i's glow and 2i + 1 the tick;
+        2 x TICKS is the needle's glow and the one after it the needle.
+        lift_breath leaves the idle breath out of the strokes it would
+        only scale, marking them `breathes`: they hold still while the
+        dial rests, and whoever draws them scales them by _idle_breath."""
         # The needle (and the lit edge) follow its glide on wheel steps.
         pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
         head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
         now = time.monotonic()
         breath = breathing()
-        p.save()
-        p.translate(c, c)
-        p.rotate(self._over)          # stretched past an end
-        p.translate(-c, -c)
+        idle = self._idle_breath()
+        lifted = lift_breath and breath and self._phase == "idle"
+        strokes = []
         for i in range(TICKS):
             visible = self._sweep_visibility(i)
             if visible <= 0.0:
                 continue
             angle, r_in, r_out = tick_geometry(i)
             glow = 0.0
+            breathes = lifted and i < lit
             if breath:
-                colour, alpha, scale, glow = self._breath_look(i, lit, col, t)
+                colour, alpha, scale, glow = self._breath_look(
+                    i, lit, col, t, 1.0 if breathes else idle)
             elif i < lit:
                 colour, alpha, scale = self._lit_look(i, col, t)
             elif self._phase == "starting":
@@ -1180,19 +1268,23 @@ class DialButton(PowerButton):
                 halo = QColor(colour)
                 halo.setAlphaF(GLOW_ALPHA * glow * alpha * visible)
                 lift = self._swell_px(angle, head_angle)
-                self._line(p, angle, (r_in + lift - 1.5) * scale,
-                           (r_out + lift + 1.5) * scale, halo, 10.0)
+                strokes.append((angle, (r_in + lift - 1.5) * scale,
+                                (r_out + lift + 1.5) * scale, halo.rgba(),
+                                10.0, 2 * i, breathes))
             flash = self._trail_glow(i, now)
             if flash > 0.0:   # passed by a stepped needle: a comet flash
                 tone = col["flash"] if self._phase == "live" else col["comet"]
                 colour = mix_rgba(colour, tone, 0.85 * flash)
+                if breathes:   # max() does not scale: the breath goes in
+                    alpha, breathes = idle, False
                 alpha = max(alpha, flash)
                 scale = max(scale, 1.0 + 0.05 * flash)
             colour = QColor(colour)
             colour.setAlphaF(colour.alphaF() * alpha * visible)
             lift = self._swell_px(angle, head_angle)
-            self._line(p, angle, (r_in + lift) * scale,
-                       (r_out + lift) * scale, colour, 4.0)
+            strokes.append((angle, (r_in + lift) * scale,
+                            (r_out + lift) * scale, colour.rgba(), 4.0,
+                            2 * i + 1, breathes))
 
         # The head needle: white over the last lit tick.
         if lit > 0:
@@ -1210,11 +1302,13 @@ class DialButton(PowerButton):
                 r0, r1 = (r_in + lift) * scale, (r_out + lift) * scale
                 halo = QColor(col["white"])
                 halo.setAlphaF(alpha * (0.12 + 0.4 * glow))
-                self._line(p, head_angle, r0, r1, halo, 8.0 + 8.0 * glow)
+                strokes.append((head_angle, r0, r1, halo.rgba(),
+                                8.0 + 8.0 * glow, 2 * TICKS, False))
                 needle = QColor(col["text"])
                 needle.setAlphaF(alpha)
-                self._line(p, head_angle, r0, r1, needle, 5.0)
-        p.restore()
+                strokes.append((head_angle, r0, r1, needle.rgba(), 5.0,
+                                2 * TICKS + 1, False))
+        return tuple(strokes)
 
     def _paint_core(self, p, col, t) -> None:
         """Ripple, disc, charge glow, power glyph and the rolling label."""

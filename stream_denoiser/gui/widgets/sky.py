@@ -1,16 +1,18 @@
 """
 Poise Voice Isolator - Night Sky
 
-The Vigil theme's backdrop for the dial card (PatternCard paints it in
+The backdrop of Vigil and Mono for the dial card (PatternCard paints it in
 place of the lattice): a soft aura and quiet geometry around the dial
-(two rings, a dashed one turning slowly, two eight-point stars turning
-against each other, beads on the middle ring), small eight-point
-sparkles scattered over the card and motes of light drifting up through
-it. Idle it is candle gold and breathes slowly; while isolating it turns
-lavender and moves on the dial's breathing cycle (BREATH_MS): each breath
-a soft band of light and three halos leave the dial, the stars kick round
-and swell, the beads flare as the band passes them, and each sparkle
-flashes and is pushed outward as the band reaches it, springing back.
+(a ring with beads on it, a dashed one turning slowly, two eight-point
+stars turning against each other), small eight-point sparkles scattered
+over the card and motes of light drifting up through it. Idle it is
+candle gold and breathes slowly; while isolating it turns lavender and
+moves on the dial's breathing cycle (BREATH_MS): the ring and the stars
+gather light with the dial's disc before each breath's pulse (CHARGE),
+and as it leaves, a soft band of light and three halos leave the dial,
+the stars kick round (holding their size), the beads flare as the band
+passes them, and each sparkle flashes and is pushed outward as the band
+reaches it, springing back.
 
 The dial itself breathes on the same cycle (see DialButton); the shared
 timelines live here. Ported from the design's CSS (the Vigil board), so
@@ -20,7 +22,7 @@ card and sized in px.
 """
 import math
 
-from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainterPath, QPen, QRadialGradient
 
 from ..animations import cubic_bezier_fn, mix_rgba
@@ -41,14 +43,19 @@ PULSE_FADE_MS = 600       # a pulse in flight when isolating stops fades
 DISC_R = 88.0
 AURA_R = 290.0            # the aura's disc; its gradient runs to the
 AURA_RAY = 410.0          # box's corner, as CSS circle gradients do
-RINGS = ((168.0, 0.13), (200.0, 0.11))
+RING_R, RING_ALPHA = 168.0, 0.13              # the beads sit on it
 DASH_R, DASH_ALPHA, DASH_TURN_MS = 262.0, 0.10, 320000
 STAR_HALF, STAR_TURN_MS = 182.0, 240000       # the outer star
 STAR2_HALF, STAR2_TURN_MS = 132.0, 300000     # the inner one, turning back
-STAR_ALPHA = (0.07, 0.17)                     # idle, live
-STAR2_ALPHA = (0.05, 0.11)
+STAR_ALPHA = (0.07, 0.105)                    # idle, live between pulses
+STAR2_ALPHA = (0.05, 0.07)
 BEAD_R, BEAD_MS, BEAD_STEP = 1.8, 6000, 750
 FLARE_R = 3.2
+# The charge the ring and stars hold (0..1, as the disc's): their lines
+# brighten toward accent_light, x(1 + GLOW_LIFT) at full, over soft
+# halos (width x the line's, alpha x the line's).
+GLOW_LIFT = 1.5
+GLOW_HALO = ((10.0, 0.3), (4.0, 0.6))
 SEED = 0x2F6B1D3          # the design's scatter, star for star
 MOTE_COUNT = 18
 SPARKLE_COUNT = 26
@@ -102,10 +109,6 @@ AURA_LIVE = (((0, 1.06, BREATH), (0.12, 0.96, BREATH), (0.75, 0.96, BREATH),
               (1, 1.0, BREATH)))
 STARS_IDLE = ((0, 0.985, BREATH), (0.45, 1.02, BREATH), (1, 0.985, BREATH))
 STARS_GATHER = ((0, 1.01, BREATH), (0.55, 0.955, BREATH), (1, 1.01, BREATH))
-STARS_LIVE_SCALE = ((0, 1.06, _KICK), (0.12, 0.97, EASE),
-                    (0.75, 0.97, EASE_IN), (1, 1.06, _linear))
-STARS_LIVE_ALPHA = ((0, 1.0, _KICK), (0.12, 0.62, EASE),
-                    (0.75, 0.62, EASE_IN), (1, 1.0, _linear))
 STARS_LIVE_TURN = ((0, 0.0, _KICK), (0.09, 7.0, EASE), (0.75, 1.0, EASE_IN),
                    (1, 0.0, _linear))
 BEAD = ((0, 0.1, BREATH), (0.12, 0.6, BREATH), (0.3, 0.1, BREATH),
@@ -152,6 +155,22 @@ def band_arrival(distance: float) -> float:
         else:
             hi = mid
     return (lo + hi) / 2 * BAND_MS
+
+
+def charge(cycle, stopped=None) -> float:
+    """0..1: the light the ring and stars hold, on the disc's CHARGE curve
+    (full as each pulse leaves; gathering until the first one). After
+    Stop (`stopped` ms into the cycle) the charge in hand fades as the
+    pulse in flight does and no new one gathers."""
+    if cycle is None:
+        return keyframes(1.0, CHARGE)
+    if stopped is None:
+        return keyframes(breath_pos(cycle, BREATH_MS), CHARGE)
+    u = (cycle - stopped) / PULSE_FADE_MS
+    if u >= 1.0:
+        return 0.0
+    return (keyframes(breath_pos(stopped, BREATH_MS), CHARGE)
+            * (1.0 - max(0.0, u)) ** 2)
 
 
 # -- the scatter ----------------------------------------------------------------
@@ -247,8 +266,55 @@ def _alpha(colour: QColor, alpha: float) -> QColor:
     return c
 
 
+def _charged_pens(colour: QColor, light: QColor, alpha: float, width: float,
+                  glow: float):
+    """Pens, drawn in order, for a line of `alpha` holding `glow` (0..1)
+    of the charge: soft halos, then the line brightened toward `light`."""
+    pens = []
+    if glow > 0.01:
+        for spread, level in GLOW_HALO:
+            pens.append(QPen(_alpha(colour, alpha * level * glow),
+                             width * spread))
+    pens.append(QPen(_alpha(mix_rgba(colour, light, glow),
+                            alpha * (1.0 + GLOW_LIFT * glow)), width))
+    return pens
+
+
+def _square_outline(half: float, pen: QPen):
+    """A square's outline (centred, `half` across), as stroking it with
+    `pen` would draw it, in pieces Qt rasterizes far faster when rotated
+    (about a third of a drawRect): (flat pen, brush, edges, corners). The
+    edges are flat-capped lines, the sides stopping short of the corners
+    by half the pen; the corners fill the rest of the bevel join, so
+    nothing is drawn twice."""
+    e = pen.widthF() / 2
+    flat = QPen(pen)
+    flat.setCapStyle(Qt.PenCapStyle.FlatCap)
+    edges = [QLineF(-half, -half, half, -half),
+             QLineF(-half, half, half, half),
+             QLineF(half, -half + e, half, half - e),
+             QLineF(-half, -half + e, -half, half - e)]
+    corners = QPainterPath()
+    for sx, sy in ((1, -1), (1, 1), (-1, 1), (-1, -1)):
+        corners.moveTo(sx * half, sy * (half + e))
+        corners.lineTo(sx * (half + e), sy * half)
+        corners.lineTo(sx * (half + e), sy * (half - e))
+        corners.lineTo(sx * half, sy * (half - e))
+        corners.closeSubpath()
+    return flat, pen.color(), edges, corners
+
+
+def _bead(centre: QPointF, k: float, i: int) -> QPointF:
+    """Bead i of 8 on the ring, clockwise from the top."""
+    angle = math.radians(i * 45.0)
+    return QPointF(centre.x() + RING_R * k * math.sin(angle),
+                   centre.y() - RING_R * k * math.cos(angle))
+
+
 class NightSky:
-    """Paints the sky; the card owns the clock and passes the moment in."""
+    """The sky at a moment: frame() works out every layer's draw values
+    (the card owns the clock and passes the moment in); paint() draws a
+    frame with QPainter, and the GPU sky (sky_gpu.py) with a shader."""
 
     def __init__(self, seed: int = SEED):
         self.motes, self.sparkles = scatter(seed)
@@ -273,20 +339,23 @@ class NightSky:
             self._placed_key = key
         return self._placed
 
-    # -- painting ------------------------------------------------------------------
-    def paint(self, p, box: QRectF, clip, centre: QPointF, k: float,
-              ui: float, now: float, look: dict) -> None:
-        """Paint everything inside `clip`.
+    # -- the moment ----------------------------------------------------------------
+    def frame(self, box: QRectF, centre: QPointF, k: float, ui: float,
+              now: float, look: dict):
+        """Every layer's draw values at `now`, in drawing order (None when
+        the sky is not shown yet).
 
         look: live / gather / error / reveal (0..1 blends), gather_ms (ms
         into starting), cycle (ms since the first pulse, or None),
-        gain(index) (how much of that breath's pulse to show), and the
-        colours secondary / accent / accent_light (QColor).
+        stopped (cycle ms at Stop, or None), gain(index) (how much of
+        that breath's pulse to show), moving (False under reduced motion:
+        no charge), and the colours secondary / accent / accent_light
+        (QColor).
         """
         live, gather = look["live"], look["gather"]
         reveal = look["reveal"]
         if reveal <= 0.001:
-            return
+            return None
         sec, acc = look["secondary"], look["accent"]
         light = look["accent_light"]
         cycle, gain = look["cycle"], look["gain"]
@@ -300,30 +369,33 @@ class NightSky:
             v = idle + (gathered - idle) * gather
             return v + (lit - v) * live
 
-        p.save()
-        p.setClipPath(clip)
-        p.setPen(Qt.PenStyle.NoPen)
-        self._paint_band(p, centre, k, cycle, gain, acc, reveal)
-        self._paint_motes(p, box, ui, now, mix_rgba(sec, acc, live), reveal)
-        self._paint_sparkles(p, box, centre, k, ui, now, cycle, gain, live,
-                             mix_rgba(sec, light, live), reveal)
-        self._paint_aura(p, centre, k, live, look["error"], reveal, sec, acc,
-                         blend(keyframes(u_idle, AURA_IDLE[0]),
-                               keyframes(u_gather, AURA_GATHER[0]),
-                               keyframes(u_live, AURA_LIVE[0])),
-                         blend(keyframes(u_idle, AURA_IDLE[1]),
-                               keyframes(u_gather, AURA_GATHER[1]),
-                               keyframes(u_live, AURA_LIVE[1])))
         geo = mix_rgba(sec, acc, live)
+        # Live, the stars hold their size; the pulses only turn them.
         stars = (blend(keyframes(u_idle, STARS_IDLE),
-                       keyframes(u_gather, STARS_GATHER),
-                       keyframes(u_live, STARS_LIVE_SCALE)),
-                 live * keyframes(u_live, STARS_LIVE_TURN),
-                 1.0 + (keyframes(u_live, STARS_LIVE_ALPHA) - 1.0) * live)
-        self._paint_geometry(p, centre, k, now, live, geo, reveal, stars)
-        self._paint_flares(p, centre, k, cycle, gain, live, geo, reveal)
-        self._paint_halos(p, centre, k, cycle, gain, acc, light, reveal)
-        p.restore()
+                       keyframes(u_gather, STARS_GATHER), 1.0),
+                 live * keyframes(u_live, STARS_LIVE_TURN))
+        glow = (live * charge(cycle, look["stopped"]) if look["moving"]
+                else 0.0)
+        return {
+            "centre": centre, "k": k, "ui": ui, "glow": glow,
+            "band": self._band(k, cycle, gain, acc, reveal),
+            "motes": self._motes(box, ui, now, mix_rgba(sec, acc, live),
+                                 reveal),
+            "sparkles": self._sparkles(box, centre, k, ui, now, cycle, gain,
+                                       live, mix_rgba(sec, light, live),
+                                       reveal),
+            "aura": self._aura(k, live, look["error"], reveal, sec, acc,
+                               blend(keyframes(u_idle, AURA_IDLE[0]),
+                                     keyframes(u_gather, AURA_GATHER[0]),
+                                     keyframes(u_live, AURA_LIVE[0])),
+                               blend(keyframes(u_idle, AURA_IDLE[1]),
+                                     keyframes(u_gather, AURA_GATHER[1]),
+                                     keyframes(u_live, AURA_LIVE[1]))),
+            "geometry": self._geometry(k, now, live, geo, light, glow,
+                                       reveal, stars),
+            "flares": self._flares(k, cycle, gain, live, geo, reveal),
+            "halos": self._halos(k, cycle, gain, acc, light, reveal),
+        }
 
     @staticmethod
     def _events(cycle, gain, delay: float, span: float):
@@ -339,26 +411,26 @@ class NightSky:
         g = gain(index)
         return (into / span, g) if g > 0.001 else None
 
-    def _paint_band(self, p, centre, k, cycle, gain, acc, reveal) -> None:
+    def _band(self, k, cycle, gain, acc, reveal):
+        """The pulse's band: (radius, [(stop, colour)]), or None."""
         event = self._events(cycle, gain, 0.0, BAND_MS)
         if event is None:
-            return
+            return None
         u, g = event
         e = _BAND(u)
         r = (BAND_FROM + (BAND_TO - BAND_FROM) * e) * k
         strength = BAND_ALPHA * (1.0 - e) * g * reveal
         if strength <= 0.002 or r <= 1.0:
-            return
-        grad = QRadialGradient(centre, r)
-        grad.setColorAt(max(0.0, (r - BAND_INNER * k) / r), _alpha(acc, 0.0))
-        grad.setColorAt(max(0.0, (r - BAND_CORE * k) / r),
-                        _alpha(acc, strength))
-        grad.setColorAt(1.0, _alpha(acc, 0.0))
-        p.setBrush(grad)
-        p.drawEllipse(centre, r, r)
+            return None
+        return r, ((max(0.0, (r - BAND_INNER * k) / r), _alpha(acc, 0.0)),
+                   (max(0.0, (r - BAND_CORE * k) / r),
+                    _alpha(acc, strength)),
+                   (1.0, _alpha(acc, 0.0)))
 
-    def _paint_motes(self, p, box, ui, now, colour, reveal) -> None:
+    def _motes(self, box, ui, now, colour, reveal):
+        """[(centre, glow radius, glow colour, radius, colour)]."""
         dx, dy = MOTE_DRIFT
+        out = []
         for m in self.motes:
             u = breath_pos(now + m.offset, m.period)
             a = keyframes(u, MOTE) * reveal
@@ -367,13 +439,15 @@ class NightSky:
             x = box.x() + m.fx * box.width() + dx * u * ui
             y = box.y() + m.fy * box.height() + dy * u * ui
             r = m.size / 2 * ui
-            p.setBrush(_alpha(colour, a * 0.22))
-            p.drawEllipse(QPointF(x, y), r + 2.6 * ui, r + 2.6 * ui)
-            p.setBrush(_alpha(colour, a))
-            p.drawEllipse(QPointF(x, y), r, r)
+            out.append((QPointF(x, y), r + 2.6 * ui, _alpha(colour, a * 0.22),
+                        r, _alpha(colour, a)))
+        return out
 
-    def _paint_sparkles(self, p, box, centre, k, ui, now, cycle, gain, live,
-                        colour, reveal) -> None:
+    def _sparkles(self, box, centre, k, ui, now, cycle, gain, live, colour,
+                  reveal):
+        """[(x, y, size, glow colour, colour)]: the sparkle path scaled
+        by size x 1.5 (its glow), then by size."""
+        out = []
         for x, y, cos, sin, arrival, near, s in self._place(box, centre, k,
                                                             ui):
             # Idle: a slow twinkle and a sway along the line to the dial.
@@ -402,88 +476,66 @@ class NightSky:
             a = alpha * s.alpha * reveal
             if a <= 0.01:
                 continue
-            size = s.size / 10.0 * ui * scale
-            px, py = x + cos * offset * ui, y + sin * offset * ui
-            p.save()
-            p.translate(px, py)
-            p.scale(size * 1.5, size * 1.5)
-            p.setBrush(_alpha(colour, a * 0.22))   # its glow
-            p.drawPath(self._path)
-            p.scale(1 / 1.5, 1 / 1.5)
-            p.setBrush(_alpha(colour, a))
-            p.drawPath(self._path)
-            p.restore()
+            out.append((x + cos * offset * ui, y + sin * offset * ui,
+                        s.size / 10.0 * ui * scale,
+                        _alpha(colour, a * 0.22), _alpha(colour, a)))
+        return out
 
     @staticmethod
-    def _paint_aura(p, centre, k, live, error, reveal, sec, acc, scale,
-                    alpha) -> None:
+    def _aura(k, live, error, reveal, sec, acc, scale, alpha):
+        """[(disc radius, gradient radius, [(stop, colour)])]."""
         r = AURA_R * k * scale
         ray = AURA_RAY * k * scale
         gold = (1.0 - live) * (1.0 - 0.6 * error) * alpha * reveal
+        out = []
         for colour, a, stops in (
                 (sec, gold, ((0.0, 0.12), (0.32, 0.045), (0.62, 0.0))),
                 (acc, live * alpha * reveal,
                  ((0.0, 0.24), (0.34, 0.08), (0.64, 0.0)))):
             if a <= 0.005:
                 continue
-            grad = QRadialGradient(centre, ray)
-            for at, level in stops:
-                grad.setColorAt(at, _alpha(colour, level * a))
-            p.setBrush(grad)
-            p.drawEllipse(centre, r, r)
+            out.append((r, ray, tuple((at, _alpha(colour, level * a))
+                                      for at, level in stops)))
+        return out
 
     @staticmethod
-    def _paint_geometry(p, centre, k, now, live, colour, reveal,
-                        stars) -> None:
+    def _geometry(k, now, live, colour, light, glow, reveal, stars):
+        """The ring, the dashed ring, the stars and the beads."""
         width = max(1.0, k)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for r, a in RINGS:
-            p.setPen(QPen(_alpha(colour, a * reveal), width))
-            p.drawEllipse(centre, r * k, r * k)
-        p.save()
-        p.translate(centre)
-        p.rotate(-360.0 * now / DASH_TURN_MS)
         dash = QPen(_alpha(colour, DASH_ALPHA * reveal), width)
         dash.setDashPattern([1.5, 10.0])
-        p.setPen(dash)
-        p.drawEllipse(QPointF(0, 0), DASH_R * k, DASH_R * k)
-        p.restore()
-
-        # The stars: one swell and turn for both, each turning on its own.
-        scale, turn, opacity = stars
-        p.save()
-        p.translate(centre)
-        p.scale(k * scale, k * scale)
-        p.rotate(turn)
+        # The stars: one swell (idle) and kick for both, each turning on
+        # its own, charged with the ring.
+        scale, turn = stars
+        squares = []
         for half, period, sense, (idle_a, live_a), angles in (
                 (STAR_HALF, STAR_TURN_MS, 1.0, STAR_ALPHA, (0.0, 45.0)),
                 (STAR2_HALF, STAR2_TURN_MS, -1.0, STAR2_ALPHA,
                  (22.5, 67.5))):
-            a = (idle_a + (live_a - idle_a) * live) * opacity * reveal
-            p.setPen(QPen(_alpha(colour, a), 1.0 / scale))
+            a = (idle_a + (live_a - idle_a) * live) * reveal
+            pens = _charged_pens(colour, light, a, 1.0 / scale, glow)
             for angle in angles:
-                p.save()
-                p.rotate(angle + sense * 360.0 * now / period)
-                p.drawRect(QRectF(-half, -half, 2 * half, 2 * half))
-                p.restore()
-        p.restore()
-
-        p.setPen(Qt.PenStyle.NoPen)
-        for i in range(8):
-            u = breath_pos(now - i * BEAD_STEP, BEAD_MS)
-            a = keyframes(u, BEAD) * reveal
-            p.setBrush(_alpha(colour, a))
-            angle = math.radians(i * 45.0)
-            p.drawEllipse(QPointF(centre.x() + 200 * k * math.sin(angle),
-                                  centre.y() - 200 * k * math.cos(angle)),
-                          BEAD_R * k, BEAD_R * k)
+                squares.append((half, angle + sense * 360.0 * now / period,
+                                pens))
+        beads = [_alpha(colour, keyframes(breath_pos(now - i * BEAD_STEP,
+                                                     BEAD_MS), BEAD) * reveal)
+                 for i in range(8)]
+        return {
+            "ring": _charged_pens(colour, light, RING_ALPHA * reveal, width,
+                                  glow),
+            "ring_r": RING_R * k,
+            "dash": dash, "dash_r": DASH_R * k,
+            "dash_turn": -360.0 * now / DASH_TURN_MS,
+            "stars_scale": k * scale, "stars_turn": turn,
+            "squares": squares,
+            "beads": beads, "bead_r": BEAD_R * k}
 
     @staticmethod
-    def _paint_flares(p, centre, k, cycle, gain, live, colour,
-                      reveal) -> None:
-        """The beads flare as each pulse's band passes them."""
+    def _flares(k, cycle, gain, live, colour, reveal):
+        """The beads flare as each pulse's band passes them: (colour,
+        radius), or None."""
         if live <= 0.001:
-            return
+            return None
         a = FLARE[0][1]                  # waiting for the first pulse
         if cycle is not None:
             rel = cycle - FLARE_DELAY
@@ -495,18 +547,12 @@ class NightSky:
                 a = rest + (a - rest) * (gain(index) if index >= 0 else 0.0)
         a *= live * reveal
         if a <= 0.005:
-            return
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_alpha(colour, a))
-        for i in range(8):
-            angle = math.radians(i * 45.0)
-            p.drawEllipse(QPointF(centre.x() + 200 * k * math.sin(angle),
-                                  centre.y() - 200 * k * math.cos(angle)),
-                          FLARE_R * k, FLARE_R * k)
+            return None
+        return _alpha(colour, a), FLARE_R * k
 
-    def _paint_halos(self, p, centre, k, cycle, gain, acc, light,
-                     reveal) -> None:
-        p.setBrush(Qt.BrushStyle.NoBrush)
+    def _halos(self, k, cycle, gain, acc, light, reveal):
+        """[(radius, [pens])]: the halos leaving the disc."""
+        out = []
         for delay in HALO_DELAYS:
             event = self._events(cycle, gain, float(delay), HALO_MS)
             if event is None:
@@ -517,8 +563,99 @@ class NightSky:
             a = HALO_ALPHA * (1.0 - e) * g * reveal
             if a <= 0.005:
                 continue
-            r = DISC_R * k * grow
-            for colour, width, level in ((acc, 10.0, 0.07), (acc, 5.0, 0.14),
-                                         (light, 1.0, 1.0)):
-                p.setPen(QPen(_alpha(colour, a * level), width * k * grow))
+            out.append((DISC_R * k * grow, [
+                QPen(_alpha(colour, a * level), width * k * grow)
+                for colour, width, level in ((acc, 10.0, 0.07),
+                                             (acc, 5.0, 0.14),
+                                             (light, 1.0, 1.0))]))
+        return out
+
+    # -- painting ------------------------------------------------------------------
+    def paint(self, p, box: QRectF, clip, centre: QPointF, k: float,
+              ui: float, now: float, look: dict) -> None:
+        """Paint the sky at `now` (see frame) inside `clip`."""
+        f = self.frame(box, centre, k, ui, now, look)
+        if f is None:
+            return
+        p.save()
+        p.setClipPath(clip)
+        p.setPen(Qt.PenStyle.NoPen)
+        if f["band"] is not None:
+            r, stops = f["band"]
+            grad = QRadialGradient(centre, r)
+            for at, colour in stops:
+                grad.setColorAt(at, colour)
+            p.setBrush(grad)
+            p.drawEllipse(centre, r, r)
+        for at, glow_r, glow, r, colour in f["motes"]:
+            p.setBrush(glow)
+            p.drawEllipse(at, glow_r, glow_r)
+            p.setBrush(colour)
+            p.drawEllipse(at, r, r)
+        for x, y, size, glow, colour in f["sparkles"]:
+            p.save()
+            p.translate(x, y)
+            p.scale(size * 1.5, size * 1.5)
+            p.setBrush(glow)
+            p.drawPath(self._path)
+            p.scale(1 / 1.5, 1 / 1.5)
+            p.setBrush(colour)
+            p.drawPath(self._path)
+            p.restore()
+        for r, ray, stops in f["aura"]:
+            grad = QRadialGradient(centre, ray)
+            for at, colour in stops:
+                grad.setColorAt(at, colour)
+            p.setBrush(grad)
+            p.drawEllipse(centre, r, r)
+        self._paint_geometry(p, centre, k, f["geometry"])
+        if f["flares"] is not None:
+            colour, r = f["flares"]
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(colour)
+            for i in range(8):
+                p.drawEllipse(_bead(centre, k, i), r, r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for r, pens in f["halos"]:
+            for pen in pens:
+                p.setPen(pen)
                 p.drawEllipse(centre, r, r)
+        p.restore()
+
+    @staticmethod
+    def _paint_geometry(p, centre, k, g) -> None:
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for pen in g["ring"]:
+            p.setPen(pen)
+            p.drawEllipse(centre, g["ring_r"], g["ring_r"])
+        p.save()
+        p.translate(centre)
+        p.rotate(g["dash_turn"])
+        p.setPen(g["dash"])
+        p.drawEllipse(QPointF(0, 0), g["dash_r"], g["dash_r"])
+        p.restore()
+
+        p.save()
+        p.translate(centre)
+        p.scale(g["stars_scale"], g["stars_scale"])
+        p.rotate(g["stars_turn"])
+        outlines = {}
+        for half, angle, pens in g["squares"]:
+            key = (half, id(pens))
+            if key not in outlines:
+                outlines[key] = [_square_outline(half, pen) for pen in pens]
+            p.save()
+            p.rotate(angle)
+            for pen, brush, edges, corners in outlines[key]:
+                p.setPen(pen)
+                p.drawLines(edges)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(brush)
+                p.drawPath(corners)
+            p.restore()
+        p.restore()
+
+        p.setPen(Qt.PenStyle.NoPen)
+        for i, colour in enumerate(g["beads"]):
+            p.setBrush(colour)
+            p.drawEllipse(_bead(centre, k, i), g["bead_r"], g["bead_r"])
