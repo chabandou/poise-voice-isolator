@@ -34,12 +34,13 @@ otherwise, or with POISE_SKY_RASTER=1, it is painted here. With the
 ambient motion still (animations.ambient_ok: Reduce motion in Settings)
 there is no GPU view: one still sky is painted here and kept.
 """
+import math
 import time
 
 from PyQt6.QtWidgets import QFrame
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
-                         QPen, QRadialGradient, QTransform)
+                         QPen, QRadialGradient, QRegion, QTransform)
 
 from ..animations import Blend, EASE_BREATHE, FrameTimer, ambient_ok
 from ...logging_config import get_logger
@@ -131,6 +132,7 @@ class PatternCard(QFrame):
         self._ping_at = None
         self._ping_end = None                  # pings stopped: ring fades
         self._pinging = False                  # a ring is on screen
+        self._ping_region = QRegion()          # where it was painted last
         self._ping_timer = FrameTimer(self)
         self._ping_timer.setInterval(PING_FRAME_MS)
         self._ping_timer.timeout.connect(self._ping_tick)
@@ -277,7 +279,8 @@ class PatternCard(QFrame):
         self._ping_timer.stop()
         if self._pinging:
             self._pinging = False
-            self.update()
+            self.update(self._ping_region)
+        self._ping_region = QRegion()
 
     def showEvent(self, event):  # noqa: N802 (Qt override)
         super().showEvent(event)
@@ -346,9 +349,17 @@ class PatternCard(QFrame):
     def _ping_tick(self) -> None:
         if not self.isVisible():
             return
-        on = self._ping_frame() is not None
+        frame = self._ping_frame()
+        on = frame is not None
         if on or self._pinging:   # one more frame clears the last ring
-            self.update()
+            # Only where the ring is, or just was: not the card (or the
+            # dial over it) as a whole.
+            region = QRegion()
+            centre = self._ping_centre() if on else None
+            if centre is not None:
+                region = self._ring_region(centre, frame[0])
+            self.update(region.united(self._ping_region))
+            self._ping_region = region
         self._pinging = on
         if not on and self._ping_end is not None:
             self._clear_pings()   # the fading ring is gone: all done
@@ -378,6 +389,20 @@ class PatternCard(QFrame):
         return (PING_FROM + (PING_TO - PING_FROM) * eased,
                 alpha * (1 - eased) * fade)
 
+    def _ring_region(self, centre: QPointF, radius: float) -> QRegion:
+        """Where a ping ring of `radius` (design px) can draw: its box, less
+        the square inside the clear middle of the ring (see _paint_ping)."""
+        k = ui_scale()
+        r = radius * k
+        outer = QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
+        region = QRegion(outer.toAlignedRect().adjusted(-2, -2, 2, 2))
+        half = (r - PING_BAND * k) / math.sqrt(2.0) - 2.0
+        if half > 0:
+            region = region.subtracted(QRegion(QRectF(
+                centre.x() - half, centre.y() - half, 2 * half, 2 * half
+            ).toRect()))
+        return region.intersected(QRegion(self.rect()))
+
     def _ping_centre(self):
         origin = self._origin
         if origin is None or not origin.isVisible():
@@ -404,7 +429,8 @@ class PatternCard(QFrame):
         frame = self._ping_frame()
         centre = self._ping_centre() if frame is not None else None
         if centre is not None:
-            self._paint_ping(p, w, h, centre, *frame)
+            self._paint_ping(p, w, h, centre, *frame,
+                             within=event.region())
         p.end()
 
     def _paint_sky(self, w: int, h: int) -> None:
@@ -597,11 +623,15 @@ class PatternCard(QFrame):
                 (at.x(), at.y()), (page.width(), page.height()))
         return self._base
 
-    def _paint_ping(self, p, w, h, centre, radius, alpha) -> None:
-        """The accent lattice, seen only through a ring around `centre`."""
+    def _paint_ping(self, p, w, h, centre, radius, alpha,
+                    within: QRegion = None) -> None:
+        """The accent lattice, seen only through a ring around `centre`
+        (worked out only in the part of `within` the ring covers)."""
         r = radius * ui_scale()
-        box = QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
-        box = box.intersected(QRectF(0, 0, w, h)).toAlignedRect()
+        region = self._ring_region(centre, radius)
+        if within is not None:
+            region = region.intersected(within)
+        box = region.boundingRect().intersected(QRect(0, 0, w, h))
         if box.isEmpty() or r <= 0:
             return
         layer = self._ping_image(w, h)
@@ -611,6 +641,7 @@ class PatternCard(QFrame):
         ring.setDevicePixelRatio(dpr)
         ring.fill(Qt.GlobalColor.transparent)
         q = QPainter(ring)
+        q.setClipRegion(region.translated(-box.x(), -box.y()))
         q.drawImage(QPointF(-box.x(), -box.y()), layer)
         k = ui_scale()
         grad = QRadialGradient(
