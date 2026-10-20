@@ -56,10 +56,12 @@ const Transparency = () => {
 
 					{/* The app's About page */}
 					<div className="flex w-full max-w-[22rem] flex-col items-center text-center">
-						<div className="aspect-square w-[78%]" {...reveal(300, 'spin')}>
+						<div className="aspect-square w-[78%]" {...reveal(0, 'draw')}>
 							<Emblem className="h-full w-full" />
 						</div>
-						<p className="mt-6 font-heading text-[1.9rem] font-bold leading-none text-ink">Poise Voice Isolator</p>
+						<p className="mt-6 font-heading text-[1.9rem] font-bold leading-none text-ink" {...reveal(1250)}>
+							Poise Voice Isolator
+						</p>
 						<p className="mt-3 h-5 font-mono text-[0.85rem] text-secondary">{version ?? ''}</p>
 						<p className="mt-2 text-[0.95rem] text-ink/90">Real-time voice isolation. Runs 100% on-device.</p>
 					</div>

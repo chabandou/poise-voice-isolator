@@ -4,14 +4,15 @@ import { useEffect, type CSSProperties } from 'react';
 // {...reveal(delayMs, variant)}; useReveal() (mounted once in App) sets
 // data-revealed when it scrolls into view, which plays the CSS animation in
 // index.css. Variants: up (default), fade, scale, line, spin, tilt (rises
-// from a slight backward lean; its parent needs a perspective).
+// from a slight backward lean; its parent needs a perspective), draw (no
+// motion of its own: its children draw themselves on, e.g. Brand's Emblem).
 //
 // The marker is an attribute React never renders, not a class: React
 // rewrites className whenever it changes (e.g. a theme tile becoming
 // selected), which would silently wipe an imperatively added class and
 // hide the element again.
 
-export type RevealVariant = 'up' | 'fade' | 'scale' | 'line' | 'spin' | 'tilt';
+export type RevealVariant = 'up' | 'fade' | 'scale' | 'line' | 'spin' | 'tilt' | 'draw';
 
 export const reveal = (delay = 0, variant: RevealVariant = 'up', style?: CSSProperties) => ({
 	'data-reveal': variant,

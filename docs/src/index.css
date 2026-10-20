@@ -902,6 +902,132 @@ body {
 	100% { opacity: 0.5; scale: 1.03; }
 }
 
+/* ---------------------------------------------------------------------
+   The About emblem draws itself on when it scrolls into view, the way
+   Manim's Create / Write / LaggedStart do (Brand.tsx Emblem): the dial
+   face traced from twelve o'clock and filled, the ticks sweeping round
+   clockwise, each growing outward, the wave written along its length and
+   its axis dashes set down, the needle landing last. ~1.8 s, once. The
+   prerendered page and reduced motion show it finished.
+   --------------------------------------------------------------------- */
+[data-reveal="draw"],
+.js [data-reveal="draw"]:not([data-revealed]) {
+	opacity: 1;
+}
+
+[data-reveal="draw"][data-revealed] {
+	animation: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.emblem {
+		/* Manim's default rate function, smooth. */
+		--manim-ease: cubic-bezier(0.45, 0, 0.55, 1);
+	}
+
+	/* Unit dashes on unit-length paths: the offset is how much is undrawn. */
+	.emblem__face,
+	.emblem__tick,
+	.emblem__wave {
+		stroke-dasharray: 1 2;
+	}
+
+	/* Waiting to be seen: everything undrawn. */
+	.js [data-reveal="draw"]:not([data-revealed]) .emblem__face {
+		stroke-dashoffset: 1;
+		fill-opacity: 0;
+	}
+
+	.js [data-reveal="draw"]:not([data-revealed]) :is(.emblem__tick, .emblem__wave) {
+		stroke-dashoffset: 1;
+		stroke-opacity: 0;
+	}
+
+	.js [data-reveal="draw"]:not([data-revealed]) :is(.emblem__needle, .emblem__dash) {
+		opacity: 0;
+	}
+
+	[data-revealed] .emblem__face {
+		animation:
+			emblem-stroke 620ms var(--manim-ease) backwards,
+			emblem-fill 700ms var(--manim-ease) 380ms backwards;
+	}
+
+	[data-revealed] .emblem__tick {
+		animation: emblem-stroke 380ms var(--manim-ease) calc(420ms + var(--i) * 9ms) backwards;
+	}
+
+	[data-revealed] .emblem__wave {
+		animation: emblem-stroke 1050ms var(--manim-ease) 380ms backwards;
+	}
+
+	[data-revealed] .emblem__dash {
+		transform-box: fill-box;
+		transform-origin: center;
+		animation: emblem-dash 320ms var(--reveal-ease) calc(1250ms + var(--i) * 60ms) backwards;
+	}
+
+	[data-revealed] .emblem__needle {
+		transform-box: fill-box;
+		transform-origin: center;
+		animation: emblem-needle 560ms cubic-bezier(0.34, 1.56, 0.64, 1) 1300ms backwards;
+	}
+
+	[data-revealed] .emblem__mark {
+		animation: emblem-bloom 900ms var(--manim-ease) 1300ms;
+	}
+}
+
+/* stroke-opacity, not opacity, so the ticks' own 0.78 is left alone;
+   it hides the round cap's dot before the pen moves. */
+@keyframes emblem-stroke {
+	from {
+		stroke-dashoffset: 1;
+		stroke-opacity: 0;
+	}
+	8% {
+		stroke-opacity: 1;
+	}
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+@keyframes emblem-fill {
+	from { fill-opacity: 0; }
+	to { fill-opacity: 1; }
+}
+
+@keyframes emblem-dash {
+	from {
+		opacity: 0;
+		scale: 0 1;
+	}
+	to {
+		opacity: 1;
+		scale: 1 1;
+	}
+}
+
+@keyframes emblem-needle {
+	from {
+		opacity: 0;
+		translate: 0 -14px;
+	}
+	40% {
+		opacity: 1;
+	}
+	to {
+		translate: 0 0;
+	}
+}
+
+/* The finished mark breathes once as the needle lands. */
+@keyframes emblem-bloom {
+	0%, 100% { filter: drop-shadow(0 0 0 color-mix(in srgb, var(--color-icon) 0%, transparent)); }
+	45% { filter: drop-shadow(0 0 10px color-mix(in srgb, var(--color-icon) 55%, transparent)); }
+}
+
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;
