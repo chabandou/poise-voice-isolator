@@ -5,7 +5,7 @@ Named, self-matching palettes for the GUI. Every theme carries the full
 token set consumed by styles.get_stylesheet() and the painted widgets,
 so switching themes can never leave a stray color behind.
 
-Themes ship with the app; the selection persists in Settings ("abyss"
+Themes ship with the app; the selection persists in Settings ("halcyon"
 is the default and preserves the original look).
 """
 from typing import Dict, List
@@ -22,8 +22,8 @@ KEYS = (
 )
 
 THEMES: Dict[str, Dict] = {
-    "abyss": {
-        "label": "Abyss",
+    "halcyon": {
+        "label": "Halcyon",
         "blurb": "Signature cyan on deep navy.",
         "bg": "#0a111e", "sidebar": "#080e18",
         "card": "#0f1828", "pill": "#111c30", "groove": "#1d2a3b",
@@ -54,20 +54,20 @@ THEMES: Dict[str, Dict] = {
         "badge_bg": "#10201d", "badge_fg": "#3fb890",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
-    "mono": {
-        "label": "Mono",
-        "blurb": "Neutral grayscale, distraction-free.",
-        "bg": "#101012", "sidebar": "#0c0c0e",
-        "card": "#151517", "pill": "#1a1a1e", "groove": "#2e2e34",
-        "text": "#f5f5f5", "muted": "#a7a7ae",
-        "device_title": "#b5b5bc",
-        "nav_active": "#e4e4e7", "nav_muted": "#a3a3a9",
-        "accent": "#c9d1db", "accent_light": "#eceff3",
-        "accent_rgb": "201, 209, 219",
-        "secondary": "#B9B3A8", "secondary_rgb": "185, 179, 168",
-        "border_rgb": "255, 255, 255", "border_alpha": 0.30,
-        "divider_rgb": "255, 255, 255", "divider_alpha": 0.42,
-        "badge_bg": "#232329", "badge_fg": "#c9d1db",
+    "ember": {
+        "label": "Ember",
+        "blurb": "Warm amber on dark roast.",
+        "bg": "#140f0a", "sidebar": "#100c08",
+        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
+        "text": "#fff8f0", "muted": "#a39a8b",
+        "device_title": "#ab9f8d",
+        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
+        "accent": "#f5a524", "accent_light": "#ffd9ab",
+        "accent_rgb": "245, 165, 36",
+        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
+        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
+        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
+        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
     "vigil": {
@@ -96,20 +96,20 @@ THEMES: Dict[str, Dict] = {
         "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
                       "stop:0 #18143c, stop:1 #100e29)"),
     },
-    "ember": {
-        "label": "Ember",
-        "blurb": "Warm amber on dark roast.",
-        "bg": "#140f0a", "sidebar": "#100c08",
-        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
-        "text": "#fff8f0", "muted": "#a39a8b",
-        "device_title": "#ab9f8d",
-        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
-        "accent": "#f5a524", "accent_light": "#ffd9ab",
-        "accent_rgb": "245, 165, 36",
-        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
-        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
-        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
-        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
+    "mono": {
+        "label": "Mono",
+        "blurb": "Neutral grayscale, distraction-free.",
+        "bg": "#101012", "sidebar": "#0c0c0e",
+        "card": "#151517", "pill": "#1a1a1e", "groove": "#2e2e34",
+        "text": "#f5f5f5", "muted": "#a7a7ae",
+        "device_title": "#b5b5bc",
+        "nav_active": "#e4e4e7", "nav_muted": "#a3a3a9",
+        "accent": "#c9d1db", "accent_light": "#eceff3",
+        "accent_rgb": "201, 209, 219",
+        "secondary": "#B9B3A8", "secondary_rgb": "185, 179, 168",
+        "border_rgb": "255, 255, 255", "border_alpha": 0.30,
+        "divider_rgb": "255, 255, 255", "divider_alpha": 0.42,
+        "badge_bg": "#232329", "badge_fg": "#c9d1db",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
     "orchid": {
@@ -130,11 +130,11 @@ THEMES: Dict[str, Dict] = {
     },
 }
 
-DEFAULT_THEME = "abyss"
+DEFAULT_THEME = "halcyon"
 
 #: Retired theme ids and the theme that replaced each, so a saved choice
 #: lands on its successor rather than the default.
-RENAMED = {"ultraviolet": "vigil"}
+RENAMED = {"ultraviolet": "vigil", "abyss": "halcyon"}
 
 #: Optional per-theme keys and their values when a theme leaves them out.
 #: backdrop: what the dial card shows behind the dial ("lattice" or

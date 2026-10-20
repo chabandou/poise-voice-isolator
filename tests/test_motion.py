@@ -71,7 +71,7 @@ def _styled_ghost(app):
     from stream_denoiser.gui.animations import install_hover_fades
     from stream_denoiser.gui.fonts import load_fonts
     from stream_denoiser.gui.styles import get_stylesheet
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     load_fonts()
     root = QWidget()
     root.setStyleSheet(get_stylesheet())
@@ -152,32 +152,6 @@ def test_nav_hover_wash_fades_in_and_yields_to_the_active_wash(app):
     _pump(app, 0.4)
     assert nav._hover_blend.value == pytest.approx(0.0)
     nav.close()
-
-
-def test_model_card_surface_transitions(app):
-    from stream_denoiser.gui.widgets.model_cards import ModelCards
-    cards = ModelCards()
-    cards.show()
-    _pump(app, 0.2)
-    first = next(c for c in cards._cards.values() if c.isEnabled())
-    assert first._check.value == 1.0 and not first._check.running  # restored: snapped
-    other = next((c for c in cards._cards.values()
-                  if c.isEnabled() and c is not first), None)
-    if other is not None:
-        other.click()
-        assert other._check.target == 1.0 and other._check.running
-        assert first._check.target == 0.0
-        _pump(app, 0.4)
-        assert other._check.value == pytest.approx(1.0)
-        assert first._check.value == pytest.approx(0.0)
-        _leave(first)                          # offscreen pointer sits at (0, 0)
-        _pump(app, 0.3)
-        _enter(first)
-        assert first._hover.target == 1.0 and first._hover.running
-        _leave(first)
-        assert first._hover.target == 0.0
-    cards.grab()                               # paints cleanly mid/after
-    cards.close()
 
 
 def test_settings_row_wash_is_eased(app):
@@ -282,7 +256,7 @@ def test_theme_switch_crossfades_from_a_snapshot(app):
     win.show()
     _pump(app, 0.6)
     original = win.settings.theme
-    target = "verdant" if original != "verdant" else "abyss"
+    target = "verdant" if original != "verdant" else "halcyon"
     try:
         win._apply_theme(target)
         assert len(_fade_overlays(win)) == 1
@@ -301,7 +275,7 @@ def test_theme_switch_is_instant_under_reduced_motion(app, monkeypatch):
     _pump(app, 0.4)
     original = win.settings.theme
     monkeypatch.setenv("POISE_NO_ANIM", "1")
-    target = "verdant" if original != "verdant" else "abyss"
+    target = "verdant" if original != "verdant" else "halcyon"
     win._apply_theme(target)
     assert _fade_overlays(win) == []
     win._apply_theme(original)

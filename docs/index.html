@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="abyss">
+<html lang="en" data-theme="halcyon">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -26,8 +26,9 @@
       // Apply the saved colour theme before first paint (see src/themes.ts).
       try {
         var saved = localStorage.getItem('poise-theme');
-        if (saved === 'ultraviolet') saved = 'vigil'; // renamed theme
-        if (/^(abyss|verdant|mono|vigil|ember|orchid)$/.test(saved)) {
+        if (saved === 'ultraviolet') saved = 'vigil'; // renamed themes
+        if (saved === 'abyss') saved = 'halcyon';
+        if (/^(halcyon|verdant|mono|vigil|ember|orchid)$/.test(saved)) {
           document.documentElement.dataset.theme = saved;
         }
       } catch (e) {}

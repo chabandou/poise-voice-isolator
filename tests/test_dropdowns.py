@@ -28,7 +28,7 @@ styles = _load("styles")
 themes = _load("themes")
 
 
-def _css(theme_id="abyss"):
+def _css(theme_id="halcyon"):
     return styles.get_stylesheet(scale=1.0, theme=theme_id)
 
 

@@ -21,15 +21,15 @@ def app():
 
 
 @pytest.fixture(autouse=True)
-def _abyss_current():
+def _halcyon_current():
     from stream_denoiser.gui import themes
     prev = themes.current_id()
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     yield
     themes.set_current(prev)
 
 
-def _make_tile(checked=False, theme_id="abyss", width=120):
+def _make_tile(checked=False, theme_id="halcyon", width=120):
     from stream_denoiser.gui.widgets.theme_tile import ThemeTile
     tile = ThemeTile(theme_id)
     tile.resize(width, tile.height())
@@ -75,7 +75,7 @@ def test_every_tile_paints_at_its_minimum_width(app):
     """Long names shrink to fit instead of clipping."""
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.theme_tile import ThemeTile
-    narrowest = ThemeTile("abyss").minimumSizeHint().width()
+    narrowest = ThemeTile("halcyon").minimumSizeHint().width()
     for theme_id in themes.theme_ids():
         tile = _make_tile(theme_id=theme_id, width=narrowest)
         tile.grab()
@@ -156,13 +156,13 @@ def test_outline_uses_the_current_themes_secondary(app):
     from stream_denoiser.gui import themes
     tile = _make_tile(checked=True, theme_id="mono")
     _pump(app)
-    abyss_gold = themes.get_theme("abyss")["secondary"]
+    halcyon_gold = themes.get_theme("halcyon")["secondary"]
     ember_teal = themes.get_theme("ember")["secondary"]
-    assert _ring_pixels(tile, abyss_gold) > 30
+    assert _ring_pixels(tile, halcyon_gold) > 30
     assert _ring_pixels(tile, ember_teal) == 0
     themes.set_current("ember")
     assert _ring_pixels(tile, ember_teal) > 30
-    assert _ring_pixels(tile, abyss_gold) == 0
+    assert _ring_pixels(tile, halcyon_gold) == 0
     tile.close()
 
 

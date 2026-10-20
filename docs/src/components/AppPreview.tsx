@@ -113,7 +113,7 @@ const AppWindow = () => {
 };
 
 const ThemePicker = () => {
-	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'abyss');
+	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'halcyon');
 	const activeTheme = THEMES.find((theme) => theme.id === active) ?? THEMES[0];
 
 	return (

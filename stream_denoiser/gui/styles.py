@@ -178,25 +178,6 @@ QLabel#home-title {
     color: {text};
 }
 
-/* Model cards: the card surface is painted by _ModelCard (animated). */
-QLabel#model-name {
-    font-family: {HEADING_FONT};
-    font-size: 24px;
-    font-weight: {HEADING_WEIGHT};
-    color: {text};
-    background-color: transparent;
-}
-
-QLabel#model-blurb {
-    font-size: 14px;
-    color: {muted};
-    background-color: transparent;
-}
-
-QLabel#model-name:disabled {
-    color: {muted};
-}
-
 QLabel#log-path {
     font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
     font-size: 12px;

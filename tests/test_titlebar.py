@@ -45,7 +45,7 @@ class _Win:
 
 def test_windows_11_sets_caption_text_and_border(monkeypatch):
     calls = _fake_windows(monkeypatch, 22631)
-    p = themes.get_theme("abyss")
+    p = themes.get_theme("halcyon")
     assert titlebar.apply_titlebar(_Win(), p) is True
     attrs = dict(calls)
     assert attrs[titlebar.DWMWA_USE_IMMERSIVE_DARK_MODE] == 1

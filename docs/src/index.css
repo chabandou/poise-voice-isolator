@@ -6,7 +6,7 @@
 
 /* Design tokens mirror the desktop app (stream_denoiser/gui/themes.py):
    bg/deep/card/pill/groove are the surfaces, accent means "live",
-   secondary (gold in Abyss) means "available / selected", and edge is the
+   secondary (gold in Halcyon) means "available / selected", and edge is the
    card outline. Every theme below redefines the same set. */
 @theme {
 	--color-bg: #0a111e;
