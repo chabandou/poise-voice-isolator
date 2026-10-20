@@ -81,6 +81,8 @@ SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
 SKY_REVEAL_MS = 2400        # ...slowly
+# Held for these, the card's motion goes on (Home's first show).
+_HOLDS_THAT_RUN = frozenset(("showing", "entrance"))
 TEXT_PAD = 16               # design px round the headline: its swaps' smoke
 # A widget on the card drew, moved or went: its layer is redrawn.
 _TEXT_EVENTS = (QEvent.Type.Paint, QEvent.Type.Move, QEvent.Type.Resize,
@@ -129,6 +131,8 @@ class PatternCard(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._paused_at = None                 # see _now
+        self._paused_for = 0.0
         self._layer_key = self._layer = None   # masked lattice, white
         self._tint_key = self._tinted = None   # the same, coloured
         self._bare_key = self._bare = None     # unmasked lattice, white
@@ -147,7 +151,7 @@ class PatternCard(QFrame):
         # The night sky (sky backdrop only; built on first use).
         self._sky = None
         self._phase = "idle"
-        self._gather_at = time.monotonic()   # the starting draw-in began
+        self._gather_at = self._now()   # the starting draw-in began
         self._gather = Blend(self, self._changed, SKY_GATHER_MS,
                              EASE_BREATHE)
         self._error = Blend(self, self._changed, SKY_LIVE_FADE_MS,
@@ -179,6 +183,24 @@ class PatternCard(QFrame):
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
 
+    # -- the ambient clock -----------------------------------------------------------
+    def _now(self) -> float:
+        """The time the card's motion (and the dial's: see
+        set_ping_origin) goes by: the wall clock, stopped while Home is
+        away and while it slides in or out, so it goes on from where it
+        was, as the still the slide showed."""
+        at = self._paused_at
+        return (time.monotonic() if at is None else at) - self._paused_for
+
+    def _sync_pause(self) -> None:
+        stop = ((self._revealed and not self.isVisible())
+                or bool(self._holds - _HOLDS_THAT_RUN))
+        if stop and self._paused_at is None:
+            self._paused_at = time.monotonic()
+        elif not stop and self._paused_at is not None:
+            self._paused_for += time.monotonic() - self._paused_at
+            self._paused_at = None
+
     def _changed(self) -> None:
         """What the backdrop shows moved: the GPU sky's next frame, or a
         repaint."""
@@ -203,7 +225,7 @@ class PatternCard(QFrame):
             return
         self._phase = phase
         if phase == "starting":
-            self._gather_at = time.monotonic()
+            self._gather_at = self._now()
         animated = self.isVisible() and ambient_ok()
         self._gather.set_target(1.0 if phase == "starting" else 0.0, animated)
         self._error.set_target(1.0 if phase == "error" else 0.0, animated)
@@ -234,7 +256,7 @@ class PatternCard(QFrame):
             self._ping_timer.stop()
             if self._ping_at is not None and self._ping_end is None:
                 # Mid-isolation: carry on breathing from now.
-                self._ping_at = time.monotonic()
+                self._ping_at = self._now()
         else:
             self._sky_timer.stop()
             if self._ping_at is not None and self.isVisible():
@@ -253,7 +275,11 @@ class PatternCard(QFrame):
             self._mirror_dial(False)
             if self._origin is not None:
                 self._origin.removeEventFilter(self)
+        if hasattr(self._origin, "set_time_source"):
+            self._origin.set_time_source(None)
         self._origin = widget
+        if hasattr(widget, "set_time_source"):
+            widget.set_time_source(self._now)   # one clock for both
         if view is not None:
             widget.installEventFilter(self)
             if not self._holds:
@@ -264,7 +290,7 @@ class PatternCard(QFrame):
         """First ping now, then one every PING_PERIOD_MS until stopped."""
         if not ambient_ok():
             return
-        self._ping_at = time.monotonic()
+        self._ping_at = self._now()
         self._ping_end = None
         if self._sky_on():
             self._run_sky()                    # a breath starts now
@@ -283,13 +309,13 @@ class PatternCard(QFrame):
             # The sky keeps its rhythm while it fades back to gold; only
             # the pulse in flight fades and no new one leaves.
             if fade and ambient_ok():
-                self._ping_end = time.monotonic()
+                self._ping_end = self._now()
                 self._run_sky()
             else:
                 self._clear_pings()
             return
         if fade and ambient_ok() and self._ping_frame() is not None:
-            self._ping_end = time.monotonic()
+            self._ping_end = self._now()
             if self.isVisible():
                 self._ping_timer.start()
             return
@@ -316,6 +342,7 @@ class PatternCard(QFrame):
                 QTimer.singleShot(SKY_REVEAL_DELAY_MS, self._begin_reveal)
             else:
                 self._reveal.snap(1.0)
+        self._sync_pause()
         if self._ping_at is not None and not self._sky_on():
             self._ping_timer.start()
         self._sync_view()
@@ -332,6 +359,7 @@ class PatternCard(QFrame):
         self._ping_timer.stop()   # e.g. hidden to the tray: no wake-ups
         self._sky_timer.stop()
         super().hideEvent(event)
+        self._sync_pause()
 
     # -- the night sky's clock -----------------------------------------------------
     def _begin_reveal(self) -> None:
@@ -355,7 +383,7 @@ class PatternCard(QFrame):
                 or self._live.value > 0.001 or self._phase == "starting"
                 or self._gather.value > 0.001)
         interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
-        if meteor_due(time.monotonic() * 1000.0, interval):
+        if meteor_due(self._now() * 1000.0, interval):
             interval = SKY_METEOR_FRAME_MS
         if self._sky_timer.interval() != interval:
             self._sky_timer.setInterval(interval)
@@ -364,7 +392,7 @@ class PatternCard(QFrame):
 
     def _sky_tick(self) -> None:
         if (self._ping_end is not None and self._live.value <= 0.001
-                and (time.monotonic() - self._ping_end) * 1000.0
+                and (self._now() - self._ping_end) * 1000.0
                 >= PULSE_FADE_MS):
             self._clear_pings()   # faded back to gold: the breath ends
         self._run_sky()
@@ -403,7 +431,7 @@ class PatternCard(QFrame):
         """(radius in design px, alpha) of the ring on screen, or None."""
         if self._ping_at is None:
             return None
-        now = time.monotonic()
+        now = self._now()
         t = (now - self._ping_at) * 1000.0
         index = int(t // PING_PERIOD_MS)
         into = t - index * PING_PERIOD_MS
@@ -519,7 +547,7 @@ class PatternCard(QFrame):
             self._sky = NightSky()
         palette = current_theme()
         moving = ambient_ok()
-        now = time.monotonic()
+        now = self._now()
         cycle = stopped = None
         if moving and self._ping_at is not None:
             cycle = (now - self._ping_at) * 1000.0
@@ -722,16 +750,20 @@ class PatternCard(QFrame):
         effect could not see the native window)."""
         first = not self._holds
         self._holds.add(reason)
+        self._sync_pause()
         if self._view is None:
             return
         if first:
             self._mirror_dial(False)
+            # The still is this moment, where the motion goes on from.
+            self._show_sky_frame()
         self._view.hold(reason)
 
     def release_native(self, reason: str) -> None:
         if reason not in self._holds:
             return
         self._holds.discard(reason)
+        self._sync_pause()
         view = self._view
         if view is None:
             return

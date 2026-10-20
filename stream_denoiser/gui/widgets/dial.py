@@ -272,6 +272,7 @@ class DialButton(PowerButton):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._now = time.monotonic        # see set_time_source
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self._dial_px = sp(int(REF))
@@ -297,7 +298,7 @@ class DialButton(PowerButton):
 
         # One clock drives every timed effect; the phase says which.
         self._phase = "idle"
-        self._phase_at = time.monotonic()
+        self._phase_at = self._now()
         self._ignite_lit = 0              # lit ticks when the sweep began
         self._ignited = False
         self._drain_at = None             # stopping began (outlasts it)
@@ -384,7 +385,7 @@ class DialButton(PowerButton):
         else:
             self._needle_pos.snap(lit_count(db) - 1)
         if self._dragging or nudge:
-            now = time.monotonic()
+            now = self._now()
             if lit_count(db) != lit_count(old):
                 self._pluck_at = now
                 self._pluck_big = db % 10 == 0
@@ -421,7 +422,7 @@ class DialButton(PowerButton):
         if not animated:
             self._mists = tuple({d: [1.0, 1.0, 0.0]} for d in digits)
             return
-        now = time.monotonic()
+        now = self._now()
         self._mists = tuple(self._mist_column(column, digit, now)
                             for column, digit in zip(self._mists, digits))
         if breathing():
@@ -442,7 +443,7 @@ class DialButton(PowerButton):
         return mists
 
     def _misting(self) -> bool:
-        now = time.monotonic()
+        now = self._now()
         fade = self._mist_ms()
         return any((now - at) * 1000.0 < fade
                    for column in self._mists for _, _, at in column.values())
@@ -521,11 +522,11 @@ class DialButton(PowerButton):
         if self._phase == "live":
             # Leaving live mid-charge: let that glow fade, not cut off.
             self._charge_from = self._charge(self._ms())
-            self._charge_drop_at = time.monotonic()
+            self._charge_drop_at = self._now()
         elif phase == "live":
             self._charge_from, self._charge_drop_at = 0.0, None
         self._phase = phase
-        self._phase_at = time.monotonic()
+        self._phase_at = self._now()
         if phase == "stopping":
             self._drain_at = self._phase_at
         elif phase != "idle":
@@ -561,14 +562,19 @@ class DialButton(PowerButton):
         """Milliseconds into the phase (settled when motion is reduced)."""
         if not ambient_ok():
             return 1e9
-        return (time.monotonic() - self._phase_at) * 1000.0
+        return (self._now() - self._phase_at) * 1000.0
 
-    @staticmethod
-    def _since(stamp) -> float:
-        """Milliseconds since a monotonic stamp (None: long ago)."""
+    def _since(self, stamp) -> float:
+        """Milliseconds since a stamp of _now's (None: long ago)."""
         if stamp is None or not ambient_ok():
             return 1e9
-        return (time.monotonic() - stamp) * 1000.0
+        return (self._now() - stamp) * 1000.0
+
+    def set_time_source(self, now) -> None:
+        """Tell the time by `now()` (the card's ambient clock, which
+        stops while Home is away: the dial and the sky behind it go on
+        together from where they were), or by the wall clock (None)."""
+        self._now = now or time.monotonic
 
     def _ignite_end(self) -> float:
         """When the live sweep (breath: the bloom) closes, in ms into the
@@ -632,13 +638,13 @@ class DialButton(PowerButton):
 
     def _tick(self) -> None:
         if any(len(column) > 1 for column in self._mists):
-            now = time.monotonic()   # drop digits that have misted out
+            now = self._now()   # drop digits that have misted out
             self._mists = tuple(
                 {d: e for d, e in column.items()
                  if e[1] > 0.0 or self._mist_alpha(e, now) > 0.005}
                 for column in self._mists)
         if self._trail:
-            now = time.monotonic()
+            now = self._now()
             gone = TRAIL_MS / 1000.0
             self._trail = {i: s for i, s in self._trail.items()
                            if now - s < gone}
@@ -667,7 +673,7 @@ class DialButton(PowerButton):
             self._swept = True
             if ambient_ok():
                 delay = self._sweep_ms()[0]
-                self._sweep_at = time.monotonic() + delay / 1000.0
+                self._sweep_at = self._now() + delay / 1000.0
                 # The clock starts with the sweep.
                 QTimer.singleShot(delay, self._run_clock)
         self._run_clock()
@@ -836,7 +842,7 @@ class DialButton(PowerButton):
             self._needle_pos.snap(target)
             return
         self._needle_pos.set_target(target)
-        now = time.monotonic()
+        now = self._now()
         span = target - start
         lo, hi = sorted((start, target))
         first = max(0, math.floor(lo + 0.5) + 1)   # ticks that change
@@ -1007,7 +1013,7 @@ class DialButton(PowerButton):
         """Breath: the lit ticks' alpha while idle (a slow swell)."""
         if self._phase != "idle" or not ambient_ok():
             return 1.0
-        return keyframes(breath_pos(time.monotonic() * 1000.0,
+        return keyframes(breath_pos(self._now() * 1000.0,
                                     IDLE_BREATH_MS), TICKS_IDLE)
 
     def _breath_look(self, i: int, lit: int, col: dict, t: float,
@@ -1381,7 +1387,7 @@ class DialButton(PowerButton):
         pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
         head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
-        now = time.monotonic()
+        now = self._now()
         breath = breathing()
         idle = self._idle_breath()
         pulse = self._ring_pulse(t, lit) if lift_breath else None
@@ -1810,7 +1816,7 @@ class DialButton(PowerButton):
         p.setPen(col["text"])
         p.drawText(QPointF(x, baseline), "-")
         x += minus_w
-        now = time.monotonic()
+        now = self._now()
         for column in self._mists:
             for digit, entry in sorted(column.items()):
                 text = str(digit)

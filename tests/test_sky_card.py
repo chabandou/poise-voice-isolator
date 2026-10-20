@@ -226,6 +226,33 @@ def test_an_entrance_effect_holds_the_view_till_it_lands(app, vigil,
     card.close()
 
 
+def test_home_motion_stops_while_it_is_away_or_sliding(app, vigil,
+                                                        monkeypatch):
+    """The card's clock (the dial's too) stops while the card is hidden
+    after its first show and while held for a slide, so its motion goes
+    on from the still a slide showed; not for its entrance."""
+    card, _, _, dial, view = _card(app, monkeypatch)
+    assert dial._now == card._now               # one clock for both
+    card.hide()
+    frozen = card._now()
+    time.sleep(0.05)
+    assert card._now() == frozen
+    card.show()
+    _pump(app, 0.05)
+    assert card._now() > frozen
+    card.hold_native("slide")
+    frozen = card._now()
+    time.sleep(0.05)
+    assert card._now() == frozen
+    card.release_native("slide")
+    card.hold_native("entrance")
+    before = card._now()
+    time.sleep(0.05)
+    assert card._now() > before
+    card.release_native("entrance")
+    card.close()
+
+
 _CLICK_CHECK = """
 import sys, time
 sys.path.insert(0, {root!r})
