@@ -170,7 +170,7 @@ def frame_uniforms(frame, box) -> dict:
         u[f"ringPen{i}"] = _rgba(pen.color())
         widths[i] = pen.widthF()
     u["ring"] = QVector4D(g["ring_r"], *widths)
-    # No shared turn: each square's angle carries its star's own kick.
+    # No shared turn: each square's angle carries the star's own.
     u["stars"] = QVector4D(g["stars_scale"], 0, 0, 0)
     (half, first, pens), (_, second, _) = g["squares"]
     u["squares"] = QVector4D(first, second, 0, 0)
