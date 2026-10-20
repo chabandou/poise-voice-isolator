@@ -1,12 +1,17 @@
 """
 Poise Voice Isolator - Pattern Card
 
-A card (QFrame#card) with the gilded lattice drawn behind its content:
-a 64px tile of a square, its 45-degree twin, spokes to the tile edges
-and a centre dot, all in the theme's secondary colour. The lattice is
-painted at 20% opacity through an elliptical radial mask, clear in the
-middle (where the dial sits) and full strength at the edges. While
-isolating it glides to the accent colour, matching the dial's ring.
+A card (QFrame#card) with the gilded lattice drawn behind its content,
+in the theme's secondary colour. Which lattice is the theme's (its
+"lattice" key; the patterns are in widgets/lattice.py): Halcyon's, the
+first one, a 64px tile of a square, its 45-degree twin, spokes to the
+tile edges and a centre dot; Verdant's khatam strapwork; Ember's
+twelve-pointed stars; Orchid's dome of stars round the dial. The lattice
+is painted at about 20% opacity through a radial mask, clear in the
+middle (where the dial sits) and full strength at the edges: an ellipse
+over the card, or for the dome a circle round the dial. The Islamic
+patterns are centred on the dial. While isolating the lattice glides to
+the accent colour, matching the dial's ring.
 
 While isolating the lattice also pings: a ring of accent-coloured
 lattice leaves the dial (set_ping_origin) and crosses the card. The
@@ -20,6 +25,8 @@ PING_FADE_MS rather than vanishing.
 Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
+The other patterns' numbers (lattice.SPECS) are from the canvas
+"Lattice: Islamic patterns" (boards A, C and E).
 
 A theme whose backdrop is "sky" (Vigil, Eclipse) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
@@ -52,13 +59,11 @@ from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import (breathing, current as current_theme,
                       style as theme_style)
+from . import lattice as patterns
 from .sky import BREATH_MS, PULSE_FADE_MS, NightSky, meteor_due
 
-TILE = 64.0                 # design px per tile
+# The first lattice's tile, stroke, dot and opacity: lattice.SPECS.
 TILE_OFFSET = (-14.0, -6.0)  # pattern x/y: where the first tile starts
-STROKE = 1.0
-DOT_RADIUS = 2.5
-OPACITY = 0.2
 # Radial mask in bounding-box units (elliptical on a non-square card).
 MASK_CENTER = (0.5, 0.55)
 MASK_RADIUS = 0.72
@@ -242,7 +247,13 @@ class PatternCard(QFrame):
         """The (descendant) widget whose centre the pings leave from."""
         if self._view is not None:
             self._hand_ring(False)
+        if self._origin is not None:
+            self._origin.removeEventFilter(self)
         self._origin = widget
+        if widget is not None:
+            # Watched throughout: the GPU sky's ticks and a centred
+            # lattice both follow the dial (see eventFilter).
+            widget.installEventFilter(self)
         if self._view is not None:
             self._hand_ring(True)
 
@@ -436,7 +447,7 @@ class PatternCard(QFrame):
                      self._live.value)
         image = self._tinted_image(w, h, color)
         p = QPainter(self)
-        p.setOpacity(OPACITY)
+        p.setOpacity(patterns.spec(theme_style("lattice"))["opacity"])
         p.drawImage(0, 0, image)
         frame = self._ping_frame()
         centre = self._ping_centre() if frame is not None else None
@@ -577,12 +588,6 @@ class PatternCard(QFrame):
             origin.set_ring_sink(self._view.show_ring if to_view else None)
             if scene is not None and hasattr(origin, "set_face_sink"):
                 origin.set_face_sink(scene.show_dial if to_view else None)
-            # Where the ticks go follows the dial (an error line under the
-            # headline moves it), even when no sky frame is coming.
-            if to_view:
-                origin.installEventFilter(self)
-            else:
-                origin.removeEventFilter(self)
 
     def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
         kind = event.type()
@@ -597,6 +602,10 @@ class PatternCard(QFrame):
                 return True                 # the scene draws it
             if kind in _TEXT_EVENTS:
                 self._show_headline()
+        elif (watched is self._origin and not self._sky_on()
+              and kind in (QEvent.Type.Move, QEvent.Type.Resize)
+              and patterns.spec(theme_style("lattice"))["centred"]):
+            self.update()   # the lattice follows the dial (see _lattice)
         return super().eventFilter(watched, event)
 
     # -- the headline in the Home scene ------------------------------------------------
@@ -772,12 +781,29 @@ class PatternCard(QFrame):
         """Masked white lattice for the current size, scale and DPR."""
         return self._lattice(w, h, masked=True)
 
+    def _lattice_centre(self, box: QRectF) -> QPointF:
+        """Where a centred lattice is centred: on the dial (the ping
+        origin), or where it will sit while it is not showing."""
+        centre = self._ping_centre()
+        if centre is None:
+            centre = QPointF(box.x() + MASK_CENTER[0] * box.width(),
+                             box.y() + MASK_CENTER[1] * box.height())
+        return centre
+
     def _lattice(self, w: int, h: int, masked: bool) -> QImage:
         """White lattice, through the radial mask or bare (cached)."""
         from ..styles import _card_border_width
         k = ui_scale()
         dpr = self.devicePixelRatioF()
-        key = (w, h, k, dpr)
+        kind = theme_style("lattice")
+        spec = patterns.spec(kind)
+        # The SVG fills the card's padding box (inside the border), and
+        # the card's rounded corners clip it.
+        b = float(_card_border_width(k))
+        box = QRectF(b, b, w - 2 * b, h - 2 * b)
+        centre = self._lattice_centre(box) if spec["centred"] else None
+        key = (w, h, k, dpr, kind, None if centre is None
+               else (round(centre.x(), 1), round(centre.y(), 1)))
         if masked and key == self._layer_key:
             return self._layer
         if not masked and key == self._bare_key:
@@ -787,11 +813,6 @@ class PatternCard(QFrame):
                        QImage.Format.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(dpr)
         image.fill(Qt.GlobalColor.transparent)
-
-        # The SVG fills the card's padding box (inside the border), and
-        # the card's rounded corners clip it.
-        b = float(_card_border_width(k))
-        box = QRectF(b, b, w - 2 * b, h - 2 * b)
         radius = max(0.0, CARD_RADIUS * k - b)
         clip = QPainterPath()
         clip.addRoundedRect(box, radius, radius)
@@ -799,49 +820,39 @@ class PatternCard(QFrame):
         p = QPainter(image)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setClipPath(clip)
-        ink = QColor(Qt.GlobalColor.white)
-        pen = QPen(ink, STROKE)
-        pen.setCapStyle(Qt.PenCapStyle.FlatCap)    # SVG butt caps
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-
-        # Paint the tiles opaque; the 20% opacity applies to the whole
-        # layer afterwards, so crossings do not double up.
-        cell = TILE * k
-        ox = box.x() + TILE_OFFSET[0] * k
-        oy = box.y() + TILE_OFFSET[1] * k
-        cols = int(box.width() / cell) + 2
-        rows = int(box.height() / cell) + 2
-        for i in range(cols):
-            for j in range(rows):
-                p.save()
-                p.translate(ox + i * cell, oy + j * cell)
-                p.scale(k, k)
-                # SVG patterns clip each tile to its own cell.
-                p.setClipRect(QRectF(0, 0, TILE, TILE),
-                              Qt.ClipOperation.IntersectClip)
-                p.setPen(pen)
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawPath(self._tile)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(ink)
-                p.drawEllipse(QPointF(32, 32), DOT_RADIUS, DOT_RADIUS)
-                p.restore()
+        # Paint the lines opaque; the layer's opacity applies to the whole
+        # of it afterwards, so crossings do not double up.
+        if spec["tile"] is None:
+            self._paint_dome(p, spec, centre, w, h, k)
+        else:
+            self._paint_tiles(p, kind, spec, box, centre, k)
 
         if masked:
-            # Mask: alpha 0 out to 40% of the radius, ramping to 1 at the
-            # rim (and padded beyond). The unit gradient is stretched to
-            # the box, as objectBoundingBox units are in SVG.
-            grad = QRadialGradient(QPointF(0, 0), 1.0)
-            grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
-            grad.setColorAt(1.0, QColor(255, 255, 255, 255))
-            grad.setSpread(QRadialGradient.Spread.PadSpread)
-            brush = QBrush(grad)
-            brush.setTransform(
-                QTransform()
-                .scale(MASK_RADIUS * box.width(), MASK_RADIUS * box.height())
-                * QTransform().translate(
-                    box.x() + MASK_CENTER[0] * box.width(),
-                    box.y() + MASK_CENTER[1] * box.height()))
+            if spec["mask"] == "dial":
+                # Clear round the dial, full strength further out.
+                grad = QRadialGradient(centre, patterns.DOME_MASK_R * k)
+                grad.setColorAt(patterns.DOME_CLEAR, QColor(255, 255, 255, 0))
+                grad.setColorAt(patterns.DOME_FULL,
+                                QColor(255, 255, 255, 255))
+                grad.setSpread(QRadialGradient.Spread.PadSpread)
+                brush = QBrush(grad)
+            else:
+                # Mask: alpha 0 out to 40% of the radius, ramping to 1 at
+                # the rim (and padded beyond). The unit gradient is
+                # stretched to the box, as objectBoundingBox units are in
+                # SVG.
+                grad = QRadialGradient(QPointF(0, 0), 1.0)
+                grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
+                grad.setColorAt(1.0, QColor(255, 255, 255, 255))
+                grad.setSpread(QRadialGradient.Spread.PadSpread)
+                brush = QBrush(grad)
+                brush.setTransform(
+                    QTransform()
+                    .scale(MASK_RADIUS * box.width(),
+                           MASK_RADIUS * box.height())
+                    * QTransform().translate(
+                        box.x() + MASK_CENTER[0] * box.width(),
+                        box.y() + MASK_CENTER[1] * box.height()))
             p.setClipping(False)
             p.setCompositionMode(
                 QPainter.CompositionMode.CompositionMode_DestinationIn)
@@ -853,3 +864,77 @@ class PatternCard(QFrame):
         else:
             self._bare_key, self._bare = key, image
         return image
+
+    @staticmethod
+    def _pens(spec: dict, k: float, rounded: bool):
+        """The pen for a lattice's lines and, for strapwork, the one that
+        clears each band's middle (None for plain lines)."""
+        cap = Qt.PenCapStyle.RoundCap if rounded else Qt.PenCapStyle.FlatCap
+        join = (Qt.PenJoinStyle.RoundJoin if rounded
+                else Qt.PenJoinStyle.MiterJoin)    # the first: SVG butt caps
+        ink = QPen(QColor(Qt.GlobalColor.white), spec["stroke"] * k,
+                   Qt.PenStyle.SolidLine, cap, join)
+        if not spec["gap"]:
+            return ink, None
+        gap = QPen(QColor(Qt.GlobalColor.white), spec["gap"] * k,
+                   Qt.PenStyle.SolidLine, cap, join)
+        return ink, gap
+
+    def _paint_tiles(self, p: QPainter, kind: str, spec: dict, box: QRectF,
+                     centre, k: float) -> None:
+        """A tiled lattice over `box`: in its fixed place, or with a tile
+        corner (a star) on `centre`."""
+        tw, th = spec["tile"]
+        cw, ch = tw * k, th * k
+        if centre is None:
+            ox = box.x() + TILE_OFFSET[0] * k
+            oy = box.y() + TILE_OFFSET[1] * k
+        else:
+            ox = centre.x() - math.ceil((centre.x() - box.x()) / cw) * cw
+            oy = centre.y() - math.ceil((centre.y() - box.y()) / ch) * ch
+        cols = int(math.ceil((box.right() - ox) / cw))
+        rows = int(math.ceil((box.bottom() - oy) / ch))
+        first = kind == patterns.DEFAULT
+        path = self._tile if first else patterns.tile_path(kind)
+        # In tile units: the painter is scaled by k below.
+        ink, gap = self._pens(spec, 1.0, rounded=not first)
+        dots = spec["dots"]
+        for i in range(cols):
+            for j in range(rows):
+                p.save()
+                p.translate(ox + i * cw, oy + j * ch)
+                p.scale(k, k)
+                # SVG patterns clip each tile to its own cell.
+                p.setClipRect(QRectF(0, 0, tw, th),
+                              Qt.ClipOperation.IntersectClip)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(ink)
+                p.drawPath(path)
+                if gap is not None:
+                    p.setCompositionMode(
+                        QPainter.CompositionMode.CompositionMode_DestinationOut)
+                    p.setPen(gap)
+                    p.drawPath(path)
+                    p.setCompositionMode(
+                        QPainter.CompositionMode.CompositionMode_SourceOver)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(Qt.GlobalColor.white))
+                for x, y, r in dots:
+                    p.drawEllipse(QPointF(x, y), r, r)
+                p.restore()
+
+    def _paint_dome(self, p: QPainter, spec: dict, centre: QPointF,
+                    w: int, h: int, k: float) -> None:
+        """The dome of stars round `centre`, drawn whole."""
+        path = patterns.dome_path(centre.x(), centre.y(), w, h, k)
+        ink, gap = self._pens(spec, k, rounded=True)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(ink)
+        p.drawPath(path)
+        if gap is not None:
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_DestinationOut)
+            p.setPen(gap)
+            p.drawPath(path)
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_SourceOver)

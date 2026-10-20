@@ -53,6 +53,7 @@ THEMES: Dict[str, Dict] = {
         "divider_rgb": "140, 205, 185", "divider_alpha": 0.30,
         "badge_bg": "#10201d", "badge_fg": "#3fb890",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "khatam",
     },
     "ember": {
         "label": "Ember",
@@ -69,6 +70,7 @@ THEMES: Dict[str, Dict] = {
         "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
         "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "twelve",
     },
     "vigil": {
         "label": "Vigil",
@@ -138,6 +140,7 @@ THEMES: Dict[str, Dict] = {
         "divider_rgb": "255, 165, 210", "divider_alpha": 0.32,
         "badge_bg": "#2a1623", "badge_fg": "#f472b6",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "dome",
     },
 }
 
@@ -149,11 +152,13 @@ RENAMED = {"ultraviolet": "vigil", "mono": "eclipse", "abyss": "halcyon"}
 
 #: Optional per-theme keys and their values when a theme leaves them out.
 #: backdrop: what the dial card shows behind the dial ("lattice" or
-#: "sky"); motion: the Home rhythm ("tactile", or "breath": slower, on a
+#: "sky"); lattice: which lattice ("rub_el_hizb", "khatam", "twelve" or
+#: "dome", see widgets/lattice.py); motion: the Home rhythm ("tactile", or "breath": slower, on a
 #: breathing cycle); heading_weight: the heading font weight; window_fill
 #: and card_fill: QSS backgrounds (None: the flat bg / card colour).
 STYLE_DEFAULTS = {
     "backdrop": "lattice",
+    "lattice": "rub_el_hizb",
     "motion": "tactile",
     "heading_weight": 700,
     "window_fill": None,
