@@ -2,8 +2,11 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Poise Voice Isolator"
-; Keep in step with version in pyproject.toml (release checklist there)
-#define MyAppVersion "1.1.0"
+; CI passes the release's version (ISCC /DMyAppVersion=X.Y.Z, checked
+; against pyproject.toml); this default only serves local builds.
+#ifndef MyAppVersion
+  #define MyAppVersion "1.1.0"
+#endif
 #define MyAppPublisher "Poise"
 #define MyAppExeName "Poise.exe"
 
@@ -26,6 +29,14 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 InfoBeforeFile=installer\windows\vbcable-notice.txt
+; Files in use (Poise, or its audio process) are closed through the
+; Restart Manager; silent runs need /CLOSEAPPLICATIONS for it.
+CloseApplications=yes
+
+[InstallDelete]
+; The PyInstaller runtime is replaced whole on every install: modules and
+; DLLs a newer build dropped must not linger next to the new ones.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,10 +61,64 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; An in-app update runs silently, so the entry above is skipped: start
+; the new Poise here instead, as the user rather than elevated.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: IsPoiseUpdate
 
 [Code]
+const
+  { Held by a running Poise (stream_denoiser/updates.py RUNNING_MUTEX). }
+  RunningMutex = 'PoiseVoiceIsolatorRunning';
+  { How long an update waits for Poise to quit (it stops isolating and
+    restores the default playback device first). }
+  QuitWaitMs = 30000;
+
 var
   VbcableNeedsReboot: Boolean;
+
+{ In-app updates pass /POISEUPDATE=<file>: the file Poise watches to
+  learn that this (elevated) setup is running and it should quit. }
+function UpdateSignalPath(): String;
+begin
+  Result := ExpandConstant('{param:POISEUPDATE|}');
+end;
+
+function IsPoiseUpdate(): Boolean;
+begin
+  Result := UpdateSignalPath() <> '';
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
+begin
+  Result := True;
+  if IsPoiseUpdate() then
+  begin
+    if not SaveStringToFile(UpdateSignalPath(), 'started', False) then
+      Log('Poise: could not write the update signal file');
+    Waited := 0;
+    while CheckForMutexes(RunningMutex) and (Waited < QuitWaitMs) do
+    begin
+      Sleep(250);
+      Waited := Waited + 250;
+    end;
+    if CheckForMutexes(RunningMutex) then
+      Log('Poise: still running, leaving it to /CLOSEAPPLICATIONS')
+    else
+      Log(Format('Poise: quit after %d ms', [Waited]));
+    Exit;
+  end;
+  { A manual install over a running Poise: it hides in the tray when its
+    window closes, so the Restart Manager alone cannot close it. }
+  while CheckForMutexes(RunningMutex) and not WizardSilent() do
+    if MsgBox('Poise is running. Quit it from its tray icon menu, ' +
+        'then click OK to continue.', mbInformation, MB_OKCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+end;
 
 { Scan the MMDevices registry for a CABLE Input render endpoint.
   Needs no AudioDeviceCmdlets module, so it works on fresh machines.

@@ -223,6 +223,10 @@ def run_gui():
             # This might be a stale lock, so we'll continue anyway
             _logger.warning("Could not connect to existing instance, but shared memory indicates one may be running.")
     
+    # Tell an installer (in-app update or a manual run) Poise is open.
+    from ..updates import hold_running_mutex
+    hold_running_mutex()
+
     # Point Qt at the OS cursor theme before it resolves link/hand
     # cursors (XCURSOR_THEME unset == ugly built-in fallback glyphs).
     try:

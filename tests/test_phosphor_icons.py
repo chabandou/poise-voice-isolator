@@ -32,6 +32,7 @@ EXPECTED = {
     "copy": "copy",
     "save": "floppy-disk",
     "reset": "arrow-counter-clockwise",
+    "download": "download-simple",
 }
 
 

@@ -56,6 +56,8 @@ try:
     # Reduce motion off, whatever the machine's animation effects (its
     # default follows them, and CI's Windows runner has them off).
     _seed.setValue("appearance/reduce_motion", False)
+    # No update checks against GitHub from a test window's daily timer.
+    _seed.setValue("updates/check", False)
     _seed.sync()
     del _seed
 

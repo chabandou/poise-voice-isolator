@@ -45,6 +45,7 @@ FILES = {
     "copy": "copy",
     "save": "floppy-disk",
     "reset": "arrow-counter-clockwise",
+    "download": "download-simple",
 }
 
 _renderers: dict = {}

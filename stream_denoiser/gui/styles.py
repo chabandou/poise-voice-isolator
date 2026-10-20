@@ -77,6 +77,42 @@ QLabel#version {
     background-color: transparent;
 }
 
+QPushButton#update-pill {
+    background-color: rgba({accent_rgb}, 0.12);
+    border: 1px solid rgba({accent_rgb}, 0.30);
+    border-radius: 11px;
+    padding: 4px 12px;
+    color: {accent};
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#update-pill:hover {
+    background-color: rgba({accent_rgb}, 0.22);
+}
+
+/* About's Update: the ghost buttons' metrics (a 1px border in the
+   fill colour keeps the height equal), filled in the accent. */
+QPushButton#update {
+    background-color: {accent};
+    border: 1px solid {accent};
+    border-radius: 10px;
+    padding: 9px 18px;
+    color: {bg};
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton#update:hover {
+    background-color: {accent_light};
+    border-color: {accent_light};
+}
+
+QLabel#update-status {
+    font-size: 12px;
+    color: {muted};
+}
+
 /* =================================================================================
    CARDS
    ================================================================================= */

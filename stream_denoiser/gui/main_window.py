@@ -38,6 +38,7 @@ from ..constants import (
     MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHING_FIRST_TIME,
 )
 from .worker import AudioWorker
+from . import updater as upd
 from .system_tray import SystemTray
 from .widgets.phosphor import (
     clear_cache as clear_icon_cache, icon as phosphor_icon,
@@ -116,12 +117,16 @@ class MainWindow(QMainWindow):
         self._resp = None  # responsive mode: wide / compact / narrow
         self._cards_stacked = None
         self._icon_buttons = []  # (button, icon name) re-tinted per theme
+        # In-app updates (Windows): checks GitHub Releases, installs.
+        self.updater = (upd.UpdateController(self.settings, self)
+                        if upd.ENABLED else None)
 
         self.setup_ui()
         install_hover_fades(self)
 
         self.setup_worker()
         self.setup_tray()
+        self.setup_updates()
 
         # Load persistent state
         self.restore_state()
@@ -133,7 +138,7 @@ class MainWindow(QMainWindow):
             for btn in self.findChildren(QPushButton):
                 try:
                     name = btn.objectName()
-                    if name in ("ghost", "icon-btn", "refresh-btn"):
+                    if name in ("ghost", "icon-btn", "refresh-btn", "update"):
                         install_press_fade(btn)
                 except Exception:
                     continue
@@ -479,6 +484,19 @@ class MainWindow(QMainWindow):
             "GPU and memory use. Useful on older PCs or while doing heavy "
             "tasks.")
 
+        updates_row = None
+        if self.updater is not None:
+            self.updates_switch = ToggleSwitch(
+                checked=self.settings.check_updates)
+            self.updates_switch.toggled.connect(
+                lambda checked: setattr(self.settings, 'check_updates',
+                                        checked))
+            updates_row = SettingsRow(
+                "Check for updates",
+                "Looks for a new version on GitHub once a day. "
+                "Install it from About.",
+                self.updates_switch)
+
         self.reset_btn = self._icon_button("Reset", "reset")
         self.reset_btn.clicked.connect(self._confirm_reset_defaults)
         reset_row = SettingsRow(
@@ -489,7 +507,8 @@ class MainWindow(QMainWindow):
         self._reset_row = reset_row
 
         rows = [aad_row, thresh_row, keep_running_row, motion_row,
-                reset_row]
+                updates_row, reset_row]
+        rows = [row for row in rows if row is not None]
         for i, row in enumerate(rows):
             row.set_position(i == 0, i == len(rows) - 1)
             list_layout.addWidget(row)
@@ -746,6 +765,8 @@ class MainWindow(QMainWindow):
         version.setObjectName("about-version")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
+        if self.updater is not None:
+            layout.addWidget(self._build_update_line())
 
         tagline = QLabel("Real-time voice isolation. Runs 100% on-device.")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -770,6 +791,15 @@ class MainWindow(QMainWindow):
 
         links = QHBoxLayout()
         links.addStretch()
+        if self.updater is not None:
+            # First and filled in the accent while there is an update to
+            # install; hidden otherwise (_refresh_update_ui).
+            self.update_btn = self._icon_button(
+                "Update", "download", color_key="bg")
+            self.update_btn.setObjectName("update")
+            self.update_btn.clicked.connect(lambda: self.updater.install())
+            self.update_btn.hide()
+            links.addWidget(self.update_btn)
         github_btn = self._icon_button("GitHub", "info")
         github_btn.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(GITHUB_URL)))
@@ -797,6 +827,26 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
         return page
+
+    def _build_update_line(self) -> QWidget:
+        """About's update status, centred under the version: a quiet line
+        whose actions are links (refreshed by _refresh_update_ui). The
+        Update button itself leads the link buttons below."""
+        line = QWidget()
+        row = QHBoxLayout(line)
+        row.setContentsMargins(0, 4, 0, 4)
+        row.setSpacing(12)
+        row.addStretch()
+        self.update_label = QLabel()
+        self.update_label.setObjectName("update-status")
+        self.update_label.setTextFormat(Qt.TextFormat.RichText)
+        self.update_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self.update_label.linkActivated.connect(self._on_update_link)
+        row.addWidget(self.update_label)
+        row.addStretch()
+        return line
 
     def _refresh_credits(self, hover: bool = False) -> None:
         """About credits as rich text; VB-Audio's name is an embedded link.
@@ -883,6 +933,139 @@ class MainWindow(QMainWindow):
             self.tray.quit_requested.connect(self._quit_app)
             self.tray.show()
 
+    # -- updates ------------------------------------------------------------------
+    def setup_updates(self):
+        """Wire the update controller in and start its daily checks."""
+        self._after_update()
+        if self.updater is None:
+            return
+        self._update_notice_shown = False
+        self.updater.changed.connect(self._refresh_update_ui)
+        self.updater.found.connect(self._on_update_found)
+        self.updater.quit_requested.connect(self._quit_for_update)
+        self.sidebar.update_clicked.connect(self._show_about)
+        self.tray.update_requested.connect(self._show_about)
+        self.tray.messageClicked.connect(self._on_tray_message_clicked)
+        self._refresh_update_ui()
+        self.updater.start()
+
+    def _after_update(self):
+        """First start after an in-app update: say so, and pick up
+        isolating again if it was on."""
+        s = self.settings
+        came_from = str(s.get(s.KEY_UPDATE_FROM) or "")
+        if not came_from:
+            return
+        resume = bool(s.get(s.KEY_UPDATE_RESUME))
+        s.remove(s.KEY_UPDATE_FROM)
+        s.remove(s.KEY_UPDATE_RESUME)
+        if came_from != __version__:
+            _logger.info(f"Updated from {came_from} to {__version__}")
+            self.tray.notify("Poise is up to date",
+                             f"Updated from {came_from} to {__version__}.")
+        else:
+            _logger.warning(f"Restarted after an update, still on "
+                            f"{__version__}: the install did not apply")
+        if resume:
+            QTimer.singleShot(0, self._start_processing)
+
+    def _show_about(self):
+        self.bring_to_front()
+        self._on_page_requested(3)
+
+    def _on_update_found(self, version: str):
+        # The sidebar pill says it when the window is up; from the tray,
+        # a notice (once per version: the controller sees to that).
+        if not self.isVisible() or self.isMinimized():
+            self._update_notice_shown = True
+            self.tray.notify(f"Poise {version} is available",
+                             "Click to see it, or use the tray menu.")
+
+    def _on_tray_message_clicked(self):
+        if self._update_notice_shown:
+            self._update_notice_shown = False
+            self._show_about()
+
+    # Links in the About update line that act instead of opening a page.
+    LINK_CHECK = "poise:check-updates"
+    LINK_CANCEL = "poise:cancel-update"
+
+    def _on_update_link(self, url: str):
+        if url == self.LINK_CHECK:
+            self.updater.check(manual=True)
+        elif url == self.LINK_CANCEL:
+            self.updater.cancel()
+        else:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _refresh_update_ui(self):
+        """Mirror the controller in the About line, sidebar and tray."""
+        u = self.updater
+        if u is None:
+            return
+        version = u.release.version if u.release else ""
+        self.sidebar.set_update(version)
+        if self.tray is not None:
+            self.tray.set_update(version)
+
+        accent = theme_store.current()["accent"]
+
+        def link(href: str, label: str) -> str:
+            return (f'<a href="{href}" style="color:{accent}; '
+                    f'text-decoration:none;">{label}</a>')
+
+        sep = " \u00b7 "
+        page = link(u.page_url, "Get it on GitHub \u2197")
+        text, offer = "", False
+        if u.state == upd.IDLE:
+            text = link(self.LINK_CHECK, "Check for updates")
+        elif u.state == upd.CHECKING:
+            text = "Checking for updates\u2026"
+        elif u.state == upd.CURRENT:
+            text = ("You're on the latest version" + sep
+                    + link(self.LINK_CHECK, "Check again"))
+        elif u.state == upd.AVAILABLE:
+            lead = f"{u.message} " if u.message else ""
+            text = f"{lead}Poise {version} is available" + sep
+            if u.can_install and u.release.asset_url:
+                text += link(u.page_url, "What's new \u2197")
+                offer = True
+            else:
+                text += page
+        elif u.state == upd.DOWNLOADING:
+            pct = f" {u.progress}%" if u.progress >= 0 else ""
+            text = (f"Downloading {version}\u2026{pct}" + sep
+                    + link(self.LINK_CANCEL, "Cancel"))
+        elif u.state == upd.WAITING:
+            text = "Installing\u2026 allow the Windows prompt to continue"
+        elif u.state == upd.ERROR:
+            text = u.message + sep + (
+                page if u.release is not None
+                else link(self.LINK_CHECK, "Try again"))
+        self.update_label.setText(text)
+        if offer and self.update_btn.isHidden():
+            self.update_btn.show()
+            if self.update_btn.isVisible():
+                from .animations import fade_in
+                fade_in(self.update_btn, duration_ms=240)
+        elif not offer:
+            self.update_btn.hide()
+        self.update_btn.setToolTip(
+            "Downloads it, then Windows asks to allow the install. Poise "
+            "starts again on the new version"
+            + (" and keeps isolating." if self.worker.is_running else ".")
+            if offer else "")
+
+    def _quit_for_update(self):
+        """The installer is running and waits for Poise: quit (stopping
+        isolation restores the default playback device), noting what to
+        pick up on the next start."""
+        s = self.settings
+        s.set(s.KEY_UPDATE_FROM, __version__)
+        s.set(s.KEY_UPDATE_RESUME, bool(self.worker.is_running))
+        s.sync()
+        self._quit_app()
+
     def restore_state(self):
         """Restore previous window state and selections."""
         # Restore window geometry
@@ -927,6 +1110,7 @@ class MainWindow(QMainWindow):
         self.model_selector.refresh_theme()
         apply_titlebar(self, theme_store.current())
         self._refresh_credits()
+        self._refresh_update_ui()   # its link takes the accent
         self._tint_icon_buttons()
         self._refresh_logs()   # re-colour warnings/errors for the new palette
         self._stage.refresh_theme()   # lattice or night sky
