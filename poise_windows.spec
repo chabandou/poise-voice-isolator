@@ -7,7 +7,10 @@ block_cipher = None
 
 # Define paths
 project_dir = os.getcwd()
-icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.ico')
+# Poise.exe's file-system icon (Explorer, shortcuts, taskbar pin): the
+# About page's mark, the same .ico Poise_Setup.exe wears. Regenerate it
+# with tools/bake_setup_icon.py when icon.svg changes.
+icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon-setup.ico')
 models_dir = os.path.join(project_dir, 'stream_denoiser', 'models')
 rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
 # Native audio path (make -C native/poise_wasapi).
