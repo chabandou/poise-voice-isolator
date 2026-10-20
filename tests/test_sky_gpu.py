@@ -137,8 +137,12 @@ def test_the_ring_packs_into_its_texture(app):
     over, strokes = _ring_strokes(app)
     idle = _ring_strokes(app, "idle")[1]
     assert any(stroke[6] for stroke in idle)   # the lit ticks breathe
-    assert not any(stroke[6] for stroke in strokes)
-    # Two breathing ticks (and their glows) among the live ones.
+    # Live, once the bloom is over, they share the live breath's alpha
+    # too; the unlit ticks and the needle never do.
+    assert any(stroke[6] for stroke in strokes)
+    assert not any(stroke[6] for stroke in strokes
+                   if stroke[5] >= 2 * TICKS)
+    # Idle's first two ticks (and their glows) among the live ones.
     strokes = (tuple(s for s in idle if s[5] < 4)
                + tuple(s for s in strokes if s[5] >= 4))
     slots = [stroke[5] for stroke in strokes]

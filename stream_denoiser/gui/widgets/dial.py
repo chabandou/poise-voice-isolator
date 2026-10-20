@@ -102,6 +102,10 @@ R_OUT = 136.0
 R_IN = 118.0
 R_IN_MAJOR = 110.0
 DISC_R = 88.0
+#: The disc's parts, bottom up, and how far each reaches (design px): the
+#: glow around it, its face, and the inner glow and rim the charge lights.
+DISC_PARTS = (("glow", DISC_R + 36.0), ("face", DISC_R + 2.0),
+              ("inner", DISC_R + 2.0), ("rim", DISC_R + 2.0))
 RING_HIT_MIN = 102.0  # ring zone (drag) vs disc zone (click)
 RING_HIT_MAX = 150.0
 DISC_HIT = 100.0
@@ -308,6 +312,7 @@ class DialButton(PowerButton):
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)
         self._ring = self._ring_key = None   # see _paint_ring
+        self._disc_parts = {}                  # see _paint_disc_cached
         self._ring_sink = None            # see set_ring_sink
 
         # Eased states.
@@ -923,8 +928,9 @@ class DialButton(PowerButton):
                             / (COMET_TAIL_MS - COMET_FLASH_MS)), 1.0
         return base, 1.0
 
-    def _lit_look(self, i: int, col: dict, t: float):
-        """(colour, alpha factor, radial scale) of lit tick i."""
+    def _lit_look(self, i: int, col: dict, t: float, live_alpha=None):
+        """(colour, alpha factor, radial scale) of lit tick i (live_alpha:
+        _live_alpha(t), when already worked out)."""
         phase = self._phase
         if phase == "starting":
             colour, scale = self._comet_look(i, col["dim"], col, t)
@@ -942,8 +948,9 @@ class DialButton(PowerButton):
                 scale = 1.07 - 0.07 * v
             else:
                 colour, scale = col["accent"], 1.0
-            # The lit ticks brighten together with the disc's charge.
-            return colour, 0.78 + 0.22 * self._charge(t), scale
+            if live_alpha is None:
+                live_alpha = self._live_alpha(t)
+            return colour, live_alpha, scale
         if phase == "error":
             return (mix_rgba(col["white"], col["error"],
                              _ease_out(t / ERROR_FLASH_MS)), 1.0, 1.0)
@@ -955,6 +962,38 @@ class DialButton(PowerButton):
                                  _ease_out(max(0.0, d) / DRAIN_MS)), 1.0, 1.0)
         return col["gold"], 1.0, 1.0
 
+    def _live_alpha(self, t: float) -> float:
+        """Live: the lit ticks' alpha, which brightens together with the
+        disc's charge (breath: which breathes with the cycle)."""
+        if breathing():
+            return keyframes(
+                breath_pos(t - self._ignite_end(), BREATH_MS), TICKS_LIVE)
+        return 0.78 + 0.22 * self._charge(t)
+
+    def _bloomed(self, t: float, lit: int) -> bool:
+        """Breath: the live bloom has reached each of the `lit` ticks."""
+        if lit <= 0:
+            return True
+        mid = self._bloom_mid()
+        far = max(mid, lit - 1 - mid)
+        return t >= far * BLOOM_STEP + BLOOM_MS
+
+    def _ring_pulse(self, t: float, lit: int):
+        """The alpha all `lit` lit ticks share now (the idle breath, the
+        live one once the bloom is over, or the live charge), which
+        _ring_strokes(lift) leaves out of them; None when they don't
+        share one."""
+        phase = self._phase
+        if breathing():
+            if phase == "idle":
+                return self._idle_breath()
+            if phase == "live" and self._bloomed(t, lit):
+                return self._live_alpha(t)
+            return None
+        if phase == "live":
+            return self._live_alpha(t)
+        return None
+
     def _idle_breath(self) -> float:
         """Breath: the lit ticks' alpha while idle (a slow swell)."""
         if self._phase != "idle" or not ambient_ok():
@@ -963,9 +1002,10 @@ class DialButton(PowerButton):
                                     IDLE_BREATH_MS), TICKS_IDLE)
 
     def _breath_look(self, i: int, lit: int, col: dict, t: float,
-                     idle: float = None):
+                     idle: float = None, live_alpha: float = None):
         """Breath: (colour, alpha, radial scale, glow 0..1) of tick i;
-        `idle` is the idle breath's alpha (None: _idle_breath's)."""
+        `idle` is the idle breath's alpha (None: _idle_breath's), and
+        live_alpha _live_alpha(t), when already worked out."""
         if i >= lit:
             return col["unlit"], 1.0, 1.0, 0.0
         phase = self._phase
@@ -995,9 +1035,9 @@ class DialButton(PowerButton):
                 scale, glow = 1.03 - 0.03 * v, 1.0 - (1 - GLOW_LIVE) * v
             else:
                 colour, scale, glow = col["accent"], 1.0, GLOW_LIVE
-            alpha = keyframes(
-                breath_pos(t - self._ignite_end(), BREATH_MS), TICKS_LIVE)
-            return colour, alpha, scale, glow
+            if live_alpha is None:
+                live_alpha = self._live_alpha(t)
+            return colour, live_alpha, scale, glow
         if phase == "error":
             alpha = 1.0
             if t < 2 * ERROR_PULSE_MS:
@@ -1181,7 +1221,7 @@ class DialButton(PowerButton):
         p.translate(-c, -c)
         if self._ring_sink is not None:
             self._ring_sink(self._over, self._ring_strokes(col, t, True),
-                            self._idle_breath())
+                            self.ring_breath(t))
         else:
             self._paint_ring(p, col, t)
         self._paint_core(p, col, t)
@@ -1200,44 +1240,71 @@ class DialButton(PowerButton):
     def ring_frame(self):
         """(stretch in degrees, strokes, breath): the ring at this moment
         as the sink gets it, the strokes as _ring_strokes(lift_breath)
-        gives them and the idle breath's alpha for those it marks."""
+        gives them and the shared alpha for those it marks."""
+        t = self._ms()
         return (self._over,
-                self._ring_strokes(self._colours(current_theme()), self._ms(),
-                                   True),
-                self._idle_breath())
+                self._ring_strokes(self._colours(current_theme()), t, True),
+                self.ring_breath(t))
 
-    def ring_breath(self) -> float:
-        """The idle breath's alpha now: all that moves in the ring while
-        the dial's clock rests (the card sends it with each sky frame)."""
-        return self._idle_breath()
+    def ring_breath(self, t: float = None) -> float:
+        """The alpha the lit ticks share now (see _ring_pulse), for the
+        strokes _ring_strokes(lift_breath) marks: all that moves in the
+        ring while the dial's clock rests (the card sends it with each
+        sky frame)."""
+        if t is None:
+            t = self._ms()
+        pulse = self._ring_pulse(t, self._lit_now())
+        return 1.0 if pulse is None else pulse
+
+    def _lit_now(self) -> int:
+        """How many ticks are lit (they follow the needle's glide)."""
+        pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
+        return max(0, min(TICKS, math.floor(pos + 0.5) + 1))
 
     def ring_animating(self) -> bool:
         """The dial's own clock runs (and hands the ring on each paint)."""
         return self._clock.isActive()
 
     def _paint_ring(self, p, col, t) -> None:
-        """The ticks and the head needle, from an image redrawn only when
-        a stroke changes: the dial repaints with every frame of the sky
-        behind it, and these strokes are most of what it costs, yet they
-        often hold still (between breaths, or while a slow breath's
-        alpha stays on the same 8-bit step)."""
+        """The ticks and the head needle, from images redrawn only when a
+        stroke changes: these strokes are most of what the dial costs,
+        and it repaints with every frame of what moves behind it. The
+        alpha the lit ticks share (the breath, the live charge) is left
+        out of them and drawn as the opacity of their own two images
+        (glows, then ticks: neither overlaps its own kind), so a pulse
+        redraws nothing. The rest (unlit ticks, the needle) goes on top."""
         w, h = self.width(), self.height()
         dpr = self.devicePixelRatioF()
-        strokes = self._ring_strokes(col, t)
-        key = (w, h, dpr, self._over, strokes)
+        strokes = self._ring_strokes(col, t, True)
+        pulse = self.ring_breath(t)
+        layers = (
+            (tuple(s for s in strokes if s[6] and s[5] % 2 == 0), pulse),
+            (tuple(s for s in strokes if s[6] and s[5] % 2 == 1), pulse),
+            (tuple(s for s in strokes if not s[6]), 1.0),
+        )
+        key = (w, h, dpr, self._over)
         if key != self._ring_key:
             self._ring_key = key
-            self._ring = self._draw_ring(w, h, dpr, strokes)
+            self._ring = {}                # layer -> (strokes, image)
         p.save()
         p.resetTransform()
-        p.drawImage(QPointF(0, 0), self._ring)
+        for index, (group, opacity) in enumerate(layers):
+            if not group:
+                continue
+            shown = self._ring.get(index)
+            if shown is None or shown[0] != group:
+                shown = (group, self._draw_ring(
+                    w, h, dpr, group, shown[1] if shown else None))
+                self._ring[index] = shown
+            if opacity > 0.5 / 255:
+                p.setOpacity(opacity)
+                p.drawImage(QPointF(0, 0), shown[1])
         p.restore()
 
-    def _draw_ring(self, w, h, dpr, strokes) -> QImage:
+    def _draw_ring(self, w, h, dpr, strokes, image=None) -> QImage:
         """The strokes, painted as paintEvent would, into a transparent
-        image the widget's size (the last one is reused)."""
+        image the widget's size (`image` reused when it fits)."""
         size = (math.ceil(w * dpr), math.ceil(h * dpr))
-        image = self._ring
         if (image is None or (image.width(), image.height()) != size
                 or image.devicePixelRatio() != dpr):
             image = QImage(*size, QImage.Format.Format_ARGB32_Premultiplied)
@@ -1261,9 +1328,10 @@ class DialButton(PowerButton):
         the strokes that draw them, in order: (angle, r0, r1, rgba, width,
         slot, breathes). Slot 2i is tick i's glow and 2i + 1 the tick;
         2 x TICKS is the needle's glow and the one after it the needle.
-        lift_breath leaves the idle breath out of the strokes it would
-        only scale, marking them `breathes`: they hold still while the
-        dial rests, and whoever draws them scales them by _idle_breath."""
+        lift_breath leaves the alpha the lit ticks share (_ring_pulse: the
+        breath, the live charge) out of the strokes it would only scale,
+        marking them `breathes`: they hold still while it moves, and
+        whoever draws them scales them by ring_breath."""
         # The needle (and the lit edge) follow its glide on wheel steps.
         pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
@@ -1271,43 +1339,52 @@ class DialButton(PowerButton):
         now = time.monotonic()
         breath = breathing()
         idle = self._idle_breath()
-        lifted = lift_breath and breath and self._phase == "idle"
+        pulse = self._ring_pulse(t, lit) if lift_breath else None
+        live_alpha = self._live_alpha(t) if self._phase == "live" else None
+        # Worked out once, not per tick: the entrance sweep (over after
+        # the first show) and the lift around the pointer (rarely on).
+        sweeping = self._sweep_at is not None and self._sweeping()
+        swelling = (self._swell.value * (1.0 - self._nudge.value) > 0.01
+                    or self._nudge.value > 0.01)
         strokes = []
         for i in range(TICKS):
-            visible = self._sweep_visibility(i)
+            visible = self._sweep_visibility(i) if sweeping else 1.0
             if visible <= 0.0:
                 continue
             angle, r_in, r_out = tick_geometry(i)
             glow = 0.0
-            breathes = lifted and i < lit
+            breathes = pulse is not None and i < lit
             if breath:
                 colour, alpha, scale, glow = self._breath_look(
-                    i, lit, col, t, 1.0 if breathes else idle)
+                    i, lit, col, t, 1.0 if breathes else idle, live_alpha)
+                if breathes:
+                    alpha = 1.0
             elif i < lit:
-                colour, alpha, scale = self._lit_look(i, col, t)
+                colour, alpha, scale = self._lit_look(i, col, t, live_alpha)
+                if breathes:
+                    alpha = 1.0
             elif self._phase == "starting":
                 colour, scale = self._comet_look(i, col["unlit"], col, t)
                 alpha = 1.0
             else:
                 colour, alpha, scale = col["unlit"], 1.0, 1.0
+            lift = self._swell_px(angle, head_angle) if swelling else 0.0
             if glow > 0.01:           # breath: lit ticks glow softly
                 halo = QColor(colour)
                 halo.setAlphaF(GLOW_ALPHA * glow * alpha * visible)
-                lift = self._swell_px(angle, head_angle)
                 strokes.append((angle, (r_in + lift - 1.5) * scale,
                                 (r_out + lift + 1.5) * scale, halo.rgba(),
                                 10.0, 2 * i, breathes))
-            flash = self._trail_glow(i, now)
+            flash = self._trail_glow(i, now) if self._trail else 0.0
             if flash > 0.0:   # passed by a stepped needle: a comet flash
                 tone = col["flash"] if self._phase == "live" else col["comet"]
                 colour = mix_rgba(colour, tone, 0.85 * flash)
-                if breathes:   # max() does not scale: the breath goes in
-                    alpha, breathes = idle, False
+                if breathes:   # max() does not scale: the pulse goes in
+                    alpha, breathes = pulse, False
                 alpha = max(alpha, flash)
                 scale = max(scale, 1.0 + 0.05 * flash)
             colour = QColor(colour)
             colour.setAlphaF(colour.alphaF() * alpha * visible)
-            lift = self._swell_px(angle, head_angle)
             strokes.append((angle, (r_in + lift) * scale,
                             (r_out + lift) * scale, colour.rgba(), 4.0,
                             2 * i + 1, breathes))
@@ -1363,10 +1440,11 @@ class DialButton(PowerButton):
 
         charge = self._charge(t)
         hot = self._disc_hot.value
-        if breath:
-            self._paint_disc_breath(p, col, charge, hot)
-        else:
-            self._paint_disc(p, col, charge, hot)
+        paint = self._paint_disc_breath if breath else self._paint_disc
+        if scale == 1.0 and self._shake_px(t) == 0.0:
+            self._paint_disc_cached(p, col, charge, hot, paint)
+        else:                     # pressed, popping or shaking: as it moves
+            paint(p, col, charge, hot)
         if self._key_focus and self.hasFocus():
             p.setPen(QPen(col["focus"], 2.0))
             p.setBrush(Qt.BrushStyle.NoBrush)
@@ -1388,11 +1466,56 @@ class DialButton(PowerButton):
             self._paint_label(p, col, t)
         p.restore()
 
-    def _paint_disc(self, p, col, charge, hot) -> None:
-        """The disc, and its charge before each ping."""
+    def _paint_disc_cached(self, p, col, charge, hot, paint) -> None:
+        """The disc at rest (no press, pop or shake), from an image per
+        part (see DISC_PARTS), each redrawn only when it changes. The
+        parts the charge lights are drawn at full charge and shown at the
+        charge as their opacity, so a pulse redraws nothing."""
+        w, h = self.width(), self.height()
+        dpr = self.devicePixelRatioF()
+        k = min(w, h) / REF
+        c = REF / 2
+        tones = tuple(colour.rgba() for colour in col.values())
+        shown = self._disc_parts
+        p.save()
+        p.resetTransform()
+        for part, reach in DISC_PARTS:
+            face = part == "face"
+            if not face and charge <= 0.01:
+                continue
+            key = (paint.__name__, w, h, dpr, tones) + (
+                (self._phase == "live", hot) if face else ())
+            entry = shown.get(part)
+            if entry is None or entry[0] != key:
+                # Device pixels around the part, whole ones, so the image
+                # lands on the pixels it was drawn for.
+                half = reach * k + 2.0
+                x0 = math.floor((w / 2 - half) * dpr)
+                y0 = math.floor((h / 2 - half) * dpr)
+                size = math.ceil(2 * half * dpr) + 2
+                image = QImage(size, size,
+                               QImage.Format.Format_ARGB32_Premultiplied)
+                image.setDevicePixelRatio(dpr)
+                image.fill(Qt.GlobalColor.transparent)
+                q = QPainter(image)
+                q.setRenderHint(QPainter.RenderHint.Antialiasing)
+                q.translate(w / 2 - x0 / dpr, h / 2 - y0 / dpr)
+                q.scale(k, k)
+                q.translate(-c, -c)
+                paint(q, col, 1.0, hot, (part,))
+                q.end()
+                entry = (key, image, QPointF(x0 / dpr, y0 / dpr))
+                shown[part] = entry
+            p.setOpacity(1.0 if face else min(1.0, charge))
+            p.drawImage(entry[2], entry[1])
+        p.restore()
+
+    def _paint_disc(self, p, col, charge, hot,
+                    parts=("glow", "face", "inner", "rim")) -> None:
+        """The disc, and its charge before each ping (only `parts`)."""
         c = REF / 2
         live = self._phase == "live"
-        if charge > 0.01:   # soft light just outside the rim
+        if charge > 0.01 and "glow" in parts:   # soft light outside the rim
             glow = QRadialGradient(QPointF(c, c), DISC_R + 26)
             outer, clear = QColor(col["accent"]), QColor(col["accent"])
             outer.setAlphaF(0.18 * charge)
@@ -1404,12 +1527,13 @@ class DialButton(PowerButton):
             p.drawEllipse(QPointF(c, c), DISC_R + 26, DISC_R + 26)
 
         # Disc: the rim warms under the pointer (gold idle, accent live).
-        tint = QColor(col["accent"] if live else col["gold"])
-        tint.setAlphaF(0.45)
-        p.setPen(QPen(mix_rgba(col["groove"], tint, hot), 2.0))
-        p.setBrush(col["pill"].lighter(100 + int(8 * hot)))
-        p.drawEllipse(QPointF(c, c), DISC_R, DISC_R)
-        if charge > 0.01:   # glow inside the rim, and the rim itself
+        if "face" in parts:
+            tint = QColor(col["accent"] if live else col["gold"])
+            tint.setAlphaF(0.45)
+            p.setPen(QPen(mix_rgba(col["groove"], tint, hot), 2.0))
+            p.setBrush(col["pill"].lighter(100 + int(8 * hot)))
+            p.drawEllipse(QPointF(c, c), DISC_R, DISC_R)
+        if charge > 0.01 and "inner" in parts:   # glow inside the rim
             inner = QRadialGradient(QPointF(c, c), DISC_R)
             edge, clear = QColor(col["accent"]), QColor(col["accent"])
             edge.setAlphaF(0.3 * charge)
@@ -1419,44 +1543,48 @@ class DialButton(PowerButton):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(inner)
             p.drawEllipse(QPointF(c, c), DISC_R - 1, DISC_R - 1)
+        if charge > 0.01 and "rim" in parts:     # and the rim itself
             rim = QColor(col["accent"])
             rim.setAlphaF(0.9 * charge)
             p.setPen(QPen(rim, 2.5))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QPointF(c, c), DISC_R - 0.5, DISC_R - 0.5)
 
-    def _paint_disc_breath(self, p, col, charge, hot) -> None:
+    def _paint_disc_breath(self, p, col, charge, hot,
+                           parts=("glow", "face", "inner", "rim")) -> None:
         """Breath: a deeper disc whose glow (inside and out) and rim
-        gather before each pulse and fade with it."""
+        gather before each pulse and fade with it (only `parts`)."""
         c = REF / 2
         centre = QPointF(c, c)
         live = self._phase == "live"
         accent = col["accent"]
         p.setPen(Qt.PenStyle.NoPen)
-        if charge > 0.01:   # light around the disc
+        if charge > 0.01 and "glow" in parts:   # light around the disc
             glow = QRadialGradient(centre, DISC_R + 34)
             glow.setColorAt(DISC_R / (DISC_R + 34),
                             self._tone(accent, 0.26 * charge))
             glow.setColorAt(1.0, self._tone(accent, 0.0))
             p.setBrush(glow)
             p.drawEllipse(centre, DISC_R + 34, DISC_R + 34)
-        tint = QColor(accent if live else col["gold"])
-        tint.setAlphaF(0.45)
-        edge = QColor(accent)
-        edge.setAlphaF(0.2)
-        face = QRadialGradient(QPointF(c, c - 0.1 * DISC_R), DISC_R)
-        face.setColorAt(0.0, col["pill"].lighter(132 + int(10 * hot)))
-        face.setColorAt(0.7, col["pill"].lighter(100 + int(8 * hot)))
-        p.setPen(QPen(mix_rgba(edge, tint, hot), 1.5))
-        p.setBrush(face)
-        p.drawEllipse(centre, DISC_R, DISC_R)
-        if charge > 0.01:   # glow inside the disc, and the rim's band
-            p.setPen(Qt.PenStyle.NoPen)
+        if "face" in parts:
+            tint = QColor(accent if live else col["gold"])
+            tint.setAlphaF(0.45)
+            edge = QColor(accent)
+            edge.setAlphaF(0.2)
+            face = QRadialGradient(QPointF(c, c - 0.1 * DISC_R), DISC_R)
+            face.setColorAt(0.0, col["pill"].lighter(132 + int(10 * hot)))
+            face.setColorAt(0.7, col["pill"].lighter(100 + int(8 * hot)))
+            p.setPen(QPen(mix_rgba(edge, tint, hot), 1.5))
+            p.setBrush(face)
+            p.drawEllipse(centre, DISC_R, DISC_R)
+        p.setPen(Qt.PenStyle.NoPen)
+        if charge > 0.01 and "inner" in parts:   # glow inside the disc
             inner = QRadialGradient(centre, DISC_R)
             inner.setColorAt(0.5, self._tone(accent, 0.0))
             inner.setColorAt(1.0, self._tone(accent, 0.34 * charge))
             p.setBrush(inner)
             p.drawEllipse(centre, DISC_R - 0.75, DISC_R - 0.75)
+        if charge > 0.01 and "rim" in parts:     # and the rim's band
             band = QRadialGradient(centre, DISC_R)
             band.setColorAt((DISC_R - 7) / DISC_R,
                             self._tone(col["focus"], 0.0))
