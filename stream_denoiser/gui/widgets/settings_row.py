@@ -69,9 +69,11 @@ class SettingsRow(QFrame):
         self._sub = QLabel(subtitle)
         self._sub.setObjectName("row-sub")
         self._sub.setWordWrap(True)
-        self._sub.setVisible(bool(subtitle))
         text.addWidget(self._sub)
         row.addLayout(text, stretch=1)
+        # Only once parented: shown without a parent, it would flash
+        # on screen as a window of its own.
+        self._sub.setVisible(bool(subtitle))
 
         self._control = control
         if control is not None:

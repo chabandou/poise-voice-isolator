@@ -96,7 +96,6 @@ class DeviceSelector(QWidget):
         titles.addWidget(self._label)
         self._subtitle = QLabel(subtitle)
         self._subtitle.setObjectName("row-sub")
-        self._subtitle.setVisible(bool(subtitle))
         titles.addWidget(self._subtitle)
         header.addLayout(titles)
         header.addStretch()
@@ -127,6 +126,9 @@ class DeviceSelector(QWidget):
         self._refresh_btn.setSizePolicy(policy)
         header.addWidget(self._refresh_btn)
         layout.addLayout(header)
+        # Only once parented: shown without a parent, it would flash
+        # on screen as a window of its own.
+        self._subtitle.setVisible(bool(subtitle))
 
         # Combo box only
         self._combo = AnimatedComboBox()
