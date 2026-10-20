@@ -33,7 +33,10 @@ def test_loops_fire_on_the_same_ticks(app):
     _pump(app, 0.6)
     fast.stop()
     slow.stop()
-    assert not fast.isActive() and not _clock()._timer.isActive()
+    # Off the clock (other tests' widgets may still have loops on it).
+    assert not fast.isActive()
+    assert id(fast) not in _clock()._running
+    assert id(slow) not in _clock()._running
     assert len(ticks["slow"]) >= 5
     assert len(ticks["fast"]) > len(ticks["slow"])
     # Each slow tick came with a fast one, on the same clock tick (ticks
@@ -60,6 +63,7 @@ def test_a_loop_gone_with_its_widget_is_dropped(app):
     owner = QWidget()
     loop = FrameTimer(owner)
     loop.start(16)
+    key = id(loop)
     sip.delete(owner)                     # the loop goes with it
     _pump(app, 0.1)
-    assert not _clock()._running
+    assert key not in _clock()._running
