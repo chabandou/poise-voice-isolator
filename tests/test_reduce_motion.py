@@ -201,7 +201,7 @@ from stream_denoiser.gui.settings import get_settings
 s = get_settings()
 s.theme = "vigil"
 s.reduce_motion = True
-s.minimize_to_tray_asked = True
+s.tray_hint_shown = True
 from stream_denoiser.gui.main_window import MainWindow
 win = MainWindow()
 win.show()

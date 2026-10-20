@@ -71,8 +71,9 @@ class Settings:
     KEY_WINDOW_STATE = "window/state"
     
     KEY_MINIMIZE_TO_TRAY = "behavior/minimize_to_tray"
-    KEY_MINIMIZE_TO_TRAY_ASKED = "behavior/minimize_to_tray_asked"
-    KEY_SHOW_TRAY_ICON = "behavior/show_tray_icon"
+    # Once asked "minimize to tray?" on first close; now marks the
+    # one-time "still running" notice as shown (asked users skip it).
+    KEY_TRAY_HINT_SHOWN = "behavior/minimize_to_tray_asked"
     
     KEY_ONNX_MODEL_PATH = "model/onnx_path"
     KEY_MODEL = "model/name"
@@ -91,8 +92,7 @@ class Settings:
         KEY_VB_CABLE_NAME: None,
         KEY_DEVICE_SWITCH_DONE: False,
         KEY_MINIMIZE_TO_TRAY: True,
-        KEY_MINIMIZE_TO_TRAY_ASKED: False,
-        KEY_SHOW_TRAY_ICON: True,
+        KEY_TRAY_HINT_SHOWN: False,
         KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
         KEY_MODEL: "deepfilternet3",
         KEY_THEME: "halcyon",
@@ -248,9 +248,19 @@ class Settings:
     def device_switch_done(self, value: bool) -> None:
         self.set(self.KEY_DEVICE_SWITCH_DONE, value)
     
+    # Retired "Show tray icon" switch: the icon now shows whenever Poise
+    # runs. Read once for migration, then removed.
+    _OLD_KEY_SHOW_TRAY_ICON = "behavior/show_tray_icon"
+
     @property
     def minimize_to_tray(self) -> bool:
-        """Get minimize to tray preference."""
+        """Keep running in the tray when the window is closed."""
+        if self.contains(self._OLD_KEY_SHOW_TRAY_ICON):
+            # With the icon hidden, closing always quit, whatever this
+            # switch said: keep that.
+            if not self.get(self._OLD_KEY_SHOW_TRAY_ICON, True):
+                self.set(self.KEY_MINIMIZE_TO_TRAY, False)
+            self.remove(self._OLD_KEY_SHOW_TRAY_ICON)
         return self.get(self.KEY_MINIMIZE_TO_TRAY, True)
     
     @minimize_to_tray.setter
@@ -258,13 +268,13 @@ class Settings:
         self.set(self.KEY_MINIMIZE_TO_TRAY, value)
     
     @property
-    def minimize_to_tray_asked(self) -> bool:
-        """Check if user has been asked about minimize to tray behavior."""
-        return self.get(self.KEY_MINIMIZE_TO_TRAY_ASKED, False)
+    def tray_hint_shown(self) -> bool:
+        """Whether the first close has said Poise is still in the tray."""
+        return self.get(self.KEY_TRAY_HINT_SHOWN, False)
     
-    @minimize_to_tray_asked.setter
-    def minimize_to_tray_asked(self, value: bool) -> None:
-        self.set(self.KEY_MINIMIZE_TO_TRAY_ASKED, value)
+    @tray_hint_shown.setter
+    def tray_hint_shown(self, value: bool) -> None:
+        self.set(self.KEY_TRAY_HINT_SHOWN, value)
     
     @property
     def onnx_model_path(self) -> str:

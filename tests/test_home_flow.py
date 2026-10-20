@@ -343,12 +343,54 @@ def test_logs_folder_button_only_with_a_log_file(window, tmp_path):
         logging_config._reset_file_logging_for_tests()
 
 
+# -- Closing the window --------------------------------------------------------------
+@pytest.mark.parametrize("icon, keep, expected", [
+    (True, True, True), (True, False, False),
+    (False, True, False),   # hidden icon: closing quit, whatever this said
+    (False, False, False),
+])
+def test_retired_tray_icon_switch_migrates(app, icon, keep, expected):
+    from stream_denoiser.gui.settings import Settings
+    s = Settings()
+    saved = s.minimize_to_tray
+    try:
+        s.set(s._OLD_KEY_SHOW_TRAY_ICON, icon)
+        s.minimize_to_tray = keep
+        assert s.minimize_to_tray is expected
+        assert not s.contains(s._OLD_KEY_SHOW_TRAY_ICON)
+    finally:
+        s.minimize_to_tray = saved
+
+
+def test_tray_icon_always_shown_with_one_close_switch(window):
+    assert window.tray is not None
+    assert not hasattr(window, "tray_switch")
+    assert window.keep_running_switch.isChecked()
+
+
+def test_first_close_hides_to_tray_and_says_so_once(app, window,
+                                                     monkeypatch):
+    s = window.settings
+    notices = []
+    monkeypatch.setattr(window.tray, "notify",
+                        lambda *a, **k: notices.append(a))
+    s.tray_hint_shown = False
+    try:
+        window.close()
+        assert window.isHidden() and len(notices) == 1
+        window.show()
+        window.close()
+        assert window.isHidden() and len(notices) == 1
+    finally:
+        s.tray_hint_shown = True
+
+
 # -- Reset to defaults ----------------------------------------------------------------
 def _move_everything_off_default(window):
     from stream_denoiser.gui import themes
     window.aad_switch.setChecked(False)
     window.thresh_slider.setValue(-63)
-    window.min_tray_switch.setChecked(False)
+    window.keep_running_switch.setChecked(False)
     window.power_btn._user_set_strength(-18)
     other = next(i for i, t in enumerate(themes.theme_ids()) if t != "halcyon")
     window.theme_group.button(other).setChecked(True)
@@ -368,7 +410,7 @@ def test_reset_restores_defaults_but_keeps_device_and_theme(window,
         assert window.aad_switch.isChecked() and s.aad_enabled is True
         assert window.thresh_slider.value() == -40 and s.aad_threshold == -40.0
         assert window.thresh_slider.isEnabled()
-        assert window.min_tray_switch.isChecked() and s.minimize_to_tray
+        assert window.keep_running_switch.isChecked() and s.minimize_to_tray
         # Default strength is the dial's strongest (ring full).
         assert window.power_btn.strength_db() == -50 and s.atten_lim_db == -50.0
         assert s.theme == picked and themes.current_id() == picked

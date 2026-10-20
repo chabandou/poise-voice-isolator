@@ -457,20 +457,14 @@ class MainWindow(QMainWindow):
             "Silence threshold", "Anything quieter counts as silence.",
             thresh_box)
 
-        self.tray_switch = ToggleSwitch(
-            checked=self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True))
-        self.tray_switch.toggled.connect(self._on_tray_toggled)
-        tray_row = SettingsRow(
-            "Show tray icon", "Keep Poise in the system tray.",
-            self.tray_switch)
-
-        self.min_tray_switch = ToggleSwitch(
+        self.keep_running_switch = ToggleSwitch(
             checked=self.settings.minimize_to_tray)
-        self.min_tray_switch.toggled.connect(
+        self.keep_running_switch.toggled.connect(
             lambda checked: setattr(self.settings, 'minimize_to_tray', checked))
-        min_tray_row = SettingsRow(
-            "Keep running in the tray when closed",
-            "Closing the window does not stop Poise.", self.min_tray_switch)
+        keep_running_row = SettingsRow(
+            "Keep running in tray",
+            "Poise stays in the system tray. Quit from the tray menu.",
+            self.keep_running_switch)
 
         self.motion_switch = ToggleSwitch(
             checked=self.settings.reduce_motion)
@@ -494,7 +488,7 @@ class MainWindow(QMainWindow):
             self.reset_btn)
         self._reset_row = reset_row
 
-        rows = [aad_row, thresh_row, tray_row, min_tray_row, motion_row,
+        rows = [aad_row, thresh_row, keep_running_row, motion_row,
                 reset_row]
         for i, row in enumerate(rows):
             row.set_position(i == 0, i == len(rows) - 1)
@@ -879,15 +873,15 @@ class MainWindow(QMainWindow):
         self._configure_worker()
 
     def setup_tray(self):
-        """Initialize system tray."""
-        if self.settings.get(self.settings.KEY_SHOW_TRAY_ICON, True):
-            if self.tray is None:
-                self.tray = SystemTray(self)
-                self.tray.restore_requested.connect(self.bring_to_front)
-                self.tray.start_requested.connect(self._start_processing)
-                self.tray.stop_requested.connect(self._stop_processing)
-                self.tray.quit_requested.connect(self._quit_app)
-                self.tray.show()
+        """Show the tray icon for as long as Poise runs: it is how a
+        hidden window comes back, and a sign the mic is in use."""
+        if self.tray is None:
+            self.tray = SystemTray(self)
+            self.tray.restore_requested.connect(self.bring_to_front)
+            self.tray.start_requested.connect(self._start_processing)
+            self.tray.stop_requested.connect(self._stop_processing)
+            self.tray.quit_requested.connect(self._quit_app)
+            self.tray.show()
 
     def restore_state(self):
         """Restore previous window state and selections."""
@@ -1015,8 +1009,8 @@ class MainWindow(QMainWindow):
         defaults = s.DEFAULTS
         self.aad_switch.setChecked(bool(defaults[s.KEY_AAD_ENABLED]))
         self.thresh_slider.setValue(int(defaults[s.KEY_AAD_THRESHOLD]))
-        self.tray_switch.setChecked(bool(defaults[s.KEY_SHOW_TRAY_ICON]))
-        self.min_tray_switch.setChecked(bool(defaults[s.KEY_MINIMIZE_TO_TRAY]))
+        self.keep_running_switch.setChecked(
+            bool(defaults[s.KEY_MINIMIZE_TO_TRAY]))
         self.model_selector.setCurrentText(defaults[s.KEY_MODEL])
         strength = clamp_db(defaults[s.KEY_ATTEN_LIM_DB])
         self.power_btn.set_strength_db(strength)
@@ -1052,14 +1046,6 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentIndex(1)
         if isolate:
             QTimer.singleShot(0, self._start_processing)
-
-    def _on_tray_toggled(self, checked: bool):
-        self.settings.set(self.settings.KEY_SHOW_TRAY_ICON, checked)
-        if checked:
-            self.setup_tray()
-        elif self.tray is not None:
-            self.tray.hide()
-            self.tray = None
 
     def toggle_processing(self, start: bool):
         """Handle power button click."""
@@ -1296,29 +1282,19 @@ class MainWindow(QMainWindow):
         return "VB-CABLE" in text or ("CABLE" in text and "LOOPBACK" in text)
 
     def closeEvent(self, event: QCloseEvent):
-        """Handle window close event (minimize to tray logic)."""
-        # If minimize to tray is enabled
-        if self.settings.minimize_to_tray and self.tray is not None and not self._forcing_quit:
-            # Check if we should ask first
-            if not self.settings.minimize_to_tray_asked:
-                reply = QMessageBox.question(
-                    self,
-                    "Minimize to Tray",
-                    "Poise will keep running in the system tray.\n\n"
-                    "Do you want to minimize to tray instead of exiting?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
-                )
-
-                minimize = (reply == QMessageBox.StandardButton.Yes)
-                self.settings.minimize_to_tray = minimize
-                self.settings.minimize_to_tray_asked = True
-
-            if self.settings.minimize_to_tray:
-                event.ignore()
-                self.hide()
-                # Notification removed as requested
-                return
+        """Hide to the tray when set to keep running; otherwise quit."""
+        if (self.settings.minimize_to_tray and self.tray is not None
+                and not self._forcing_quit):
+            event.ignore()
+            self.hide()
+            # Said once: Windows tucks new tray icons into the overflow,
+            # so a vanished window can look like a quit.
+            if not self.settings.tray_hint_shown:
+                self.settings.tray_hint_shown = True
+                self.tray.notify(
+                    "Poise is still running",
+                    "It's in the system tray. Right-click the icon to quit.")
+            return
 
         # Actually closing
         self._quit_app()

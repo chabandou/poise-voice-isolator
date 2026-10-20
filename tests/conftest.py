@@ -48,7 +48,7 @@ try:
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat,
                       QSettings.Scope.UserScope, _TEST_CONFIG_HOME)
-    # Pre-seed the close path: hide quietly, never ask, never quit.
+    # Pre-seed the close path: hide quietly (no first-close notice), never quit.
     _seed = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                       "Poise", "VoiceIsolator")
     _seed.setValue("behavior/minimize_to_tray_asked", True)
