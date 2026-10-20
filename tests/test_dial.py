@@ -423,3 +423,132 @@ def test_drags_and_reduced_motion_do_not_glide(app, monkeypatch):
     assert btn._needle_pos.value == d.lit_count(-50) - 1
     assert not btn._trail and btn._over == 0.0
     btn.close()
+
+
+# -- the ring's cached layers ---------------------------------------------------
+def _settled(app, theme, phase):
+    """A dial long settled in `phase` under `theme`, its clock frozen."""
+    from stream_denoiser.gui import themes
+    themes.set_current(theme)
+    btn = _make(app)
+    btn._sweep_at = None                  # the ring fully drawn
+    if phase == "live":
+        btn.set_active(True)
+    btn._phase_at -= 60.0                 # long after the bloom / ignite
+    t = btn._ms()
+    btn._ms = lambda: t
+    btn._idle_breath = lambda: 0.7
+    return btn, t
+
+
+@pytest.mark.parametrize("theme,phase", [
+    ("abyss", "live"), ("vigil", "live"), ("vigil", "idle")])
+def test_a_pulse_alone_redraws_no_ring(app, motion, theme, phase):
+    """The alpha the lit ticks share (the live charge, the breath) is
+    drawn as the opacity of cached images, not into them."""
+    from stream_denoiser.gui import themes
+    before = themes.current_id()
+    try:
+        btn, _ = _settled(app, theme, phase)
+        drawn = []
+        draw = btn._draw_ring
+        btn._draw_ring = lambda *a: drawn.append(1) or draw(*a)
+        btn._live_alpha = lambda t: 0.8
+        btn.grab()
+        assert drawn
+        first = len(drawn)
+        btn._live_alpha = lambda t: 0.95
+        btn._idle_breath = lambda: 0.9
+        btn.grab()
+        assert len(drawn) == first
+        btn.close()
+    finally:
+        themes.set_current(before)
+
+
+@pytest.mark.parametrize("theme,phase", [
+    ("abyss", "live"), ("vigil", "live"), ("vigil", "idle")])
+def test_the_layered_ring_looks_as_drawn_whole(app, motion, theme, phase):
+    import math as m
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QImage, QPainter
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.themes import current
+    before = themes.current_id()
+    try:
+        btn, t = _settled(app, theme, phase)
+        btn._live_alpha = lambda t: 0.83
+        col = btn._colours(current())
+        w, h, dpr = btn.width(), btn.height(), btn.devicePixelRatioF()
+        whole = btn._draw_ring(w, h, dpr, btn._ring_strokes(col, t))
+        layered = QImage(m.ceil(w * dpr), m.ceil(h * dpr),
+                         QImage.Format.Format_ARGB32_Premultiplied)
+        layered.setDevicePixelRatio(dpr)
+        layered.fill(Qt.GlobalColor.transparent)
+        p = QPainter(layered)
+        btn._paint_ring(p, col, t)
+        p.end()
+        assert len(btn._ring) >= 2        # the pulse has its own layers
+        worst = 0
+        for y in range(0, layered.height(), 2):
+            for x in range(0, layered.width(), 2):
+                a, b = whole.pixel(x, y), layered.pixel(x, y)
+                worst = max(worst, *(abs(((a >> s) & 255) - ((b >> s) & 255))
+                                     for s in (0, 8, 16, 24)))
+        assert worst <= 3
+        btn.close()
+    finally:
+        themes.set_current(before)
+
+
+@pytest.mark.parametrize("theme", ["abyss", "vigil"])
+def test_the_cached_disc_looks_as_drawn_and_a_charge_redraws_none(
+        app, motion, theme):
+    import math as m
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QImage, QPainter
+    from stream_denoiser.gui import themes
+    from stream_denoiser.gui.themes import current
+    from stream_denoiser.gui.widgets.dial import REF
+    before = themes.current_id()
+    try:
+        btn, _ = _settled(app, theme, "live")
+        col = btn._colours(current())
+        w, h, dpr = btn.width(), btn.height(), btn.devicePixelRatioF()
+        paint = (btn._paint_disc_breath if theme == "vigil"
+                 else btn._paint_disc)
+
+        def render(cached, charge):
+            image = QImage(m.ceil(w * dpr), m.ceil(h * dpr),
+                           QImage.Format.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+            image.fill(Qt.GlobalColor.transparent)
+            p = QPainter(image)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            k, c = min(w, h) / REF, REF / 2
+            p.translate(w / 2, h / 2)
+            p.scale(k, k)
+            p.translate(-c, -c)
+            if cached:
+                btn._paint_disc_cached(p, col, charge, 0.0, paint)
+            else:
+                paint(p, col, charge, 0.0)
+            p.end()
+            return image
+
+        worst = 0
+        whole, parts = render(False, 0.6), render(True, 0.6)
+        for y in range(0, whole.height(), 2):
+            for x in range(0, whole.width(), 2):
+                a, b = whole.pixel(x, y), parts.pixel(x, y)
+                worst = max(worst, *(abs(((a >> s) & 255) - ((b >> s) & 255))
+                                     for s in (0, 8, 16, 24)))
+        assert worst <= 3
+        images = {part: entry[1] for part, entry in btn._disc_parts.items()}
+        assert set(images) == {"glow", "face", "inner", "rim"}
+        render(True, 0.25)                  # the charge moves on
+        assert all(btn._disc_parts[part][1] is image
+                   for part, image in images.items())
+        btn.close()
+    finally:
+        themes.set_current(before)
