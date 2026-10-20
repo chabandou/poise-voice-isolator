@@ -444,6 +444,10 @@ class SkyView(QWidget):
         self._holds = set()
         self._still = None
         self._masked = False
+        self._out_of_sight = True
+        self._placed = False
+        self._discarded = False
+        self._still_at = QPoint()
         self._awaiting = 0         # released: frames to wait for
         self._on_live = None
         self._late = QTimer(self)  # (no frame came: show it anyway)
@@ -481,6 +485,8 @@ class SkyView(QWidget):
 
     def discard(self) -> None:
         """Hide and delete the view and its window."""
+        self._discarded = True
+        self._showing.stop()
         self._box.hide()
         self.hide()
         self.deleteLater()
@@ -537,36 +543,39 @@ class SkyView(QWidget):
 
     def _place(self) -> None:
         """The window over what shows of the card, the card drawn offset
-        in it (masked away while held); hidden out of sight."""
-        if self._root is None or sip.isdeleted(self._box):
+        in it. Out of sight (another page, scrolled away) or held, it is
+        masked away rather than hidden, and held it is not moved: shown
+        again or resized, a native window draws afresh, there and then,
+        and each step of a page slide would resize it."""
+        if (self._root is None or self._discarded
+                or sip.isdeleted(self._box)):
             return
         rect, shown = self._card_rects()
-        if self.isVisible() and not shown.isEmpty():
-            self._box.setGeometry(shown)
+        self._out_of_sight = not self.isVisible() or shown.isEmpty()
+        if not self._out_of_sight and not self._holds:
+            if self._box.geometry() != shown:
+                self._box.setGeometry(shown)
             self._root.setX(rect.x() - shown.x())
             self._root.setY(rect.y() - shown.y())
-            self._mask()
-            if self._box.isVisible():
-                self._box.raise_()
-            elif not self._showing.isActive():
-                # Not from inside a show (the window's own, say): a native
-                # window shown there deadlocks with its render thread.
-                self._showing.start()
-        else:
-            self._showing.stop()
-            self._box.hide()
+            self._placed = True
+        self._mask()
+        if self._box.isVisible():
+            self._box.raise_()
+        elif not self._showing.isActive():
+            # Not from inside a show (the window's own, say): a native
+            # window shown there deadlocks with its render thread.
+            self._showing.start()
 
     def _show_box(self) -> None:
-        rect, shown = self._card_rects()
-        if self.isVisible() and not shown.isEmpty():
+        if not self._discarded and not sip.isdeleted(self._box):
             self._box.show()
             self._box.raise_()
 
     def _mask(self) -> None:
-        """Held, or until a frame of what it now shows is up: masked, the
-        window vanishes from the screen yet keeps drawing, current the
-        moment it shows again."""
-        masked = bool(self._holds or self._awaiting)
+        """Held, out of sight, or until a frame of what it now shows is
+        up: masked, the window vanishes from the screen yet keeps
+        drawing, current the moment it shows again."""
+        masked = bool(self._holds or self._awaiting or self._out_of_sight)
         if masked != self._masked:
             self._masked = masked
             self._quick.setMask(_MASKED if masked else QRegion())
@@ -597,12 +606,14 @@ class SkyView(QWidget):
         if self._holds:
             return
         self._on_live = on_live
-        if self._box.isVisible() or self._showing.isActive():
+        if self._box.isVisible():
             # Two: one may have been drawn before the scene caught up.
             self._awaiting = 2
+            self._place()  # (where the card is now: not moved while held)
             self._quick.update()
             self._late.start()
         else:
+            self._place()
             self._go_live()
 
     def _swapped(self) -> None:
@@ -619,22 +630,18 @@ class SkyView(QWidget):
         if self._holds:
             return
         self._mask()
-        self._still = None
-        self.update()
+        self._set_still(None)
         on_live, self._on_live = self._on_live, None
         if on_live is not None:
             on_live()
 
     def _grab_still(self) -> None:
         """The sky and the card under it, without what sits on it (the
-        card's widgets draw themselves over the still)."""
-        if self._root is None:
+        card's widgets draw themselves over the still); none before the
+        window has been placed (the card is still bare then)."""
+        self._set_still(None)
+        if self._root is None or not self._placed:
             return
-        if self._box.size() != self.size():
-            # The whole card (the window may show only part of it).
-            self._box.setGeometry(QRect(self._box.pos(), self.size()))
-            self._root.setX(0)
-            self._root.setY(0)
         shown = {name: item.property("visible")
                  for name, item in self._layers.items()}
         for item in self._layers.values():
@@ -644,15 +651,32 @@ class SkyView(QWidget):
         for name, item in self._layers.items():
             item.setProperty("visible", shown[name])
         self._root.setProperty("tickRing", self._sent.get("tickRing", _OFF))
-        self._place()
         if not still.isNull():
+            # In the window's own format: drawn as it comes from the GPU,
+            # each frame of a slide would convert it.
+            still = still.convertToFormat(
+                QImage.Format.Format_ARGB32_Premultiplied)
             still.setDevicePixelRatio(self._quick.devicePixelRatio())
-            self._still = still
+            # Where the window sits on the card (all of it, or what of
+            # it showed).
+            self._still_at = QPoint(-round(self._root.x()),
+                                    -round(self._root.y()))
+            self._set_still(still)
+
+    def _set_still(self, still) -> None:
+        """Show `still` (or none). A still covers all of the card, page
+        corners and all: opaque, nothing under it is painted (each frame
+        of a page slide repaints the page)."""
+        self._still = still
+        covers = still is not None and self._still_at.isNull() and (
+            still.deviceIndependentSize().toSize() == self.size())
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, covers)
+        self.update()
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
         if self._still is not None and not self.quiet:
             p = QPainter(self)
-            p.drawImage(0, 0, self._still)
+            p.drawImage(self._still_at, self._still)
             p.end()
 
     # -- what sits on it ---------------------------------------------------------------

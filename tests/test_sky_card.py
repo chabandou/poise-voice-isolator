@@ -263,14 +263,19 @@ at = dial.mapTo(window, dial.rect().center()) - view._box.pos()
 QTest.mouseClick(quick, Qt.MouseButton.LeftButton,
                  Qt.KeyboardModifier.NoModifier, at)
 pump(0.3)
-print("result", view._box.isVisible(), view.held, toggled, dial.hasFocus())
+from PyQt6.QtCore import QRect
+over = view._box.geometry() == QRect(card.mapTo(window, QPoint(0, 0)),
+                                     card.size())
+print("result", view._box.isVisible(), view.held, view._masked, over,
+      toggled, dial.hasFocus())
 """
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the GPU sky's home")
 def test_a_click_on_the_view_reaches_the_dial():
-    """On the real platform: the view is shown over the card, and a click
-    on the dial's place in it starts the dial and focuses it."""
+    """On the real platform: the view shows (unmasked) right over the
+    card, and a click on the dial's place in it starts the dial and
+    focuses it."""
     env = dict(os.environ, QT_QPA_PLATFORM="windows")
     env.pop("POISE_SKY_RASTER", None)
     run = subprocess.run(
@@ -280,4 +285,4 @@ def test_a_click_on_the_view_reaches_the_dial():
     assert run.returncode == 0 and out, run.stderr
     if out[-1].startswith("skip:"):
         pytest.skip(out[-1][6:])
-    assert out[-1] == "result True False [True] True"
+    assert out[-1] == "result True False False True [True] True"
