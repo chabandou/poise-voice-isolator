@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QIcon, QCloseEvent, QPixmap, QDesktopServices, QColor, QFont,
-    QTextCharFormat, QTextCursor,
+    QTextCharFormat, QTextCursor, QSurface,
 )
 
 from .styles import get_stylesheet
@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         set_still(self.settings.reduce_motion)
 
         self.setWindowTitle("Poise Voice Isolator")
+        self._gpu_ready_surface()
 
         # Set App Icon
         icon_path = get_icon_path()
@@ -862,6 +863,23 @@ class MainWindow(QMainWindow):
             "Denoising: DeepFilterNet3 · GTCRN · RNNoise (xiph.org)<br>"
             f"Audio routing: VB-CABLE by {link} · third-party, donationware"
             "<br>Built with Python and PyQt6 · MIT licensed")
+
+    def _gpu_ready_surface(self) -> None:
+        """Create the window with a Direct3D surface (Windows), still
+        flushed by the raster backing store. The first GPU view (the
+        night sky, widgets/sky_gpu.py) switches the window to RHI
+        composition; Qt destroys and recreates a window whose surface
+        type differs (a visible flash when a sky theme is picked after
+        launch) but switches a D3D one in place. Costs nothing until
+        then: no GPU memory while no view exists."""
+        if sys.platform != "win32":
+            return
+        try:
+            self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+            self.windowHandle().setSurfaceType(
+                QSurface.SurfaceType.Direct3DSurface)
+        except Exception as e:
+            _logger.warning(f"Window surface left as raster: {e}")
 
     # -- navigation ------------------------------------------------------------
     def _on_page_requested(self, index: int):
