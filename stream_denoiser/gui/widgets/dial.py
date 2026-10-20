@@ -306,6 +306,7 @@ class DialButton(PowerButton):
         self._charge_drop_at = None
         self._sweep_at = None             # first show: the ring sweeps on
         self._swept = False
+        self._sweep_held = None           # see hold_sweep
         self._pluck_at = None
         self._pluck_big = False
         self._bump_at = None
@@ -631,6 +632,22 @@ class DialButton(PowerButton):
         hide till it reaches them)."""
         return (self._sweep_at is not None
                 and self._since(self._sweep_at) < self._sweep_ms()[1])
+
+    def hold_sweep(self, hold: bool) -> None:
+        """Keep the first sweep from starting (the card is still coming
+        in, its sky not yet drawing the ring), or let it start: when it
+        was due, or now if that has passed."""
+        if hold:
+            if (self._sweep_held is None and self._sweep_at is not None
+                    and self._since(self._sweep_at) < 0.0):
+                self._sweep_held = self._sweep_at
+                self._sweep_at = self._now() + 3600.0   # (its ticks hide)
+        elif self._sweep_held is not None:
+            due, self._sweep_held = self._sweep_held, None
+            now = self._now()
+            self._sweep_at = max(due, now)
+            QTimer.singleShot(max(0, round((self._sweep_at - now) * 1000.0)),
+                              self._run_clock)
 
     def _sweep_moving(self) -> bool:
         """The sweep has begun (before, nothing moves: see showEvent)."""

@@ -565,3 +565,22 @@ def test_the_clock_waits_for_the_first_sweep(app, motion):
     btn._run_clock()
     assert btn._clock.isActive()
     btn.close()
+
+
+def test_the_first_sweep_waits_while_held(app, motion):
+    """Held (the card still coming in), the sweep keeps its ticks hidden
+    and its clock idle; let go, it starts when it was due, or now."""
+    btn = _make(app)
+    due = btn._sweep_at
+    btn.hold_sweep(True)
+    assert btn._sweeping() and not btn._sweep_moving()
+    btn.hold_sweep(False)
+    assert btn._sweep_at == due                 # not due yet: as it was
+    btn._sweep_at = None
+    btn.close()
+    late = _make(app)
+    late.hold_sweep(True)
+    late._sweep_held -= 10.0                    # long overdue
+    late.hold_sweep(False)
+    assert abs(late._since(late._sweep_at)) < 50.0   # starts now
+    late.close()

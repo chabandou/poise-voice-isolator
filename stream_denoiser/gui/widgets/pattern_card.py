@@ -656,6 +656,7 @@ class PatternCard(QFrame):
             self._due.clear()
             self._draw.stop()
             self._begin_waiting_reveal()
+            self._hold_sweep(False)
             self.update()
 
     # -- what sits on the GPU sky ----------------------------------------------------
@@ -780,6 +781,11 @@ class PatternCard(QFrame):
         if self._view is not None and not self._holds:
             self._mirror_dial(True)
             self._begin_waiting_reveal()
+            self._hold_sweep(False)
+
+    def _hold_sweep(self, hold: bool) -> None:
+        if hasattr(self._origin, "hold_sweep"):
+            self._origin.hold_sweep(hold)
 
     def _entrance_effect(self) -> bool:
         widget = self
@@ -797,6 +803,9 @@ class PatternCard(QFrame):
         if self._entrance_effect():
             self.hold_native("entrance")
             self._entering.start()
+            # The ring sweeps on once the sky draws it: not handed over
+            # from the dial to the view halfway through.
+            self._hold_sweep(True)
         self.release_native("showing")
 
     def _watch_entrance(self) -> None:
