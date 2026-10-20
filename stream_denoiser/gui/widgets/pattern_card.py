@@ -41,7 +41,7 @@ from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPen, QRadialGradient, QTransform)
 
-from ..animations import Blend, EASE_BREATHE, ambient_ok
+from ..animations import Blend, EASE_BREATHE, FrameTimer, ambient_ok
 from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import current as current_theme, style as theme_style
@@ -131,7 +131,7 @@ class PatternCard(QFrame):
         self._ping_at = None
         self._ping_end = None                  # pings stopped: ring fades
         self._pinging = False                  # a ring is on screen
-        self._ping_timer = QTimer(self)
+        self._ping_timer = FrameTimer(self)
         self._ping_timer.setInterval(PING_FRAME_MS)
         self._ping_timer.timeout.connect(self._ping_tick)
 
@@ -145,7 +145,7 @@ class PatternCard(QFrame):
                             EASE_BREATHE)
         self._reveal = Blend(self, self._changed, SKY_REVEAL_MS)
         self._revealed = False
-        self._sky_timer = QTimer(self)
+        self._sky_timer = FrameTimer(self)
         self._sky_timer.setInterval(SKY_FRAME_MS)
         self._sky_timer.timeout.connect(self._sky_tick)
         # The sky on the GPU (made on first show; None paints it here).

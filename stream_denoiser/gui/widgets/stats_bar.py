@@ -27,7 +27,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 
-from ..animations import TextSwap, ambient_ok, ease_out, motion_ok, stagger_in
+from ..animations import (
+    FrameTimer, TextSwap, ambient_ok, ease_out, motion_ok, stagger_in,
+)
 from ..scaling import sp
 from ..themes import breathing, current as current_theme
 
@@ -126,7 +128,7 @@ class StatsBar(QWidget):
         self._status.setToolTip(LOG_HINT)
         layout.addWidget(self._status)
         self._halo_at = None
-        self._halo = QTimer(self)
+        self._halo = FrameTimer(self)
         self._halo.setInterval(33)
         self._halo.timeout.connect(self._halo_frame)
 
