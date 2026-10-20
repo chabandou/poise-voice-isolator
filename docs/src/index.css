@@ -854,7 +854,7 @@ body {
 	border-radius: inherit;
 	opacity: var(--sheen);
 	background: radial-gradient(
-		circle 380px at var(--mx) var(--my),
+		circle 260px at var(--mx) var(--my),
 		color-mix(in srgb, var(--color-accent-light) 12%, transparent),
 		transparent 70%
 	);
