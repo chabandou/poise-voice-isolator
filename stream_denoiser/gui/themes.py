@@ -54,31 +54,32 @@ THEMES: Dict[str, Dict] = {
         "badge_bg": "#10201d", "badge_fg": "#3fb890",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
-    "mono": {
+    "eclipse": {
         # Vigil in graphite: the same sky and breathing Home, its candle
-        # gold a warm pewter and its lavender a muted signature cyan;
-        # soft text and faint edges, nothing pure white.
-        "label": "Mono",
-        "blurb": "Soft graphite under a slow night sky, a hint of cyan.",
-        "bg": "#0e1014", "sidebar": "#0b0d10",
-        "card": "#15171c", "pill": "#16191e", "groove": "#2a2e36",
-        "text": "#e8eaed", "muted": "#8f959e",
-        "device_title": "#9ba1aa",
-        "nav_active": "#cbe7eb", "nav_muted": "#9ba1aa",
-        "accent": "#98c5cd", "accent_light": "#cbe7eb",
-        "accent_rgb": "152, 197, 205",
-        "secondary": "#C0B8A8", "secondary_rgb": "192, 184, 168",
-        "border_rgb": "200, 210, 222", "border_alpha": 0.14,
-        "divider_rgb": "200, 210, 222", "divider_alpha": 0.20,
-        "badge_bg": "#1b1f25", "badge_fg": "#98c5cd",
+        # gold a moon's deep blue and its lavender a soft silver. Deep
+        # neutral greys, soft text and faint edges, nothing pure white.
+        # (Was Mono.)
+        "label": "Eclipse",
+        "blurb": "Silver and deep blue on graphite under a slow night sky.",
+        "bg": "#0a0a0a", "sidebar": "#070707",
+        "card": "#111111", "pill": "#141414", "groove": "#282828",
+        "text": "#e6e6e6", "muted": "#a3a3a3",
+        "device_title": "#adadad",
+        "nav_active": "#ececec", "nav_muted": "#adadad",
+        "accent": "#c8c8c8", "accent_light": "#ececec",
+        "accent_rgb": "200, 200, 200",
+        "secondary": "#4A83C9", "secondary_rgb": "74, 131, 201",
+        "border_rgb": "220, 220, 220", "border_alpha": 0.14,
+        "divider_rgb": "220, 220, 220", "divider_alpha": 0.20,
+        "badge_bg": "#191919", "badge_fg": "#c8c8c8",
         "success": "#86d0ae", "warning": "#e2c983", "error": "#e89aa2",
         "backdrop": "sky", "motion": "breath",
         "heading_weight": 600,
         "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
-                        "fx:0.62, fy:0.28, stop:0 #1a1d23, stop:0.45 "
-                        "#121418, stop:0.75 #0e1014, stop:1 #0e1014)"),
+                        "fx:0.62, fy:0.28, stop:0 #151515, stop:0.45 "
+                        "#0e0e0e, stop:0.75 #0a0a0a, stop:1 #0a0a0a)"),
         "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                      "stop:0 #191c22, stop:1 #121419)"),
+                      "stop:0 #141414, stop:1 #0e0e0e)"),
     },
     "vigil": {
         "label": "Vigil",
@@ -144,7 +145,7 @@ DEFAULT_THEME = "abyss"
 
 #: Retired theme ids and the theme that replaced each, so a saved choice
 #: lands on its successor rather than the default.
-RENAMED = {"ultraviolet": "vigil"}
+RENAMED = {"ultraviolet": "vigil", "mono": "eclipse"}
 
 #: Optional per-theme keys and their values when a theme leaves them out.
 #: backdrop: what the dial card shows behind the dial ("lattice" or

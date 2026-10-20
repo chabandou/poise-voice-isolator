@@ -27,27 +27,29 @@ Motion, phase by phase:
   trail), it plucks and the ticks around it lift as in a drag, the end
   it heads for lights, and a step past either end stretches the ring and
   springs back. NUDGE_HOLD_MS after the last step it all fades away;
-- starting: lit ticks dim and a comet laps the ring once a second; the
-  label's three dots light up in step with it;
+- starting: lit ticks dim and a comet sweeps the ring in about a second,
+  resting a beat before the next sweep; the label's three dots light up
+  in step with it;
 - live: ticks ignite one after another; when the sweep closes the needle
   flashes, the disc pops, a ripple leaves it and `ignited` fires (the
-  lattice pings follow it, see PatternCard). A slow brightness crest
-  then flows over the lit ticks, and the disc charges up (glow and rim)
-  in the second before each later ping;
+  lattice pings follow it, see PatternCard). In the second before each
+  later ping the disc charges up (glow and rim) and the lit ticks all
+  brighten with it, fading together as the ping leaves;
 - stopping: the accent drains back from the head; the dots settle; a
   charge glow caught mid-way fades out (CHARGE_DROP_MS) rather than
   cutting off, and no new charge starts;
 - error: lit ticks flash white then settle red and the disc shakes.
 
-A theme whose motion is "breath" (Vigil, Mono) moves the same phases slower
+A theme whose motion is "breath" (Vigil, Eclipse) moves the same phases slower
 and softer, on the night sky's rhythm (widgets/sky.py): idle, the lit
 ticks breathe; starting, light gathers from the ends of the lit arc
 inward; live, it blooms from the middle out, the disc swells (no pop),
 and then the ticks and the disc's charge (glow and rim) breathe on one
 BREATH_MS cycle, a pulse leaving the dial as each breath begins (the
 halos and band are the sky's); stopping, the ends settle back first; an
-error trembles. The label and the readout mist from one value to the
-next instead of rolling.
+error trembles. The label mists from one to the next instead of rolling,
+and so does each readout digit that changes, dissolving like smoke in
+place.
 
 Geometry is authored in a 300-unit square and scaled to the widget, so
 the dial stays crisp at any UI scale.
@@ -71,7 +73,7 @@ from .sky import (
     breath_pos, keyframes,
 )
 from ..animations import (
-    Blend, EASE_BREATHE, ambient_ok, mix_rgba,
+    Blend, EASE_BREATHE, ambient_ok, mix_rgba, smoke_wisps,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
@@ -110,14 +112,18 @@ SWEEP_MS = 900
 SWELL_PX = 3.4            # hover lift of the ticks nearest the pointer
 SWELL_DEG = 13.0          # ...and how far it spreads
 OVERSHOOT_MAX = 4.0       # degrees the ring stretches past an end
-COMET_MS = 990            # starting: one lap of the comet
+COMET_MS = 990            # starting: one sweep of the comet
 COMET_STEP = 18           # ...the delay between neighbouring ticks
-DOT_STEP = 330            # the label's dots, a third of a lap apart
+COMET_REST_MS = 330       # ...and the pause before the next sweep
+COMET_LAP_MS = COMET_MS + COMET_REST_MS
+COMET_FLASH_MS = 69       # a tick flashes, fades to gold...
+COMET_TAIL_MS = 178       # ...and is back to its own colour by here
+DOT_STEP = 330            # the label's dots, a third of a sweep apart
+DOT_LIFT_MS = 327         # one dot's lift...
+DOT_FLASH_MS = 119        # ...brightest over its first part
 IGNITE_STEP = 14          # live: between ticks igniting
 IGNITE_MS = 520           # one tick's ignition
 IGNITE_TAIL = 100         # the sweep "closes" this long after the last tick
-FLOW_MS = 3190            # live: the brightness crest's lap
-FLOW_STEP = 58
 NEEDLE_IN_MS = 460
 POP_MS = 480
 RIPPLE_MS = 1050
@@ -141,7 +147,7 @@ TRAIL_PEAK = 0.14         # ...reaching full flash this far in
 PLUCK_BIG_MS = 420
 BUMP_MS = 340
 FRAME_MS = 16             # transitions
-LOOP_FRAME_MS = 33        # steady loops (the live crest and charge)
+LOOP_FRAME_MS = 33        # steady loops (the live charge)
 
 # -- the breathing rhythm (themes whose motion is "breath") --------------------
 BLOOM_STEP = 18           # live: between ticks, outward from the middle
@@ -164,11 +170,9 @@ DOT_BREATH_STEP = 300     # starting: the dots breathe a beat apart
 DOT_SETTLE_STEP = 240     # stopping: and settle
 DOT_SETTLE_MS = 900
 MIST_MS = 600             # label: the old one mists away as the new rises
-NUMBER_MIST_MS = 520      # readout: the same, quicker while dragging
-NUMBER_DRIFT_MS = 700
-DRAG_MIST_MS = 260
-DRAG_DRIFT_MS = 360
-NUMBER_DRIFT = 5.0        # design px the values drift as they change
+NUMBER_MIST_MS = 520      # readout: each changing digit, the same...
+DRAG_MIST_MS = 260        # ...quicker while dragging
+SMOKE_PX = 6.0            # design px a digit's smoke spreads as it fades
 ERROR_PULSE_MS = 1100     # error: lit ticks dim and return, twice...
 TREMBLE_MS = 700          # ...and the disc trembles
 TREMBLE = ((0, 0.0, _css_in_out), (0.15, -2.0, _css_in_out),
@@ -317,11 +321,13 @@ class DialButton(PowerButton):
         self._tens = Blend(self, self.update, 400, _spring_curve(1.2), tens)
         self._ones = Blend(self, self.update, 400, _spring_curve(1.2), ones)
         # Breath: the label mists from one to the next, and so do the
-        # readout's values (value -> [alpha from, to, monotonic start]).
+        # readout's digits, each column on its own (per column: digit ->
+        # [alpha from, to, monotonic start]).
         self._label_from = self._label_to = 0
         self._label_mist = Blend(self, self.update, MIST_MS, EASE_BREATHE,
                                  1.0)
-        self._mists = {self._strength_db: [1.0, 1.0, 0.0]}
+        self._mists = tuple({d: [1.0, 1.0, 0.0]}
+                            for d in divmod(-self._strength_db, 10))
         self._over = 0.0                  # ring stretch, degrees
         self._over_anim = QVariantAnimation(self)
         self._over_anim.setDuration(560)
@@ -392,41 +398,48 @@ class DialButton(PowerButton):
         self._ones.set_target(ones, animated)
         self._mist_number(animated and ambient_ok())
 
-    # -- breath: misting values ----------------------------------------------------
-    def _mist_ms(self):
-        """(fade, drift) durations of a readout change."""
-        if self._dragging:
-            return DRAG_MIST_MS, DRAG_DRIFT_MS
-        return NUMBER_MIST_MS, NUMBER_DRIFT_MS
+    # -- breath: misting digits ----------------------------------------------------
+    def _mist_ms(self) -> float:
+        """How long a readout digit takes to mist from one to the next."""
+        return DRAG_MIST_MS if self._dragging else NUMBER_MIST_MS
 
     def _mist_alpha(self, entry, now: float) -> float:
         start, end, at = entry
-        u = (now - at) * 1000.0 / self._mist_ms()[0]
+        u = (now - at) * 1000.0 / self._mist_ms()
         return start + (end - start) * _breath(min(1.0, max(0.0, u)))
 
     def _mist_number(self, animated: bool) -> None:
-        """The shown value mists away as the new one surfaces."""
-        db = self._strength_db
+        """Each digit that changes mists away as the new one surfaces;
+        a digit that stays holds still."""
+        digits = divmod(-self._strength_db, 10)
         if not animated:
-            self._mists = {db: [1.0, 1.0, 0.0]}
+            self._mists = tuple({d: [1.0, 1.0, 0.0]} for d in digits)
             return
         now = time.monotonic()
-        mists = {}
-        for value, entry in self._mists.items():
-            alpha = self._mist_alpha(entry, now)
-            if value != db and alpha > 0.005:
-                mists[value] = [alpha, 0.0, now]
-        old = self._mists.get(db)
-        mists[db] = [self._mist_alpha(old, now) if old else 0.0, 1.0, now]
-        self._mists = mists
+        self._mists = tuple(self._mist_column(column, digit, now)
+                            for column, digit in zip(self._mists, digits))
         if breathing():
             self._run_clock()
 
+    def _mist_column(self, column: dict, digit: int, now: float) -> dict:
+        """One readout column moving to `digit`."""
+        entry = column.get(digit)
+        if entry is not None and entry[1] > 0.0:
+            return column                  # already there (or surfacing)
+        mists = {}
+        for d, e in column.items():
+            alpha = self._mist_alpha(e, now)
+            if alpha > 0.005:
+                mists[d] = [alpha, 0.0, now]
+        mists[digit] = [self._mist_alpha(entry, now) if entry else 0.0, 1.0,
+                        now]
+        return mists
+
     def _misting(self) -> bool:
         now = time.monotonic()
-        fade, drift = self._mist_ms()
-        return any((now - at) * 1000.0 < max(fade, drift)
-                   for _, _, at in self._mists.values())
+        fade = self._mist_ms()
+        return any((now - at) * 1000.0 < fade
+                   for column in self._mists for _, _, at in column.values())
 
     # -- state overrides: keep the accessible name and phase honest ------------
     def set_active(self, active: bool):
@@ -606,10 +619,12 @@ class DialButton(PowerButton):
                 and self._since(self._sweep_at) < self._sweep_ms()[1])
 
     def _tick(self) -> None:
-        if len(self._mists) > 1:   # drop readout values that have misted out
-            now = time.monotonic()
-            self._mists = {v: e for v, e in self._mists.items()
-                           if e[1] > 0.0 or self._mist_alpha(e, now) > 0.005}
+        if any(len(column) > 1 for column in self._mists):
+            now = time.monotonic()   # drop digits that have misted out
+            self._mists = tuple(
+                {d: e for d, e in column.items()
+                 if e[1] > 0.0 or self._mist_alpha(e, now) > 0.005}
+                for column in self._mists)
         if self._trail:
             now = time.monotonic()
             gone = TRAIL_MS / 1000.0
@@ -899,12 +914,13 @@ class DialButton(PowerButton):
         u = t - i * COMET_STEP
         if u < 0 or not ambient_ok():
             return base, 1.0
-        ph = (u % COMET_MS) / COMET_MS
-        if ph < 0.07:
-            return (mix_rgba(col["comet"], col["gold"], ph / 0.07),
-                    1.0 + 0.05 * (1 - ph / 0.07))
-        if ph < 0.18:
-            return mix_rgba(col["gold"], base, (ph - 0.07) / 0.11), 1.0
+        ms = u % COMET_LAP_MS
+        if ms < COMET_FLASH_MS:
+            v = ms / COMET_FLASH_MS
+            return mix_rgba(col["comet"], col["gold"], v), 1.0 + 0.05 * (1 - v)
+        if ms < COMET_TAIL_MS:
+            return mix_rgba(col["gold"], base, (ms - COMET_FLASH_MS)
+                            / (COMET_TAIL_MS - COMET_FLASH_MS)), 1.0
         return base, 1.0
 
     def _lit_look(self, i: int, col: dict, t: float):
@@ -926,11 +942,8 @@ class DialButton(PowerButton):
                 scale = 1.07 - 0.07 * v
             else:
                 colour, scale = col["accent"], 1.0
-            # A brightness crest flows clockwise over the lit ticks.
-            ph = ((t + (TICKS - 1 - i) * FLOW_STEP) % FLOW_MS) / FLOW_MS
-            crest = (_ease_in_out(_rise_fall(ph / 0.32, 0.375))
-                     if ph < 0.32 else 0.0)
-            return colour, 0.78 + 0.22 * crest, scale
+            # The lit ticks brighten together with the disc's charge.
+            return colour, 0.78 + 0.22 * self._charge(t), scale
         if phase == "error":
             return (mix_rgba(col["white"], col["error"],
                              _ease_out(t / ERROR_FLASH_MS)), 1.0, 1.0)
@@ -1564,16 +1577,17 @@ class DialButton(PowerButton):
                 colour, alpha = QColor(col["gold"]), 0.3
                 u = t - j * DOT_STEP
                 if u >= 0:
-                    ph = (u % COMET_MS) / COMET_MS
-                    if ph < 0.33:
-                        v = ph / 0.33
+                    ms = u % COMET_LAP_MS
+                    if ms < DOT_LIFT_MS:
+                        v = ms / DOT_LIFT_MS
                         lift, scale = -4.0 * (1 - v), 1.25 - 0.25 * v
-                        if ph < 0.12:
+                        if ms < DOT_FLASH_MS:
                             colour = mix_rgba(col["comet"], col["gold"],
-                                              ph / 0.12)
+                                              ms / DOT_FLASH_MS)
                             alpha = 1.0
                         else:
-                            alpha = 1.0 - 0.7 * (ph - 0.12) / 0.21
+                            alpha = 1.0 - 0.7 * ((ms - DOT_FLASH_MS)
+                                                 / (DOT_LIFT_MS - DOT_FLASH_MS))
             elif self._phase == "stopping":
                 q = _ease_in((t - (2 - j) * 110) / DOTS_OUT_MS)
                 colour = mix_rgba(col["accent"], col["gold"], q)
@@ -1602,15 +1616,16 @@ class DialButton(PowerButton):
                                 small, tone)
 
     def _paint_readout_breath(self, p, col) -> None:
-        """Breath: each value mists out drifting up as the next surfaces
-        from below (no mechanical roll)."""
+        """Breath: each digit that changes dissolves like smoke as the
+        next condenses in its place (no roll, no drift)."""
         c = REF / 2
         big = self._heading(30, 104.0)
         metrics = QFontMetricsF(big)
-        num_w = metrics.horizontalAdvance("-50")
+        minus_w = metrics.horizontalAdvance("-")
+        digit_w = max(metrics.horizontalAdvance(str(d)) for d in range(10))
         unit_w = metrics.horizontalAdvance("dB")
         gap = 7.0
-        right = c - (num_w + gap + unit_w) / 2 + num_w
+        x = c - (minus_w + 2 * digit_w + gap + unit_w) / 2
         baseline = 276.0
         p.save()
         bump = _rise_fall(self._since(self._bump_at) / BUMP_MS, 0.4)
@@ -1618,24 +1633,42 @@ class DialButton(PowerButton):
             p.translate(c, baseline - 11)
             p.scale(1 + 0.04 * bump, 1 + 0.04 * bump)
             p.translate(-c, -(baseline - 11))
-        now = time.monotonic()
-        drift_ms = self._mist_ms()[1]
-        for value, entry in sorted(self._mists.items()):
-            alpha = self._mist_alpha(entry, now)
-            start, end, at = entry
-            moved = _soft(_clamp((now - at) * 1000.0 / drift_ms))
-            if end > 0.0:      # surfacing from below
-                dy = NUMBER_DRIFT * (1.0 - moved) * (1.0 - start)
-            else:              # drifting up and away
-                dy = -NUMBER_DRIFT * moved
-            if not ambient_ok():
-                dy = 0.0
-            self._misted_text(p, str(value), c, baseline + dy, big,
-                              col["text"], alpha, right=right)
         p.setFont(big)
         p.setPen(col["text"])
-        p.drawText(QPointF(right + gap, baseline), "dB")
+        p.drawText(QPointF(x, baseline), "-")
+        x += minus_w
+        now = time.monotonic()
+        for column in self._mists:
+            for digit, entry in sorted(column.items()):
+                text = str(digit)
+                left = x + (digit_w - metrics.horizontalAdvance(text)) / 2
+                self._smoked_text(p, text, left, baseline, big, col["text"],
+                                  self._mist_alpha(entry, now))
+            x += digit_w
+        p.setFont(big)
+        p.setPen(col["text"])
+        p.drawText(QPointF(x + gap, baseline), "dB")
         p.restore()
+
+    def _smoked_text(self, p, text, x, baseline, font, colour,
+                     alpha: float) -> None:
+        """Text that dissolves like smoke as it fades (and condenses as it
+        returns) in place: see smoke_wisps."""
+        if alpha <= 0.01:
+            return
+        p.setFont(font)
+        base = colour.alphaF() * alpha
+        smoke = 1.0 - alpha
+        if smoke < 0.03:
+            p.setPen(self._tone(colour, base))
+            p.drawText(QPointF(x, baseline), text)
+            return
+        core, wisps = smoke_wisps(smoke, SMOKE_PX)
+        p.setPen(self._tone(colour, base * core))
+        p.drawText(QPointF(x, baseline), text)
+        for weight, dx, dy in wisps:
+            p.setPen(self._tone(colour, base * weight))
+            p.drawText(QPointF(x + dx, baseline + dy), text)
 
     def _paint_digits(self, p, col) -> None:
         """"-50 dB" with odometer digits."""
