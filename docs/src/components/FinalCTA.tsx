@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { getLenis } from '../smoothScroll';
 import { AndroidLogo, ArrowRight, ArrowUpRight, LinuxLogo, WindowsLogo, X, type Icon } from '@phosphor-icons/react';
 import { RELEASE, RELEASES_URL, REPO_URL } from '../release';
 import { reveal } from '../reveal';
@@ -137,6 +138,8 @@ const FinalCTA = () => {
 
 		const previousOverflow = document.body.style.overflow;
 		document.body.style.overflow = 'hidden';
+		// Wheel smoothing scrolls the page itself, past the overflow lock.
+		getLenis()?.stop();
 
 		const handleEscape = (event: KeyboardEvent) => {
 			if (event.key === 'Escape') {
@@ -148,6 +151,7 @@ const FinalCTA = () => {
 
 		return () => {
 			document.body.style.overflow = previousOverflow;
+			getLenis()?.start();
 			window.removeEventListener('keydown', handleEscape);
 		};
 	}, [activeName]);
@@ -223,6 +227,7 @@ const FinalCTA = () => {
 					role="dialog"
 				>
 					<div
+						data-lenis-prevent
 						className={`install-modal-panel card relative max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl md:p-8 ${isClosing ? "install-modal-panel--closing" : ""}`}
 						onClick={(event) => event.stopPropagation()}
 					>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { DownloadSimple, List, X } from '@phosphor-icons/react';
 import CtaButton from './CtaButton';
 import { PoiseMark } from './Brand';
+import { getLenis } from '../smoothScroll';
 
 type NavLink = {
   label: string;
@@ -56,6 +57,21 @@ const Navbar = () => {
       progress < 0.5
         ? 4 * progress * progress * progress
         : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+    // With wheel smoothing on, Lenis runs the same glide so the two never
+    // pull the page in different directions.
+    const lenis = getLenis();
+    if (lenis) {
+      lenis.scrollTo(targetTop, {
+        duration: duration / 1000,
+        easing: easeInOutCubic,
+        force: true,
+        onComplete: () => {
+          scrollLockRef.current = null;
+        },
+      });
+      return;
+    }
 
     const step = (currentTime: number) => {
       const elapsed = currentTime - startTime;
@@ -118,6 +134,7 @@ const Navbar = () => {
     const cancelNavScroll = () => {
       if (scrollLockRef.current) {
         window.cancelAnimationFrame(scrollFrameRef.current);
+        // (A Lenis glide needs no cancelling: the wheel takes over from it.)
         scrollLockRef.current = null;
         updateActiveSection();
       }

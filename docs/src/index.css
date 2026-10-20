@@ -138,6 +138,12 @@ html {
 	scroll-padding-top: 6.5rem;
 }
 
+/* While Lenis drives the wheel (src/smoothScroll.ts) the browser's own
+   smooth behaviour would ease every step it takes a second time. */
+html.lenis.lenis-smooth {
+	scroll-behavior: auto;
+}
+
 body {
 	background-color: var(--color-bg);
 	color: var(--color-ink);

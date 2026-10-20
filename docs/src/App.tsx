@@ -8,9 +8,11 @@ import Transparency from './components/Transparency';
 import FinalCTA from './components/FinalCTA';
 import Footer from './components/Footer';
 import { useReveal } from './reveal';
+import { useSmoothScroll } from './smoothScroll';
 
 export default function App() {
   useReveal();
+  useSmoothScroll();
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-bg text-ink">
