@@ -314,6 +314,7 @@ class DialButton(PowerButton):
         self._ring = self._ring_key = None   # see _paint_ring
         self._disc_parts = {}                  # see _paint_disc_cached
         self._ring_sink = None            # see set_ring_sink
+        self._mirror = None               # see set_mirror
 
         # Eased states.
         self._swell = Blend(self, self.update, 220)
@@ -1207,13 +1208,19 @@ class DialButton(PowerButton):
                    QPointF(c + r1 * cs, c + r1 * sn))
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._mirror is not None:
+            self._mirror()   # drawn on the view over it instead
+            return
+        p = QPainter(self)
+        self._paint_on(p)
+
+    def _paint_on(self, p) -> None:
         w, h = self.width(), self.height()
         k = min(w, h) / REF
         col = self._colours(current_theme())
         t = self._ms()
         c = REF / 2
 
-        p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         p.translate(w / 2, h / 2)
@@ -1236,6 +1243,32 @@ class DialButton(PowerButton):
         """
         self._ring_sink = sink
         self.update()
+
+    def set_mirror(self, mirror) -> None:
+        """Have a view over the dial draw it (SkyView.show_layer): each
+        update (and paint) calls mirror() instead, which takes
+        mirror_image(), with the sky's frame of the same tick. None paints
+        it here again."""
+        self._mirror = mirror
+        super().update()
+
+    def update(self, *args) -> None:
+        if self._mirror is not None:
+            self._mirror()
+        else:
+            super().update(*args)
+
+    def mirror_image(self) -> QImage:
+        """The dial as it paints now, on a clear image."""
+        dpr = self.devicePixelRatioF()
+        image = QImage(max(1, round(self.width() * dpr)),
+                       max(1, round(self.height() * dpr)),
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(dpr)
+        image.fill(Qt.GlobalColor.transparent)
+        p = QPainter(image)
+        self._paint_on(p)
+        return image
 
     def ring_frame(self):
         """(stretch in degrees, strokes, breath): the ring at this moment

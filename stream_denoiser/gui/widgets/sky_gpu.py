@@ -2,18 +2,17 @@
 Poise Voice Isolator - Night Sky on the GPU
 
 The dial card's night sky (see sky.py) drawn by a fragment shader in a
-QQuickWidget that covers the card. A widget window composes such a view
-as a texture under its other widgets, in a rectangle, so the shader also
-draws what the view hides: the page's gradient around the card's rounded
-corners and the card's own fill and border. The dial and the headline
-stay ordinary widgets over it, except for the dial's ring of ticks and
-its needle, which the shader draws too (show_ring): they change on most
-frames, and so the dial need not repaint with the sky to breathe.
+Qt Quick window embedded over the card (SkyView). The window covers the
+card in a rectangle, so the shader also draws what it hides: the page's
+gradient around the card's rounded corners and the card's own fill and
+border, and the dial's ring of ticks and its needle (show_ring: they
+change on most frames). The widgets on the card, the headline and the
+dial's disc and readout, cannot draw over a native window: the card
+hands their images in and the view draws them on top (show_layer), and
+the dial its pointer.
 
 NightSky.frame still works out every layer at each moment, so the sky
 moves exactly as the QPainter one does; only the drawing leaves the CPU.
-And since the sky is composed rather than painted, a frame of it no
-longer repaints the dial over it.
 
 The shader is assets/sky/sky.frag, baked into sky.frag.qsb (with
 sky.qml, one property per uniform) by tools/bake_sky_shader.py.
@@ -26,11 +25,15 @@ import re
 import struct
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QVector4D
-from PyQt6.QtQml import QQmlImageProviderBase
-from PyQt6.QtQuick import QQuickImageProvider, QSGRendererInterface
-from PyQt6.QtQuickWidgets import QQuickWidget
+from PyQt6 import sip
+from PyQt6.QtCore import (QEvent, QPoint, QRect, QRectF, Qt, QTimer, QUrl,
+                          pyqtSignal)
+from PyQt6.QtGui import (QColor, QEnterEvent, QHelpEvent, QImage,
+                         QMouseEvent, QPainter, QVector4D, QWheelEvent)
+from PyQt6.QtQml import QQmlComponent, QQmlImageProviderBase
+from PyQt6.QtQuick import (QQuickImageProvider, QQuickItem, QQuickView,
+                           QSGRendererInterface)
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from .sky import (
     METEOR_GLOW_ALPHA, METEOR_HEAD_GLOW_ALPHA, METEOR_TAPER, METEOR_WHITE,
@@ -260,9 +263,138 @@ _SKY_UNIFORMS = (
     + [f"halo{i}" for i in range(3)])
 
 
-class SkyView(QQuickWidget):
-    """The card's sky (and the card under it) on the GPU. `failed` fires
-    if the scene graph cannot draw it here."""
+# -- what sits on the sky ------------------------------------------------------------
+_LAYER_QML = b"import QtQuick\nImage { cache: false; smooth: false; visible: false }\n"
+TIP_MS = 700   # hovering this long over the dial asks for its tooltip
+
+
+class _Layers(QQuickImageProvider):
+    """The widgets drawn on the sky, as their latest images by name (the
+    id changes with each, so it reloads; nothing is cached)."""
+
+    def __init__(self):
+        super().__init__(QQmlImageProviderBase.ImageType.Image)
+        self.images = {}
+
+    def requestImage(self, image_id, requested_size):  # noqa: N802 (Qt)
+        image = self.images.get(image_id.split("/", 1)[0])
+        if image is None:
+            image = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(0)
+        return image, image.size()
+
+
+class _Input(QQuickItem):
+    """Over the dial's image: hands what the pointer does there on to the
+    dial widget under the view, which keeps its own logic (and takes the
+    focus, and gives its cursor and tooltip). It draws nothing: only the
+    GUI thread runs it (the scene renders on a thread of its own)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.target = None
+        self.setAcceptedMouseButtons(Qt.MouseButton.AllButtons)
+        self.setAcceptHoverEvents(True)
+        self._tip = QTimer(self)
+        self._tip.setSingleShot(True)
+        self._tip.setInterval(TIP_MS)
+        self._tip.timeout.connect(self._ask_tip)
+        self._tip_at = None
+
+    def _mouse(self, kind, event, button=None, buttons=None) -> None:
+        target = self.target
+        if target is None or sip.isdeleted(target):
+            return
+        QApplication.sendEvent(target, QMouseEvent(
+            kind, event.position(), event.globalPosition(),
+            event.button() if button is None else button,
+            event.buttons() if buttons is None else buttons,
+            event.modifiers()))
+        self.setCursor(target.cursor())
+
+    def mousePressEvent(self, event):  # noqa: N802 (Qt override)
+        self._tip.stop()
+        target = self.target
+        if target is not None and not sip.isdeleted(target):
+            # The view takes no focus (so keys stay with the dial): a
+            # click on it raises Poise and focuses the dial itself.
+            window = target.window()
+            if not window.isActiveWindow():
+                window.activateWindow()
+            if target.focusPolicy() & Qt.FocusPolicy.ClickFocus:
+                target.setFocus(Qt.FocusReason.MouseFocusReason)
+        self._mouse(QEvent.Type.MouseButtonPress, event)
+        event.accept()
+
+    def mouseMoveEvent(self, event):  # noqa: N802 (Qt override)
+        self._mouse(QEvent.Type.MouseMove, event)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 (Qt override)
+        self._mouse(QEvent.Type.MouseButtonRelease, event)
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event):  # noqa: N802 (Qt override)
+        self._mouse(QEvent.Type.MouseButtonDblClick, event)
+        event.accept()
+
+    def hoverEnterEvent(self, event):  # noqa: N802 (Qt override)
+        target = self.target
+        if target is not None and not sip.isdeleted(target):
+            QApplication.sendEvent(target, QEnterEvent(
+                event.position(), event.scenePosition(),
+                event.globalPosition()))
+        self.hoverMoveEvent(event)
+
+    def hoverMoveEvent(self, event):  # noqa: N802 (Qt override)
+        self._mouse(QEvent.Type.MouseMove, event, Qt.MouseButton.NoButton,
+                    Qt.MouseButton.NoButton)
+        self._tip_at = (event.position().toPoint(),
+                        event.globalPosition().toPoint())
+        self._tip.start()
+
+    def hoverLeaveEvent(self, event):  # noqa: N802 (Qt override)
+        self._tip.stop()
+        target = self.target
+        if target is not None and not sip.isdeleted(target):
+            QApplication.sendEvent(target, QEvent(QEvent.Type.Leave))
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        target = self.target
+        if target is not None and not sip.isdeleted(target):
+            self._tip.stop()
+            QApplication.sendEvent(target, QWheelEvent(
+                event.position(), event.globalPosition(), event.pixelDelta(),
+                event.angleDelta(), event.buttons(), event.modifiers(),
+                event.phase(), event.inverted()))
+        event.accept()
+
+    def _ask_tip(self) -> None:
+        target = self.target
+        if self._tip_at is None or target is None or sip.isdeleted(target):
+            return
+        QApplication.sendEvent(target, QHelpEvent(
+            QEvent.Type.ToolTip, *self._tip_at))
+
+
+class SkyView(QWidget):
+    """The card's sky on the GPU, with the card under it and what sits on
+    it, in a Qt Quick window embedded over the card. `failed` fires if
+    the scene graph cannot draw it here.
+
+    The window is a native child of the top-level window, not of the
+    card: inside a scroll area (Home's page is one) Qt would make every
+    widget above it native, and the page slides' and crossfades' overlays
+    would draw under them. It follows the card instead (clipped to what
+    of it shows), and draws the whole card, offset. Unlike a QQuickWidget,
+    the window it sits in stays a plain raster one: no GPU composition of
+    the whole window, about half the GPU memory.
+
+    Widgets over the card cannot draw over a native window, so the card
+    hands their images in (show_layer) and the dial its pointer, through
+    an item over its image. hold() swaps the window for a still of it
+    painted here, an ordinary widget, while something needs one: an
+    entrance effect on the card, a page slide's snapshot."""
 
     failed = pyqtSignal()
 
@@ -270,33 +402,227 @@ class SkyView(QQuickWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
+        quick = QQuickView()
+        quick.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
+        quick.setColor(QColor(0, 0, 0))
+        engine = quick.engine()
         self._ring_images = _RingImages()     # (kept: Qt does not own it)
-        self.engine().addImageProvider("sky", self._ring_images)
-        self.setSource(QUrl.fromLocalFile(str(SKY_QML)))
-        self._root = self.rootObject()
+        engine.addImageProvider("sky", self._ring_images)
+        self._layer_images = _Layers()
+        engine.addImageProvider("layer", self._layer_images)
+        self._component = QQmlComponent(engine, QUrl.fromLocalFile(
+            str(SKY_QML)))
+        self._root = (self._component.create()
+                      if self._component.isReady() else None)
+        self._quick = quick
+        self._layers = {}
+        self._layer_n = 0
+        self._input = None
+        if self._root is not None:
+            self._root.setParentItem(quick.contentItem())
+            self._root.setParent(quick.contentItem())
+            for name in ("text", "dial"):
+                layer = QQmlComponent(engine)
+                layer.setData(_LAYER_QML, QUrl())
+                item = layer.create()
+                item.setParentItem(self._root)
+                item.setParent(self._root)
+                self._layers[name] = item
+            self._input = _Input(self._root)
+        self._box = QWidget.createWindowContainer(quick, self.window())
+        self._box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._box.hide()
+        self.destroyed.connect(self._box.deleteLater)
         self._sent = {}
         self._ring_key = None
         self._ring_n = 0
         self._checked = False
-        window = self.quickWindow()
-        window.sceneGraphError.connect(lambda *_: self.failed.emit())
-        window.afterFrameEnd.connect(self._check_api)
+        self._holds = set()
+        self._still = None
+        self._still_due = False
+        self.quiet = False     # paint nothing (the card is drawing a layer)
+        quick.sceneGraphError.connect(self._on_error)
+        quick.afterFrameEnd.connect(self._check_api,
+                                    Qt.ConnectionType.QueuedConnection)
+        # Follow the card: it and everything it sits in, up to the window.
+        widget = parent
+        while widget is not None and widget is not self._box.parentWidget():
+            widget.installEventFilter(self)
+            widget = widget.parentWidget()
 
     @property
     def ok(self) -> bool:
-        return (self._root is not None
-                and self.status() == QQuickWidget.Status.Ready)
+        return self._root is not None
+
+    def errors(self):
+        return self._component.errors()
+
+    def quickWindow(self):  # noqa: N802 (QQuickWidget's name)
+        return self._quick
+
+    def grabFramebuffer(self) -> QImage:  # noqa: N802 (QQuickWidget's name)
+        return self._quick.grabWindow()
+
+    def discard(self) -> None:
+        """Hide and delete the view and its window."""
+        self._box.hide()
+        self.hide()
+        self.deleteLater()
+
+    def _on_error(self, *_) -> None:
+        self.failed.emit()
 
     def _check_api(self) -> None:
         """After the first frame: the software renderer runs no shaders."""
         if self._checked:
             return
         self._checked = True
-        api = self.quickWindow().rendererInterface().graphicsApi()
+        try:
+            self._quick.afterFrameEnd.disconnect(self._check_api)
+        except TypeError:
+            pass
+        api = self._quick.rendererInterface().graphicsApi()
         if api in _SOFTWARE:
             self.failed.emit()
 
+    # -- where the window goes ---------------------------------------------------
+    def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize,
+                            QEvent.Type.Show, QEvent.Type.Hide):
+            self._place()
+        return False
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        if self._root is not None:
+            self._root.setWidth(self.width())
+            self._root.setHeight(self.height())
+        self._place()
+
+    def showEvent(self, event):  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        self._place()
+
+    def hideEvent(self, event):  # noqa: N802 (Qt override)
+        self._place()
+        super().hideEvent(event)
+
+    def _card_rects(self):
+        """(the card, the part of it that shows) in the window's frame."""
+        top = self._box.parentWidget()
+        rect = QRect(self.mapTo(top, QPoint(0, 0)), self.size())
+        shown = rect
+        widget = self.parentWidget()
+        while widget is not None and widget is not top:
+            shown = shown.intersected(QRect(widget.mapTo(top, QPoint(0, 0)),
+                                            widget.size()))
+            widget = widget.parentWidget()
+        return rect, shown
+
+    def _place(self) -> None:
+        """The window over what shows of the card, the card drawn offset
+        in it; hidden while held or out of sight."""
+        if self._root is None or sip.isdeleted(self._box):
+            return
+        rect, shown = self._card_rects()
+        live = (self.isVisible() and not self._holds and not shown.isEmpty())
+        if live:
+            self._box.setGeometry(shown)
+            self._root.setX(rect.x() - shown.x())
+            self._root.setY(rect.y() - shown.y())
+            self._box.raise_()
+        self._box.setVisible(live)
+
+    # -- held as a still ------------------------------------------------------------
+    @property
+    def held(self) -> bool:
+        return bool(self._holds)
+
+    def hold(self, reason: str) -> None:
+        """Show a still of the scene here instead of the window, until
+        every hold is released (it follows the scene meanwhile)."""
+        first = not self._holds
+        self._holds.add(reason)
+        if first:
+            self._grab_still()
+            self._place()
+            self.update()
+
+    def release(self, reason: str) -> None:
+        if reason not in self._holds:
+            return
+        self._holds.discard(reason)
+        if not self._holds:
+            self._place()
+            self._still = None
+            self.update()
+
+    def _changed(self) -> None:
+        """The scene changed: a held view refreshes its still."""
+        if self._holds and not self._still_due:
+            self._still_due = True
+            QTimer.singleShot(0, self._grab_still)
+
+    def _grab_still(self) -> None:
+        self._still_due = False
+        if not self._holds or self._root is None:
+            return
+        # The whole card (the window may show only part of it).
+        self._box.setGeometry(QRect(self._box.pos(), self.size()))
+        self._root.setX(0)
+        self._root.setY(0)
+        still = self._quick.grabWindow()
+        if not still.isNull():
+            still.setDevicePixelRatio(self._quick.devicePixelRatio())
+            self._still = still
+            self.update()
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._holds and self._still is not None and not self.quiet:
+            p = QPainter(self)
+            p.drawImage(0, 0, self._still)
+            p.end()
+
+    # -- what sits on it ---------------------------------------------------------------
+    def show_layer(self, name: str, image: QImage, rect: QRectF) -> None:
+        """Draw `image` (a widget over the card) at `rect` in the card."""
+        item = self._layers.get(name)
+        if item is None:
+            return
+        self._layer_images.images[name] = image
+        self._layer_n += 1
+        item.setProperty("x", rect.x())
+        item.setProperty("y", rect.y())
+        item.setProperty("width", rect.width())
+        item.setProperty("height", rect.height())
+        item.setProperty("source",
+                         QUrl(f"image://layer/{name}/{self._layer_n}"))
+        item.setProperty("visible", True)
+        self._changed()
+
+    def hide_layer(self, name: str) -> None:
+        item = self._layers.get(name)
+        if item is not None and item.property("visible"):
+            item.setProperty("visible", False)
+            self._layer_images.images.pop(name, None)
+            self._changed()
+
+    def take_input(self, widget, rect: QRectF = None) -> None:
+        """Hand the pointer over `rect` (in the card) on to `widget`, or
+        to nothing."""
+        if self._input is None:
+            return
+        self._input.target = widget
+        if widget is None or rect is None:
+            self._input.setVisible(widget is not None)
+            return
+        self._input.setVisible(True)
+        self._input.setX(rect.x())
+        self._input.setY(rect.y())
+        self._input.setWidth(rect.width())
+        self._input.setHeight(rect.height())
+
+    # -- the scene ---------------------------------------------------------------------
     def show_ring(self, over, strokes, breath: float = 1.0) -> None:
         """The dial's ring (DialButton.ring_frame), or none: strokes None
         hands it back to the dial."""
@@ -328,6 +654,7 @@ class SkyView(QQuickWidget):
         if self._sent.get(name) != value:
             self._root.setProperty(name, value)
             self._sent[name] = value
+            self._changed()
 
     def show_frame(self, frame, box, base: dict) -> None:
         """Send what changed since the last frame."""
@@ -335,7 +662,16 @@ class SkyView(QQuickWidget):
         values.update(base)
         sent = self._sent
         root = self._root
+        changed = False
         for name, value in values.items():
             if sent.get(name) != value:
                 root.setProperty(name, value)
                 sent[name] = value
+                changed = True
+        top = values.get("fillTop")
+        if top is not None and sent.get("_clear") != top:
+            # Under the first frame: the card's colour, not a flash.
+            sent["_clear"] = top
+            self._quick.setColor(QColor.fromRgbF(top.x(), top.y(), top.z()))
+        if changed:
+            self._changed()

@@ -29,7 +29,8 @@ follow the same calls, on the dial's breathing cycle (BREATH_MS) rather
 than PING_PERIOD_MS, and it also follows the dial's phase (set_phase) to
 draw in while starting. Where Qt Quick can run, the sky is drawn on the
 GPU by a view covering the card (widgets/sky_gpu.py; it draws the card
-too, and the dial's ring of ticks: see DialButton.set_ring_sink);
+too, the dial's ring of ticks, see DialButton.set_ring_sink, and from
+images of them the dial and the headline, see _draw_layers);
 otherwise, or with POISE_SKY_RASTER=1, it is painted here. With the
 ambient motion still (animations.ambient_ok: Reduce motion in Settings)
 there is no GPU view: one still sky is painted here and kept.
@@ -37,12 +38,14 @@ there is no GPU view: one still sky is painted here and kept.
 import math
 import time
 
-from PyQt6.QtWidgets import QFrame
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
+from PyQt6.QtWidgets import QFrame, QWidget
+from PyQt6.QtCore import (QEvent, QPoint, QPointF, QRect, QRectF, QSizeF, Qt,
+                          QTimer)
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
                          QPen, QRadialGradient, QRegion, QTransform)
 
-from ..animations import Blend, EASE_BREATHE, FrameTimer, ambient_ok
+from ..animations import (Blend, EASE_BREATHE, FrameTimer, ambient_ok,
+                          register_native)
 from ...logging_config import get_logger
 from ..scaling import ui_scale
 from ..themes import current as current_theme, style as theme_style
@@ -78,6 +81,10 @@ SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
 SKY_REVEAL_MS = 2400        # ...slowly
+TEXT_PAD = 16               # design px round the headline: its swaps' smoke
+# A widget on the card drew, moved or went: its layer is redrawn.
+_TEXT_EVENTS = (QEvent.Type.Paint, QEvent.Type.Move, QEvent.Type.Resize,
+                QEvent.Type.Show, QEvent.Type.Hide)
 
 _logger = get_logger(__name__)
 
@@ -155,6 +162,18 @@ class PatternCard(QFrame):
         self._view_failed = self._making_view = False
         self._base_key = self._base = None
         self._still_key = self._still = None   # the sky holding still
+        # What sits on it, drawn by the view (see _layers_due).
+        self._due = set()
+        self._draw = QTimer(self)              # all of a tick's at once
+        self._draw.setSingleShot(True)
+        self._draw.setInterval(0)
+        self._draw.timeout.connect(self._draw_layers)
+        self._mirroring = False                # drawing it: paint nothing
+        self._holds = set()                    # see hold_native
+        self._entering = QTimer(self)          # see _hold_while_entering
+        self._entering.setInterval(40)
+        self._entering.timeout.connect(self._watch_entrance)
+        register_native(self)
 
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
@@ -163,7 +182,7 @@ class PatternCard(QFrame):
         """What the backdrop shows moved: the GPU sky's next frame, or a
         repaint."""
         if self._view is not None:
-            self._show_sky_frame()
+            self._layers_due("sky")   # with the dial's image of this tick
         else:
             self.update()
 
@@ -300,6 +319,7 @@ class PatternCard(QFrame):
         if self._view is not None:
             self._view.setGeometry(self.rect())
             self._show_sky_frame()
+            self._layers_due("text", "dial")
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
         self._ping_timer.stop()   # e.g. hidden to the tray: no wake-ups
@@ -411,13 +431,14 @@ class PatternCard(QFrame):
 
     # -- painting ------------------------------------------------------------------
     def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._view is not None:
+            return    # the view draws the card (and what sits on it)
         super().paintEvent(event)
         w, h = self.width(), self.height()
         if w < 40 or h < 40:
             return
         if self._sky_on():
-            if self._view is None:
-                self._paint_sky(w, h)
+            self._paint_sky(w, h)
             return
         palette = current_theme()
         color = _mix(QColor(palette["secondary"]), QColor(palette["accent"]),
@@ -537,11 +558,18 @@ class PatternCard(QFrame):
             return
         view.failed.connect(self._view_fallback)
         view.setGeometry(self.rect())
-        view.lower()               # under the dial and the headline
+        view.raise_()              # (its still, when held) over the rest
+        for reason in self._holds:
+            view.hold(reason)
         self._view = view
         self._hand_ring(True)
         self._show_sky_frame()
+        self._layers_due("text", "dial")
+        # Held until the window's show has run its course: Home's cards
+        # get their entrance effect after they are shown.
+        view.hold("showing")
         view.show()
+        QTimer.singleShot(0, self._hold_while_entering)
 
     def _view_fallback(self) -> None:
         _logger.warning("Night sky on the CPU (Qt Quick has no GPU here)")
@@ -549,30 +577,158 @@ class PatternCard(QFrame):
         self._drop_view()
 
     def _hand_ring(self, to_view: bool) -> None:
-        """The dial's ring drawn by the GPU sky (to_view) or by the dial."""
+        """The dial's ring drawn by the GPU sky (to_view), and the dial
+        itself (see _layers_due); or both by the dial."""
         origin = self._origin
         if origin is not None and hasattr(origin, "set_ring_sink"):
             origin.set_ring_sink(self._view.show_ring if to_view else None)
+            origin.set_mirror(self._dial_painted if to_view else None)
             # Where the ticks go follows the dial (an error line under the
             # headline moves it), even when no sky frame is coming.
             if to_view:
                 origin.installEventFilter(self)
             else:
                 origin.removeEventFilter(self)
+                self._view.take_input(None)
 
     def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
-        if (watched is self._origin and self._view is not None
-                and event.type() in (QEvent.Type.Move, QEvent.Type.Resize)):
-            self._show_sky_frame()
+        if self._view is not None:
+            kind = event.type()
+            if watched is self._origin:
+                if kind in (QEvent.Type.Move, QEvent.Type.Resize):
+                    self._show_sky_frame()
+                    self._layers_due("text", "dial")
+            elif (kind in _TEXT_EVENTS and watched is not self._view
+                  and not self._mirroring):
+                self._layers_due("text")   # a label changed, moved or went
         return super().eventFilter(watched, event)
+
+    def childEvent(self, event):  # noqa: N802 (Qt override)
+        super().childEvent(event)
+        if event.added() and isinstance(event.child(), QWidget):
+            event.child().installEventFilter(self)
 
     def _drop_view(self) -> None:
         if self._view is not None:
             self._hand_ring(False)
-            self._view.hide()
-            self._view.deleteLater()
+            self._entering.stop()
+            self._view.discard()
             self._view = None
+            self._due.clear()
+            self._draw.stop()
             self.update()
+
+    # -- what sits on the GPU sky ----------------------------------------------------
+    # A native window draws over every widget under it, so the view draws
+    # the dial and the headline too: from images of them, taken whenever
+    # they repaint (under the view, where nothing shows).
+    def _dial_painted(self) -> None:
+        if not self._mirroring:
+            self._layers_due("dial")
+
+    def _layers_due(self, *names) -> None:
+        if self._view is None:
+            return
+        self._due.update(names)
+        if not self._draw.isActive():
+            self._draw.start()
+
+    def _draw_layers(self) -> None:
+        due, self._due = self._due, set()
+        view = self._view
+        if view is None:
+            return
+        if "sky" in due:
+            self._show_sky_frame()
+        if "dial" in due:
+            origin = self._origin
+            if (origin is not None and hasattr(origin, "mirror_image")
+                    and origin.isVisible()):
+                rect = QRectF(QPointF(origin.mapTo(self, QPoint(0, 0))),
+                              QSizeF(origin.size()))
+                view.show_layer("dial", origin.mirror_image(), rect)
+                view.take_input(origin, rect)
+            else:
+                view.hide_layer("dial")
+                view.take_input(None)
+        if "text" in due:
+            band = self._text_band()
+            if band.isEmpty():
+                view.hide_layer("text")
+            else:
+                view.show_layer("text", self._render_band(band),
+                                QRectF(band))
+
+    def _text_band(self) -> QRect:
+        """Where the card's other widgets (the headline, an error line)
+        draw, with room for their swaps' smoke and roll."""
+        band = QRect()
+        for child in self.children():
+            if (isinstance(child, QWidget) and child.isVisible()
+                    and not child.isWindow() and child is not self._origin
+                    and child is not self._view):
+                band = band.united(child.geometry())
+        if band.isEmpty():
+            return band
+        pad = round(TEXT_PAD * ui_scale())
+        return band.adjusted(-pad, -pad, pad, pad).intersected(self.rect())
+
+    def _render_band(self, band: QRect) -> QImage:
+        """The card's widgets within `band`, as drawn (with their effects),
+        on a clear image."""
+        dpr = self.devicePixelRatioF()
+        image = QImage(max(1, round(band.width() * dpr)),
+                       max(1, round(band.height() * dpr)),
+                       QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(dpr)
+        image.fill(Qt.GlobalColor.transparent)
+        p = QPainter(image)
+        self._mirroring = True
+        self._view.quiet = True
+        try:
+            self.render(p, QPoint(), QRegion(band),
+                        QWidget.RenderFlag.DrawChildren)
+        finally:
+            self._mirroring = False
+            self._view.quiet = False
+            p.end()
+        return image
+
+    # -- held as a still (see SkyView.hold) -------------------------------------------
+    def hold_native(self, reason: str) -> None:
+        """Draw the GPU sky as an ordinary widget while `reason` lasts (a
+        snapshot or an effect could not see the native window)."""
+        self._holds.add(reason)
+        if self._view is not None:
+            self._view.hold(reason)
+
+    def release_native(self, reason: str) -> None:
+        self._holds.discard(reason)
+        if self._view is not None:
+            self._view.release(reason)
+
+    def _entrance_effect(self) -> bool:
+        widget = self
+        while widget is not None:
+            if widget.graphicsEffect() is not None:
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def _hold_while_entering(self) -> None:
+        """An entrance effect (rise_in) on the card or above it fades and
+        moves what it draws; held, the sky moves with it."""
+        if self._view is None:
+            return
+        if self._entrance_effect():
+            self.hold_native("entrance")
+            self._entering.start()
+        self._view.release("showing")
+
+    def _watch_entrance(self) -> None:
+        if not self._entrance_effect() or self._view is None:
+            self._entering.stop()
+            self.release_native("entrance")
 
     def _show_sky_frame(self) -> None:
         w, h = self.width(), self.height()
