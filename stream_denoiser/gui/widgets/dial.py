@@ -1259,7 +1259,7 @@ class DialButton(PowerButton):
         the ring sink, instead of painting (the Home scene draws it: see
         widgets/home_scene.py): each repaint asked for becomes one push
         of both, at most one per pass of the event loop; sink(None) while
-        the dial is hidden. None paints here again. Breathing themes
+        the dial itself is hidden. None paints here again. Breathing themes
         only (face_state draws their dial)."""
         self._face_sink = sink
         self._push_timer.stop()
@@ -1280,7 +1280,7 @@ class DialButton(PowerButton):
         sink = self._face_sink
         if sink is None:
             return
-        if not self.isVisible():
+        if self.isHidden():               # (not its page: see mirror_text)
             sink(None)
             return
         t = self._ms()

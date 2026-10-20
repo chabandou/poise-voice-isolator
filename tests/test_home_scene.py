@@ -158,6 +158,14 @@ def test_the_headline_is_mirrored(app, vigil):
     assert state["text"] == "Ready to isolate" and state["alpha"] == 1.0
     assert state["wrapMode"] == 1 and state["width"] == label.width()
     assert not label.updatesEnabled()
+    # A page slide hides the page before its snapshot: the headline
+    # stays in the scene (only hiding the label itself drops it).
+    card.hide()
+    assert scene.shown[-1] is not None
+    card.show()
+    label.hide()
+    assert scene.shown[-1] is None
+    label.show()
     swap.set_text("Isolating")
     end = time.time() + 2.0
     while swap.busy and time.time() < end:

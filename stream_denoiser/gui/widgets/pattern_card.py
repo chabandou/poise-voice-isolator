@@ -630,9 +630,10 @@ class PatternCard(QFrame):
 
     def _headline_state(self):
         """The headline as the scene's SmokeText draws it (None while
-        the label is hidden)."""
+        the label itself is hidden: not while its page is, which a page
+        slide does before it takes its snapshot of the page)."""
         label = self._text
-        if not label.isVisible():
+        if label.isHidden():
             return None
         from PyQt6.QtGui import QPalette
         from ..animations import smoke_spread
