@@ -116,13 +116,34 @@ def _linear(u: float) -> float:
 def keyframes(u: float, frames) -> float:
     """CSS-style keyframes at u (0..1): (offset, value, easing to the
     next frame)."""
-    if u <= frames[0][0]:
-        return frames[0][1]
-    for (a, va, ease), (b, vb, _) in zip(frames, frames[1:]):
+    a, va, ease = frames[0]
+    if u <= a:
+        return va
+    for i in range(1, len(frames)):
+        b, vb, nxt = frames[i]
         if u <= b:
             f = (u - a) / (b - a) if b > a else 1.0
             return va + (vb - va) * ease(f)
+        a, va, ease = b, vb, nxt
     return frames[-1][1]
+
+
+def keyframes2(u: float, first, second):
+    """keyframes(u, first), keyframes(u, second) for two tracks with the
+    same offsets and easings (a sparkle's twinkle and flash, the aura),
+    easing once for both."""
+    a, va, ease = first[0]
+    wa = second[0][1]
+    if u <= a:
+        return va, wa
+    for i in range(1, len(first)):
+        b, vb, nxt = first[i]
+        wb = second[i][1]
+        if u <= b:
+            e = ease((u - a) / (b - a) if b > a else 1.0)
+            return va + (vb - va) * e, wa + (wb - wa) * e
+        a, va, wa, ease = b, vb, wb, nxt
+    return first[-1][1], second[-1][1]
 
 
 # -- timelines (u: position in the loop; live loops start at the pulse) ------
@@ -168,6 +189,9 @@ def push_track(near: bool):
     out, back = PUSH_NEAR if near else PUSH_FAR
     return ((0, 0.0, _SHOVE), (0.05, out, _RECOIL), (0.3, back, EASE_IN_OUT),
             (0.44, 0.0, _linear), (1, 0.0, _linear))
+
+
+_PUSH = {near: push_track(near) for near in (True, False)}
 
 
 def breath_pos(ms: float, period: float) -> float:
@@ -509,29 +533,32 @@ class NightSky:
             return v + (lit - v) * live
 
         geo = mix_rgba(sec, acc, live)
+        aura_idle = keyframes2(u_idle, *AURA_IDLE)
+        aura_gather = keyframes2(u_gather, *AURA_GATHER)
+        aura_live = keyframes2(u_live, *AURA_LIVE)
         # Starting and live, the star holds its size; the pulses only
         # turn it and light it, from the first.
         stars = (blend(keyframes(u_idle, STARS_IDLE), 1.0, 1.0),
                  live * keyframes(u_live, STARS_LIVE_TURN))
         glow = charge(cycle, look["stopped"]) if look["moving"] else 0.0
+        mote_tone = mix_rgba(sec, acc, live)
+        sparkle_tone = mix_rgba(sec, light, live)
         return {
             "centre": centre, "k": k, "ui": ui, "glow": glow,
             "band": self._band(k, cycle, gain, acc, reveal),
-            "motes": self._motes(box, ui, now, mix_rgba(sec, acc, live),
-                                 reveal),
+            "motes": self._motes(box, ui, now, mote_tone, reveal),
+            "mote_tone": mote_tone,
             "sparkles": self._sparkles(box, centre, k, ui, now, cycle, gain,
-                                       live, mix_rgba(sec, light, live),
-                                       reveal),
-            "meteor": (self._meteor(box, centre, k, ui, now,
-                                    mix_rgba(sec, light, live), reveal)
+                                       live, sparkle_tone, reveal),
+            "sparkle_tone": sparkle_tone,
+            "meteor": (self._meteor(box, centre, k, ui, now, sparkle_tone,
+                                    reveal)
                        if look["moving"] else None),
             "aura": self._aura(k, live, look["error"], reveal, sec, acc,
-                               blend(keyframes(u_idle, AURA_IDLE[0]),
-                                     keyframes(u_gather, AURA_GATHER[0]),
-                                     keyframes(u_live, AURA_LIVE[0])),
-                               blend(keyframes(u_idle, AURA_IDLE[1]),
-                                     keyframes(u_gather, AURA_GATHER[1]),
-                                     keyframes(u_live, AURA_LIVE[1]))),
+                               blend(aura_idle[0], aura_gather[0],
+                                     aura_live[0]),
+                               blend(aura_idle[1], aura_gather[1],
+                                     aura_live[1])),
             "geometry": self._geometry(k, now, live, geo, light, glow,
                                        reveal, stars),
             "flares": self._flares(k, cycle, gain, live, geo, reveal),
@@ -569,7 +596,10 @@ class NightSky:
                    (1.0, _alpha(acc, 0.0)))
 
     def _motes(self, box, ui, now, colour, reveal):
-        """[(centre, glow radius, glow colour, radius, colour)]."""
+        """[(centre, glow radius, glow alpha, radius, alpha)]: `colour`
+        (the frame's mote_tone) at those alphas, see _alpha. Numbers, not
+        colours: made per frame for every mote, a QColor each cost more
+        than the rest of the sky's maths."""
         dx, dy = MOTE_DRIFT
         out = []
         for m in self.motes:
@@ -580,21 +610,20 @@ class NightSky:
             x = box.x() + m.fx * box.width() + dx * u * ui
             y = box.y() + m.fy * box.height() + dy * u * ui
             r = m.size / 2 * ui
-            out.append((QPointF(x, y), r + 2.6 * ui, _alpha(colour, a * 0.22),
-                        r, _alpha(colour, a)))
+            out.append((QPointF(x, y), r + 2.6 * ui, a * 0.22, r, a))
         return out
 
     def _sparkles(self, box, centre, k, ui, now, cycle, gain, live, colour,
                   reveal):
-        """[(x, y, size, glow colour, colour)]: the sparkle path scaled
-        by size x 1.5 (its glow), then by size."""
+        """[(x, y, size, glow alpha, alpha)]: the sparkle path scaled by
+        size x 1.5 (its glow), then by size, in `colour` (the frame's
+        sparkle_tone) at those alphas (see _alpha, and _motes)."""
         out = []
         for x, y, cos, sin, arrival, near, s in self._place(box, centre, k,
                                                             ui):
             # Idle: a slow twinkle and a sway along the line to the dial.
             u = breath_pos(now + s.twinkle_at, s.twinkle)
-            alpha = keyframes(u, TWINKLE[0])
-            scale = keyframes(u, TWINKLE[1])
+            alpha, scale = keyframes2(u, *TWINKLE)
             u = breath_pos(now + s.sway_at, 2 * s.sway) * 2
             sway = -2.0 + 4.0 * EASE_IN_OUT(u if u <= 1 else 2 - u)
             offset = sway
@@ -608,9 +637,10 @@ class NightSky:
                     g = gain(index) if index >= 0 else 0.0
                     if g > 0.001:
                         v = (rel - index * BREATH_MS) / BREATH_MS
-                        lit_alpha += (keyframes(v, FLASH[0]) - lit_alpha) * g
-                        lit_scale += (keyframes(v, FLASH[1]) - lit_scale) * g
-                        push = keyframes(v, push_track(near)) * g
+                        flash_alpha, flash_scale = keyframes2(v, *FLASH)
+                        lit_alpha += (flash_alpha - lit_alpha) * g
+                        lit_scale += (flash_scale - lit_scale) * g
+                        push = keyframes(v, _PUSH[near]) * g
                 alpha += (lit_alpha - alpha) * live
                 scale += (lit_scale - scale) * live
                 offset += (push - offset) * live
@@ -619,7 +649,7 @@ class NightSky:
                 continue
             out.append((x + cos * offset * ui, y + sin * offset * ui,
                         s.size / 10.0 * ui * scale,
-                        _alpha(colour, a * 0.22), _alpha(colour, a)))
+                        a * 0.22, a))
         return out
 
     def _meteor(self, box, centre, k, ui, now, colour, reveal):
@@ -758,19 +788,21 @@ class NightSky:
                 grad.setColorAt(at, colour)
             p.setBrush(grad)
             p.drawEllipse(centre, r, r)
-        for at, glow_r, glow, r, colour in f["motes"]:
-            p.setBrush(glow)
+        tone = f["mote_tone"]
+        for at, glow_r, glow, r, alpha in f["motes"]:
+            p.setBrush(_alpha(tone, glow))
             p.drawEllipse(at, glow_r, glow_r)
-            p.setBrush(colour)
+            p.setBrush(_alpha(tone, alpha))
             p.drawEllipse(at, r, r)
-        for x, y, size, glow, colour in f["sparkles"]:
+        tone = f["sparkle_tone"]
+        for x, y, size, glow, alpha in f["sparkles"]:
             p.save()
             p.translate(x, y)
             p.scale(size * 1.5, size * 1.5)
-            p.setBrush(glow)
+            p.setBrush(_alpha(tone, glow))
             p.drawPath(self._path)
             p.scale(1 / 1.5, 1 / 1.5)
-            p.setBrush(colour)
+            p.setBrush(_alpha(tone, alpha))
             p.drawPath(self._path)
             p.restore()
         if f["meteor"] is not None:

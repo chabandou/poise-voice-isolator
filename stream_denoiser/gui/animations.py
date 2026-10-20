@@ -113,22 +113,22 @@ def cubic_bezier_fn(x1: float, y1: float, x2: float, y2: float):
     def _sample_y(t: float) -> float:
         return ((ay * t + by) * t + cy) * t
 
-    def _sample_dx(t: float) -> float:
-        return (3.0 * ax * t + 2.0 * bx) * t + cx
+    ax3, bx2 = 3.0 * ax, 2.0 * bx
 
     def fn(progress: float) -> float:
         if progress <= 0.0:
             return 0.0
         if progress >= 1.0:
             return 1.0
-        # Newton iterations.
+        # Newton iterations (the samples written out: the night sky asks
+        # for over a hundred of these a frame; same sums, same results).
         t = progress
         for _ in range(8):
-            err = _sample_x(t) - progress
-            if abs(err) < 1e-6:
-                return _sample_y(t)
-            d = _sample_dx(t)
-            if abs(d) < 1e-6:
+            err = ((ax * t + bx) * t + cx) * t - progress
+            if -1e-6 < err < 1e-6:
+                return ((ay * t + by) * t + cy) * t
+            d = (ax3 * t + bx2) * t + cx
+            if -1e-6 < d < 1e-6:
                 break
             t -= err / d
         # Bisection fallback.
