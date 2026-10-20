@@ -18,7 +18,7 @@ const navIcons = [
 ];
 
 const useActiveTheme = () => {
-	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'abyss');
+	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'halcyon');
 	return THEMES.find((theme) => theme.id === active) ?? THEMES[0];
 };
 

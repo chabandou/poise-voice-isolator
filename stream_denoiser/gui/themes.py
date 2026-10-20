@@ -5,7 +5,7 @@ Named, self-matching palettes for the GUI. Every theme carries the full
 token set consumed by styles.get_stylesheet() and the painted widgets,
 so switching themes can never leave a stray color behind.
 
-Themes ship with the app; the selection persists in Settings ("abyss"
+Themes ship with the app; the selection persists in Settings ("halcyon"
 is the default and preserves the original look).
 """
 from typing import Dict, List
@@ -22,8 +22,8 @@ KEYS = (
 )
 
 THEMES: Dict[str, Dict] = {
-    "abyss": {
-        "label": "Abyss",
+    "halcyon": {
+        "label": "Halcyon",
         "blurb": "Signature cyan on deep navy.",
         "bg": "#0a111e", "sidebar": "#080e18",
         "card": "#0f1828", "pill": "#111c30", "groove": "#1d2a3b",
@@ -53,6 +53,50 @@ THEMES: Dict[str, Dict] = {
         "divider_rgb": "140, 205, 185", "divider_alpha": 0.30,
         "badge_bg": "#10201d", "badge_fg": "#3fb890",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "khatam",
+    },
+    "ember": {
+        "label": "Ember",
+        "blurb": "Warm amber on dark roast.",
+        "bg": "#140f0a", "sidebar": "#100c08",
+        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
+        "text": "#fff8f0", "muted": "#a39a8b",
+        "device_title": "#ab9f8d",
+        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
+        "accent": "#f5a524", "accent_light": "#ffd9ab",
+        "accent_rgb": "245, 165, 36",
+        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
+        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
+        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
+        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
+        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "twelve",
+    },
+    "vigil": {
+        "label": "Vigil",
+        "blurb": "Lavender and candle gold under a slow night sky.",
+        "bg": "#0a0920", "sidebar": "#07061a",
+        "card": "#141131", "pill": "#151236", "groove": "#2a2552",
+        "text": "#f3efff", "muted": "#9a93b8",
+        "device_title": "#a49dc2",
+        "nav_active": "#e4dcff", "nav_muted": "#a49dc2",
+        "accent": "#b9a6ff", "accent_light": "#e4dcff",
+        "accent_rgb": "185, 166, 255",
+        "secondary": "#E6CD8A", "secondary_rgb": "230, 205, 138",
+        "border_rgb": "190, 170, 255", "border_alpha": 0.18,
+        "divider_rgb": "190, 170, 255", "divider_alpha": 0.24,
+        "badge_bg": "#1c1842", "badge_fg": "#b9a6ff",
+        "success": "#7ee0b0", "warning": "#f5d77a", "error": "#f49aa6",
+        # Beyond the colours: a night sky behind the dial instead of the
+        # lattice, the dial breathing on a slow cycle, lighter headings
+        # and softly lit surfaces (see STYLE_DEFAULTS and widgets/sky.py).
+        "backdrop": "sky", "motion": "breath",
+        "heading_weight": 600,
+        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
+                        "fx:0.62, fy:0.28, stop:0 #181440, stop:0.45 "
+                        "#0e0c28, stop:0.75 #0a0920, stop:1 #0a0920)"),
+        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                      "stop:0 #18143c, stop:1 #100e29)"),
     },
     "eclipse": {
         # Vigil in graphite: the same sky and breathing Home, its candle
@@ -81,48 +125,6 @@ THEMES: Dict[str, Dict] = {
         "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
                       "stop:0 #141414, stop:1 #0e0e0e)"),
     },
-    "vigil": {
-        "label": "Vigil",
-        "blurb": "Lavender and candle gold under a slow night sky.",
-        "bg": "#0a0920", "sidebar": "#07061a",
-        "card": "#141131", "pill": "#151236", "groove": "#2a2552",
-        "text": "#f3efff", "muted": "#9a93b8",
-        "device_title": "#a49dc2",
-        "nav_active": "#e4dcff", "nav_muted": "#a49dc2",
-        "accent": "#b9a6ff", "accent_light": "#e4dcff",
-        "accent_rgb": "185, 166, 255",
-        "secondary": "#E6CD8A", "secondary_rgb": "230, 205, 138",
-        "border_rgb": "190, 170, 255", "border_alpha": 0.18,
-        "divider_rgb": "190, 170, 255", "divider_alpha": 0.24,
-        "badge_bg": "#1c1842", "badge_fg": "#b9a6ff",
-        "success": "#7ee0b0", "warning": "#f5d77a", "error": "#f49aa6",
-        # Beyond the colours: a night sky behind the dial instead of the
-        # lattice, the dial breathing on a slow cycle, lighter headings
-        # and softly lit surfaces (see STYLE_DEFAULTS and widgets/sky.py).
-        "backdrop": "sky", "motion": "breath",
-        "heading_weight": 600,
-        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
-                        "fx:0.62, fy:0.28, stop:0 #181440, stop:0.45 "
-                        "#0e0c28, stop:0.75 #0a0920, stop:1 #0a0920)"),
-        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                      "stop:0 #18143c, stop:1 #100e29)"),
-    },
-    "ember": {
-        "label": "Ember",
-        "blurb": "Warm amber on dark roast.",
-        "bg": "#140f0a", "sidebar": "#100c08",
-        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
-        "text": "#fff8f0", "muted": "#a39a8b",
-        "device_title": "#ab9f8d",
-        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
-        "accent": "#f5a524", "accent_light": "#ffd9ab",
-        "accent_rgb": "245, 165, 36",
-        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
-        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
-        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
-        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
-        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
-    },
     "orchid": {
         "label": "Orchid",
         "blurb": "Hot pink on dark plum, with a sky-blue accent.",
@@ -138,22 +140,25 @@ THEMES: Dict[str, Dict] = {
         "divider_rgb": "255, 165, 210", "divider_alpha": 0.32,
         "badge_bg": "#2a1623", "badge_fg": "#f472b6",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+        "lattice": "dome",
     },
 }
 
-DEFAULT_THEME = "abyss"
+DEFAULT_THEME = "halcyon"
 
 #: Retired theme ids and the theme that replaced each, so a saved choice
 #: lands on its successor rather than the default.
-RENAMED = {"ultraviolet": "vigil", "mono": "eclipse"}
+RENAMED = {"ultraviolet": "vigil", "mono": "eclipse", "abyss": "halcyon"}
 
 #: Optional per-theme keys and their values when a theme leaves them out.
 #: backdrop: what the dial card shows behind the dial ("lattice" or
-#: "sky"); motion: the Home rhythm ("tactile", or "breath": slower, on a
+#: "sky"); lattice: which lattice ("rub_el_hizb", "khatam", "twelve" or
+#: "dome", see widgets/lattice.py); motion: the Home rhythm ("tactile", or "breath": slower, on a
 #: breathing cycle); heading_weight: the heading font weight; window_fill
 #: and card_fill: QSS backgrounds (None: the flat bg / card colour).
 STYLE_DEFAULTS = {
     "backdrop": "lattice",
+    "lattice": "rub_el_hizb",
     "motion": "tactile",
     "heading_weight": 700,
     "window_fill": None,

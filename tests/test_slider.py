@@ -32,7 +32,7 @@ def _make_slider(scale=1.0):
     fusion = QStyleFactory.create("Fusion")
     if fusion is not None:
         slider.setStyle(fusion)
-    slider.setStyleSheet(get_stylesheet(scale=scale, theme="abyss"))
+    slider.setStyleSheet(get_stylesheet(scale=scale, theme="halcyon"))
     slider.setRange(-80, -10)
     slider.setValue(-40)
     slider.resize(400, 100)
@@ -81,7 +81,7 @@ def test_handle_hover_changes_no_geometry(app):
     """Hover restyles color only: no geometry props in the hover rule."""
     import re
     from stream_denoiser.gui.styles import get_stylesheet
-    css = get_stylesheet(scale=1.0, theme="abyss")
+    css = get_stylesheet(scale=1.0, theme="halcyon")
     hover = re.search(
         r"QSlider::handle:horizontal:hover\s*\{([^}]*)\}", css)
     assert hover, "hover rule missing"
@@ -114,7 +114,7 @@ def test_handle_radius_safe_at_all_scales(app, scale):
     """
     import re
     from stream_denoiser.gui.styles import get_stylesheet
-    css = get_stylesheet(scale=scale, theme="abyss")
+    css = get_stylesheet(scale=scale, theme="halcyon")
     handle = re.search(
         r"QSlider::handle:horizontal\s*\{([^}]*)\}", css)
     groove = re.search(
@@ -142,7 +142,7 @@ def _make_hover_slider():
     from PyQt6.QtCore import Qt
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.slider import HoverSlider
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     slider = HoverSlider(Qt.Orientation.Horizontal)
     slider.setRange(-80, -10)
     slider.setValue(-40)
@@ -291,7 +291,7 @@ def test_hover_lifts_the_handle_toward_the_text_colour(app):
     from stream_denoiser.gui.widgets.slider import _mix
     slider = _make_hover_slider()
     _pump(app, 0.1)
-    assert _handle_colour(slider).name() == "#e8c468"     # abyss secondary
+    assert _handle_colour(slider).name() == "#e8c468"     # halcyon secondary
     slider._hover.snap(1.0)
     lifted = _mix(QColor("#E8C468"), QColor("#f8fafc"), 0.5)
     got = _handle_colour(slider)

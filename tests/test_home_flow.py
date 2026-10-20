@@ -120,19 +120,15 @@ def test_threshold_follows_the_silence_switch(window):
     assert window.thresh_val_label.text() == "-33 dB"
 
 
-def test_home_and_settings_model_pickers_stay_in_step(window):
-    """Home's dropdown and Settings' cards show and save one choice."""
-    usable = [m for m, c in window.model_cards._cards.items()
-              if c.isEnabled()]
-    assert window.model_selector.models() == usable
-    assert window.model_selector.currentText() == window.model_cards.currentText()
-    for model in usable:                     # Settings -> Home
-        window.model_cards.setCurrentText(model)
-        assert window.model_selector.currentText() == model
-        assert window.settings.model == model
-    for model in reversed(usable):           # Home -> Settings
+def test_home_model_picker_saves_the_choice(window):
+    """The model is picked only on Home; each pick is saved."""
+    from stream_denoiser.gui.widgets.model_selector import ModelSelector
+    settings = window.stack.widget(1)
+    assert settings.isAncestorOf(window.aad_switch)
+    assert not settings.findChildren(ModelSelector)
+    for model in window.model_selector.models():
         window.model_selector.setCurrentText(model)
-        assert window.model_cards.currentText() == model
+        assert window.model_selector.currentText() == model
         assert window.settings.model == model
 
 
@@ -141,14 +137,12 @@ def test_controls_lock_while_running(window):
     window._set_controls_enabled(False)
     assert output.is_locked and output._refresh_btn.isHidden()
     assert model.is_locked
-    assert not window.model_cards.isEnabled()
     # Each card's caption says why.
     assert output._subtitle.text() == "Locked while running"
     assert model._subtitle.text() == "Locked while running"
     window._set_controls_enabled(True)
     assert not output.is_locked and not output._refresh_btn.isHidden()
     assert not model.is_locked
-    assert window.model_cards.isEnabled()
     assert output._subtitle.text() == "Where the clean audio plays"
     assert model._subtitle.text() == model.CAPTION
 
@@ -261,7 +255,6 @@ def test_home_only_keeps_the_everyday_controls(window):
     assert cards.itemAt(0).widget().isAncestorOf(window.output_selector)
     assert cards.itemAt(1).widget().isAncestorOf(window.model_selector)
     assert not home.isAncestorOf(window.aad_switch)
-    assert not home.isAncestorOf(window.model_cards)
     assert not home.findChildren(HoverSlider)
 
 
@@ -357,7 +350,7 @@ def _move_everything_off_default(window):
     window.thresh_slider.setValue(-63)
     window.min_tray_switch.setChecked(False)
     window.power_btn._user_set_strength(-18)
-    other = next(i for i, t in enumerate(themes.theme_ids()) if t != "abyss")
+    other = next(i for i, t in enumerate(themes.theme_ids()) if t != "halcyon")
     window.theme_group.button(other).setChecked(True)
     window._on_theme_changed(other)
     window.settings.output_device = 7
@@ -382,9 +375,9 @@ def test_reset_restores_defaults_but_keeps_device_and_theme(window,
         assert s.output_device == 7                 # hardware choice stays
     finally:
         s.output_device = None
-        abyss = themes.theme_ids().index("abyss")
-        window.theme_group.button(abyss).setChecked(True)
-        window._on_theme_changed(abyss)
+        halcyon = themes.theme_ids().index("halcyon")
+        window.theme_group.button(halcyon).setChecked(True)
+        window._on_theme_changed(halcyon)
 
 
 def test_fresh_install_starts_at_full_strength(window):

@@ -29,7 +29,7 @@ themes = _load("themes")
 
 
 def test_native_and_managed_tips_share_one_rule():
-    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     assert "QLabel#poise-tip" in css
     assert "QToolTip" in css
 
@@ -47,7 +47,7 @@ def test_tips_are_themed_not_hardcoded():
 
 def test_tip_type_is_readable():
     import re
-    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     m = re.search(r"poise-tip\s*\{([^}]*)\}", css)
     assert m, "tip rule missing"
     body = m.group(1)

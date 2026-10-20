@@ -1,9 +1,8 @@
 """
 Poise Voice Isolator - Card Dropdown (QComboBox)
 
-A QComboBox whose list opens as a stack of option cards, the same cards
-Settings uses for the models: a name over a blurb, the current choice in
-a gold-edged tint with a diamond. Qt's own popup cannot be styled that
+A QComboBox whose list opens as a stack of option cards: a name over a
+blurb, the current choice in a gold-edged tint with a diamond. Qt's own popup cannot be styled that
 far (its container is private, and QSS ::item never reaches it), so
 showPopup()/hidePopup() open CardPopup instead. The combo keeps its
 model, current index and signals, so callers use it as a QComboBox.
@@ -37,7 +36,7 @@ Flicker guards (each one was a visible flash, measured on Windows):
   frame shows neither);
 - the popup paints itself empty before hiding (a translucent window
   reshows its last frame);
-- a pick plays Settings' switch (the gold edge, tint and diamond glide
+- a pick plays a switch (the gold edge, tint and diamond glide
   from the old card to the new one, SWITCH_MS) and closes only once it
   lands; anything that closes the list mid-switch snaps the cards to
   the new choice first (mid-glide, the snapshot showed the old one);
@@ -75,7 +74,7 @@ TITLE_ROLE = Qt.ItemDataRole.UserRole + 1   # card name (else the text)
 BLURB_ROLE = Qt.ItemDataRole.UserRole + 2   # line(s) under the name
 
 OPEN_MS = 220       # panel fade + rise
-SWITCH_MS = 200     # a pick's glide between cards (as on Settings' cards)
+SWITCH_MS = 200     # a pick's glide between cards
 SWITCH_HOLD_MS = 90  # the new choice rests on screen before closing
 OPEN_HOLD_MS = 16   # held at zero once exposed: a frame to reach screen
 CLOSE_MS = OPEN_MS  # the close is the opening played backwards
@@ -88,8 +87,7 @@ CARD_SPACING = 8
 CARD_RADIUS = 12
 SHADOW = 18         # soft shadow room around the panel (design px)
 MAX_VISIBLE = 5     # cards shown before the list scrolls
-# Theme fills: panel behind the cards, and the cards' rest fill (the same
-# pair as Settings' model cards).
+# Theme fills: panel behind the cards, and the cards' rest fill.
 PANEL_FILL = "card"
 CARD_FILL = "pill"
 
@@ -133,8 +131,7 @@ def _border_rest() -> QColor:
 
 # -- cards --------------------------------------------------------------------
 class _OptionCard(QWidget):
-    """One choice, painted like Settings' model cards: name over blurb,
-    border and fill gliding between rest, active (hover/keys) and the
+    """One choice: name over blurb, border and fill gliding between rest, active (hover/keys) and the
     current choice, which also carries the diamond."""
 
     PAD_L, PAD_R, PAD_V = 20, 52, 13   # right: room for the diamond
@@ -254,7 +251,7 @@ class _OptionCard(QWidget):
         radius = float(sp(CARD_RADIUS))
         base = QColor(palette[CARD_FILL])
         # Active rows lift a touch toward the gold tint; the current one
-        # takes the full tint (as on Settings' cards).
+        # takes the full tint.
         tint = mix_rgba(base, secondary, 0.08)
         fill = mix_rgba(base, tint, max(check, 0.45 * hover))
         hover_edge = QColor(secondary)
@@ -784,7 +781,7 @@ class CardPopup(QWidget):
         self.active_row = row
 
     def choose(self, row: int) -> None:
-        """Pick `row`: the choice applies now; the cards play Settings'
+        """Pick `row`: the choice applies now; the cards play the
         switch, then the list closes. Re-picking the current choice, or
         reduced motion, closes at once."""
         if self.switching:

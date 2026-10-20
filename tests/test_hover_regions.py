@@ -32,7 +32,7 @@ def _styled_root(app, *widgets):
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.fonts import load_fonts
     from stream_denoiser.gui.styles import get_stylesheet
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     load_fonts()
     root = QWidget()
     root.setStyleSheet(get_stylesheet())

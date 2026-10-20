@@ -2,13 +2,16 @@
 Bake the night sky's shader for the GPU sky (widgets/sky_gpu.py).
 
     python tools/bake_sky_shader.py --qsb PATH/TO/qsb.exe
+    python tools/bake_sky_shader.py --qsb PATH/TO/qsb.exe --shader disc
 
 Reads stream_denoiser/gui/assets/sky/sky.frag and writes, next to it,
 sky.frag.qsb (Qt's shader pack: the SPIR-V compiled for GLSL, HLSL and
 MSL) and sky.qml (a ShaderEffect with one property per uniform, the way
 it maps them, and for each sampler a hidden Image it reads, loaded from
 an image provider: see sky_gpu.SkyView). Both are committed; run this
-after editing sky.frag.
+after editing sky.frag. --shader disc bakes the Home scene's disc
+(disc.frag -> disc.frag.qsb) instead; its QML is HomeDial.qml, written
+by hand, so no QML is generated for it.
 
 qsb ships with Qt (not with PyQt6): with pip, PySide6-Addons has it as
 PySide6/qsb.exe, which needs the Qt DLLs of PySide6-Essentials beside it.
@@ -98,7 +101,7 @@ def _d3dcompile(hlsl: bytes) -> bytes:
                          ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint,
                          ctypes.POINTER(ctypes.c_void_p),
                          ctypes.POINTER(ctypes.c_void_p)]
-    hr = compile_(hlsl, len(hlsl), b"sky.frag", None, None, b"main",
+    hr = compile_(hlsl, len(hlsl), b"shader.frag", None, None, b"main",
                   b"ps_5_0", 0, 0, ctypes.byref(blob), ctypes.byref(errors))
     if hr != 0:
         message = _blob(errors).decode(errors="replace") if errors else ""
@@ -153,9 +156,32 @@ def with_dxbc(pack: bytes, hlsl: bytes) -> bytes:
     return struct.pack(">I", len(data)) + zlib.compress(data, 9)
 
 
+def bake(qsb: str, name: str) -> Path:
+    """NAME.frag -> NAME.frag.qsb (with DXBC on Windows)."""
+    pack = SKY / f"{name}.frag.qsb"
+    subprocess.run([qsb, "--glsl", "100 es,120,150", "--hlsl", "50",
+                    "--msl", "12", "-o", str(pack), str(SKY / f"{name}.frag")],
+                   check=True)
+    if sys.platform == "win32":
+        hlsl = SKY / f"{name}.hlsl.tmp"
+        subprocess.run([qsb, "-x", f"hlsl,{HLSL_VERSION}", "-o",
+                        str(hlsl), str(pack)], check=True)
+        try:
+            pack.write_bytes(with_dxbc(pack.read_bytes(), hlsl.read_bytes()))
+        finally:
+            hlsl.unlink()
+        print("  HLSL compiled to DXBC")
+    else:
+        print("  (not on Windows: the pack keeps HLSL source, which "
+              "Direct3D compiles when the shader first shows)")
+    return pack
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--qsb", help="Qt's qsb executable")
+    parser.add_argument("--shader", default="sky",
+                        help="which shader: sky (default) or disc")
     parser.add_argument("--check", action="store_true",
                         help="only check that sky.qml matches sky.frag")
     args = parser.parse_args()
@@ -168,23 +194,11 @@ def main() -> int:
         return 0
     if not args.qsb:
         parser.error("--qsb is required to bake")
+    if args.shader != "sky":
+        print(f"baked {bake(args.qsb, args.shader)}")
+        return 0
     (SKY / "sky.qml").write_text(text, encoding="utf-8", newline="\n")
-    pack = SKY / "sky.frag.qsb"
-    subprocess.run([args.qsb, "--glsl", "100 es,120,150", "--hlsl", "50",
-                    "--msl", "12", "-o", str(pack), str(SKY / "sky.frag")],
-                   check=True)
-    if sys.platform == "win32":
-        hlsl = SKY / "sky.hlsl.tmp"
-        subprocess.run([args.qsb, "-x", f"hlsl,{HLSL_VERSION}", "-o",
-                        str(hlsl), str(pack)], check=True)
-        try:
-            pack.write_bytes(with_dxbc(pack.read_bytes(), hlsl.read_bytes()))
-        finally:
-            hlsl.unlink()
-        print("  HLSL compiled to DXBC")
-    else:
-        print("  (not on Windows: the pack keeps HLSL source, which "
-              "Direct3D compiles when the sky first shows)")
+    pack = bake(args.qsb, "sky")
     print(f"baked {pack} and {SKY / 'sky.qml'}")
     return 0
 

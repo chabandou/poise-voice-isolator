@@ -406,7 +406,7 @@ def test_tactile_themes_keep_the_odometer_and_ripple(app, monkeypatch):
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets import dial as d
     monkeypatch.delenv("POISE_NO_ANIM", raising=False)
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     dial = _dial(app)
     dial.set_active(True)
     lit = d.lit_count(dial.strength_db())
@@ -422,11 +422,13 @@ def test_dial_reuses_its_ring_while_it_holds_still(app, vigil, monkeypatch):
     dial._draw_ring = lambda *a: drawn.append(1) or draw(*a)
     dial._ring_key = None                         # forget the shown frame
     dial.grab()
+    first = len(drawn)                            # one image per layer
+    assert first >= 1
     dial.grab()
-    assert len(drawn) == 1                        # the same strokes: reused
+    assert len(drawn) == first                    # the same strokes: reused
     dial.set_strength_db(dial.strength_db() + 10)
     dial.grab()
-    assert len(drawn) == 2                        # fewer ticks lit: redrawn
+    assert len(drawn) > first                     # fewer ticks lit: redrawn
     dial.close()
 
 
@@ -514,18 +516,18 @@ def test_switching_to_vigil_swaps_the_backdrop(app, monkeypatch):
     from stream_denoiser.gui import themes
     monkeypatch.delenv("POISE_NO_ANIM", raising=False)
     monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     card = _sky_card(app)
     assert not card._sky_timer.isActive()
     try:
         themes.set_current("vigil")
         card.refresh_theme()
         assert card._sky_timer.isActive() and card._reveal.value == 1.0
-        themes.set_current("abyss")
+        themes.set_current("halcyon")
         card.refresh_theme()
         assert not card._sky_timer.isActive()
     finally:
-        themes.set_current("abyss")
+        themes.set_current("halcyon")
         card.close()
 
 
@@ -537,7 +539,7 @@ def test_saved_ultraviolet_opens_as_vigil(app):
         settings.set(settings.KEY_THEME, "ultraviolet")
         assert settings.theme == "vigil"
     finally:
-        settings.set(settings.KEY_THEME, before or "abyss")
+        settings.set(settings.KEY_THEME, before or "halcyon")
 
 
 def test_saved_mono_opens_as_eclipse(app):
@@ -548,4 +550,4 @@ def test_saved_mono_opens_as_eclipse(app):
         settings.set(settings.KEY_THEME, "mono")
         assert settings.theme == "eclipse"
     finally:
-        settings.set(settings.KEY_THEME, before or "abyss")
+        settings.set(settings.KEY_THEME, before or "halcyon")

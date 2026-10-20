@@ -1,12 +1,17 @@
 """
 Poise Voice Isolator - Pattern Card
 
-A card (QFrame#card) with the gilded lattice drawn behind its content:
-a 64px tile of a square, its 45-degree twin, spokes to the tile edges
-and a centre dot, all in the theme's secondary colour. The lattice is
-painted at 20% opacity through an elliptical radial mask, clear in the
-middle (where the dial sits) and full strength at the edges. While
-isolating it glides to the accent colour, matching the dial's ring.
+A card (QFrame#card) with the gilded lattice drawn behind its content,
+in the theme's secondary colour. Which lattice is the theme's (its
+"lattice" key; the patterns are in widgets/lattice.py): Halcyon's, the
+first one, a 64px tile of a square, its 45-degree twin, spokes to the
+tile edges and a centre dot; Verdant's khatam strapwork; Ember's
+twelve-pointed stars; Orchid's dome of stars round the dial. The lattice
+is painted at about 20% opacity through a radial mask, clear in the
+middle (where the dial sits) and full strength at the edges: an ellipse
+over the card, or for the dome a circle round the dial. The Islamic
+patterns are centred on the dial. While isolating the lattice glides to
+the accent colour, matching the dial's ring.
 
 While isolating the lattice also pings: a ring of accent-coloured
 lattice leaves the dial (set_ping_origin) and crosses the card. The
@@ -20,6 +25,8 @@ PING_FADE_MS rather than vanishing.
 Ported from the design's SVG (<pattern> + <radialGradient> mask), so the
 numbers below are the design's own: tile 64, offset (-14, -6), stroke 1,
 dot r 2.5, opacity .2, mask centre (.5, .55), radius .72, stops .4 -> 1.
+The other patterns' numbers (lattice.SPECS) are from the canvas
+"Lattice: Islamic patterns" (boards A, C and E).
 
 A theme whose backdrop is "sky" (Vigil, Eclipse) gets the night sky instead (see
 widgets/sky.py): always gently moving, so it runs its own clock while
@@ -33,25 +40,30 @@ too, and the dial's ring of ticks: see DialButton.set_ring_sink);
 otherwise, or with POISE_SKY_RASTER=1, it is painted here. With the
 ambient motion still (animations.ambient_ok: Reduce motion in Settings)
 there is no GPU view: one still sky is painted here and kept.
+
+For a breathing theme the view is the whole Home scene
+(widgets/home_scene.py): it draws the dial over the sky (the dial
+hands it its look: DialButton.set_face_sink) and the headline
+(mirror_text), so neither paints itself while it is there.
 """
+import math
 import time
 
 from PyQt6.QtWidgets import QFrame
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
-                         QPen, QRadialGradient, QTransform)
+                         QPen, QRadialGradient, QRegion, QTransform)
 
-from ..animations import Blend, EASE_BREATHE, ambient_ok
+from ..animations import Blend, EASE_BREATHE, FrameTimer, ambient_ok
 from ...logging_config import get_logger
 from ..scaling import ui_scale
-from ..themes import current as current_theme, style as theme_style
+from ..themes import (breathing, current as current_theme,
+                      style as theme_style)
+from . import lattice as patterns
 from .sky import BREATH_MS, PULSE_FADE_MS, NightSky, meteor_due
 
-TILE = 64.0                 # design px per tile
+# The first lattice's tile, stroke, dot and opacity: lattice.SPECS.
 TILE_OFFSET = (-14.0, -6.0)  # pattern x/y: where the first tile starts
-STROKE = 1.0
-DOT_RADIUS = 2.5
-OPACITY = 0.2
 # Radial mask in bounding-box units (elliptical on a non-square card).
 MASK_CENTER = (0.5, 0.55)
 MASK_RADIUS = 0.72
@@ -70,13 +82,18 @@ PING_CORE = 22.0            # full strength this far inside it
 PING_FRAME_MS = 33
 PING_FADE_MS = 420          # a ring in flight when pings stop fades out
 
-SKY_FRAME_MS = 60           # the night sky's slow loops, at rest...
+SKY_FRAME_MS = 100          # the night sky's slow loops, at rest...
 SKY_LIVE_FRAME_MS = 33      # ...its pulses and the starting draw-in...
 SKY_METEOR_FRAME_MS = 16    # ...and a shooting star's second of flight
 SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
 SKY_REVEAL_MS = 2400        # ...slowly
+
+# What moves the headline the Home scene draws (see mirror_text).
+_TEXT_EVENTS = (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show,
+                QEvent.Type.Hide, QEvent.Type.FontChange,
+                QEvent.Type.PaletteChange, QEvent.Type.StyleChange)
 
 _logger = get_logger(__name__)
 
@@ -131,7 +148,8 @@ class PatternCard(QFrame):
         self._ping_at = None
         self._ping_end = None                  # pings stopped: ring fades
         self._pinging = False                  # a ring is on screen
-        self._ping_timer = QTimer(self)
+        self._ping_region = QRegion()          # where it was painted last
+        self._ping_timer = FrameTimer(self)
         self._ping_timer.setInterval(PING_FRAME_MS)
         self._ping_timer.timeout.connect(self._ping_tick)
 
@@ -145,7 +163,7 @@ class PatternCard(QFrame):
                             EASE_BREATHE)
         self._reveal = Blend(self, self._changed, SKY_REVEAL_MS)
         self._revealed = False
-        self._sky_timer = QTimer(self)
+        self._sky_timer = FrameTimer(self)
         self._sky_timer.setInterval(SKY_FRAME_MS)
         self._sky_timer.timeout.connect(self._sky_tick)
         # The sky on the GPU (made on first show; None paints it here).
@@ -153,6 +171,7 @@ class PatternCard(QFrame):
         self._view_failed = self._making_view = False
         self._base_key = self._base = None
         self._still_key = self._still = None   # the sky holding still
+        self._text = self._text_swap = None    # see mirror_text
 
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
@@ -228,7 +247,13 @@ class PatternCard(QFrame):
         """The (descendant) widget whose centre the pings leave from."""
         if self._view is not None:
             self._hand_ring(False)
+        if self._origin is not None:
+            self._origin.removeEventFilter(self)
         self._origin = widget
+        if widget is not None:
+            # Watched throughout: the GPU sky's ticks and a centred
+            # lattice both follow the dial (see eventFilter).
+            widget.installEventFilter(self)
         if self._view is not None:
             self._hand_ring(True)
 
@@ -277,7 +302,8 @@ class PatternCard(QFrame):
         self._ping_timer.stop()
         if self._pinging:
             self._pinging = False
-            self.update()
+            self.update(self._ping_region)
+        self._ping_region = QRegion()
 
     def showEvent(self, event):  # noqa: N802 (Qt override)
         super().showEvent(event)
@@ -346,9 +372,17 @@ class PatternCard(QFrame):
     def _ping_tick(self) -> None:
         if not self.isVisible():
             return
-        on = self._ping_frame() is not None
+        frame = self._ping_frame()
+        on = frame is not None
         if on or self._pinging:   # one more frame clears the last ring
-            self.update()
+            # Only where the ring is, or just was: not the card (or the
+            # dial over it) as a whole.
+            region = QRegion()
+            centre = self._ping_centre() if on else None
+            if centre is not None:
+                region = self._ring_region(centre, frame[0])
+            self.update(region.united(self._ping_region))
+            self._ping_region = region
         self._pinging = on
         if not on and self._ping_end is not None:
             self._clear_pings()   # the fading ring is gone: all done
@@ -378,6 +412,20 @@ class PatternCard(QFrame):
         return (PING_FROM + (PING_TO - PING_FROM) * eased,
                 alpha * (1 - eased) * fade)
 
+    def _ring_region(self, centre: QPointF, radius: float) -> QRegion:
+        """Where a ping ring of `radius` (design px) can draw: its box, less
+        the square inside the clear middle of the ring (see _paint_ping)."""
+        k = ui_scale()
+        r = radius * k
+        outer = QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
+        region = QRegion(outer.toAlignedRect().adjusted(-2, -2, 2, 2))
+        half = (r - PING_BAND * k) / math.sqrt(2.0) - 2.0
+        if half > 0:
+            region = region.subtracted(QRegion(QRectF(
+                centre.x() - half, centre.y() - half, 2 * half, 2 * half
+            ).toRect()))
+        return region.intersected(QRegion(self.rect()))
+
     def _ping_centre(self):
         origin = self._origin
         if origin is None or not origin.isVisible():
@@ -399,12 +447,13 @@ class PatternCard(QFrame):
                      self._live.value)
         image = self._tinted_image(w, h, color)
         p = QPainter(self)
-        p.setOpacity(OPACITY)
+        p.setOpacity(patterns.spec(theme_style("lattice"))["opacity"])
         p.drawImage(0, 0, image)
         frame = self._ping_frame()
         centre = self._ping_centre() if frame is not None else None
         if centre is not None:
-            self._paint_ping(p, w, h, centre, *frame)
+            self._paint_ping(p, w, h, centre, *frame,
+                             within=event.region())
         p.end()
 
     def _paint_sky(self, w: int, h: int) -> None:
@@ -496,7 +545,9 @@ class PatternCard(QFrame):
             if not gpu_sky_wanted():
                 self._view_failed = True
                 return
-            view = SkyView(self)
+            from .home_scene import HomeScene, home_scene_wanted
+            scene = home_scene_wanted() and breathing()
+            view = (HomeScene if scene else SkyView)(self)
         except Exception as e:   # no Qt Quick here
             _logger.warning(f"Night sky on the CPU (no Qt Quick: {e})")
             self._view_failed = True
@@ -522,23 +573,96 @@ class PatternCard(QFrame):
         self._view_failed = True
         self._drop_view()
 
+    def _scene(self):
+        """The view, when it is the whole Home scene (else None)."""
+        view = self._view
+        return view if hasattr(view, "show_dial") else None
+
     def _hand_ring(self, to_view: bool) -> None:
-        """The dial's ring drawn by the GPU sky (to_view) or by the dial."""
+        """The dial's ring drawn by the GPU sky (to_view) or by the dial
+        (and in the Home scene the rest of the dial, and the headline)."""
+        scene = self._scene()
+        self._hand_text(to_view and scene is not None)
         origin = self._origin
         if origin is not None and hasattr(origin, "set_ring_sink"):
             origin.set_ring_sink(self._view.show_ring if to_view else None)
-            # Where the ticks go follows the dial (an error line under the
-            # headline moves it), even when no sky frame is coming.
-            if to_view:
-                origin.installEventFilter(self)
-            else:
-                origin.removeEventFilter(self)
+            if scene is not None and hasattr(origin, "set_face_sink"):
+                origin.set_face_sink(scene.show_dial if to_view else None)
 
     def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
+        kind = event.type()
         if (watched is self._origin and self._view is not None
-                and event.type() in (QEvent.Type.Move, QEvent.Type.Resize)):
+                and kind in (QEvent.Type.Move, QEvent.Type.Resize,
+                             QEvent.Type.Show, QEvent.Type.Hide)):
             self._show_sky_frame()
+            if self._scene() is not None:
+                watched.update()            # the scene's dial follows
+        elif watched is self._text and self._scene() is not None:
+            if kind == QEvent.Type.Paint:
+                return True                 # the scene draws it
+            if kind in _TEXT_EVENTS:
+                self._show_headline()
+        elif (watched is self._origin and not self._sky_on()
+              and kind in (QEvent.Type.Move, QEvent.Type.Resize)
+              and patterns.spec(theme_style("lattice"))["centred"]):
+            self.update()   # the lattice follows the dial (see _lattice)
         return super().eventFilter(watched, event)
+
+    # -- the headline in the Home scene ------------------------------------------------
+    def mirror_text(self, label, swap=None) -> None:
+        """Have the Home scene draw `label` (the headline) whenever it is
+        there, following its text swaps (`swap`, its animations.TextSwap);
+        the label keeps its place in the layout and paints nothing."""
+        self._text, self._text_swap = label, swap
+        if swap is not None:
+            swap.changed.connect(self._show_headline)
+        if self._scene() is not None:
+            self._hand_text(True)
+
+    def _hand_text(self, to_scene: bool) -> None:
+        label = self._text
+        if label is None:
+            return
+        if to_scene:
+            label.installEventFilter(self)
+            label.setUpdatesEnabled(False)
+            self._show_headline()
+        else:
+            label.removeEventFilter(self)
+            label.setUpdatesEnabled(True)
+            label.update()
+
+    def _show_headline(self) -> None:
+        scene = self._scene()
+        if scene is not None and self._text is not None:
+            scene.show_headline(self._headline_state())
+
+    def _headline_state(self):
+        """The headline as the scene's SmokeText draws it (None while
+        the label itself is hidden: not while its page is, which a page
+        slide does before it takes its snapshot of the page)."""
+        label = self._text
+        if label.isHidden():
+            return None
+        from PyQt6.QtGui import QPalette
+        from ..animations import smoke_spread
+        alpha, reach, dy = (self._text_swap.look() if self._text_swap
+                            is not None else (1.0, 0.0, 0.0))
+        box = label.geometry()
+        align = label.alignment()
+        return {
+            "text": label.text(), "font": label.font(),
+            "color": label.palette().color(QPalette.ColorRole.WindowText),
+            "x": float(box.x()), "y": float(box.y()) + dy,
+            "width": float(box.width()), "height": float(box.height()),
+            "horizontalAlignment": int(
+                (align & Qt.AlignmentFlag.AlignHorizontal_Mask).value),
+            "verticalAlignment": int(
+                (align & Qt.AlignmentFlag.AlignVertical_Mask).value),
+            "wrapMode": 1 if label.wordWrap() else 0,   # Text.WordWrap
+            "alpha": float(alpha),
+            "spread": reach * smoke_spread(1.0 - alpha),
+        }
 
     def _drop_view(self) -> None:
         if self._view is not None:
@@ -565,10 +689,14 @@ class PatternCard(QFrame):
             # The ring is drawn about the dial's exact centre (the sky's
             # is the centre pixel of the widget, half a pixel off).
             at = QPointF(origin.mapTo(self, QPoint(0, 0)))
+            k = min(origin.width(), origin.height()) / 300.0
             self._view.place_ring(at.x() + origin.width() / 2,
-                                  at.y() + origin.height() / 2,
-                                  min(origin.width(), origin.height())
-                                  / 300.0)
+                                  at.y() + origin.height() / 2, k)
+            scene = self._scene()
+            if scene is not None:
+                scene.place_dial(at.x() + origin.width() / 2 - 150.0 * k,
+                                 at.y() + origin.height() / 2 - 150.0 * k,
+                                 k)
             if not origin.ring_animating():
                 self._view.show_breath(origin.ring_breath())
 
@@ -597,11 +725,15 @@ class PatternCard(QFrame):
                 (at.x(), at.y()), (page.width(), page.height()))
         return self._base
 
-    def _paint_ping(self, p, w, h, centre, radius, alpha) -> None:
-        """The accent lattice, seen only through a ring around `centre`."""
+    def _paint_ping(self, p, w, h, centre, radius, alpha,
+                    within: QRegion = None) -> None:
+        """The accent lattice, seen only through a ring around `centre`
+        (worked out only in the part of `within` the ring covers)."""
         r = radius * ui_scale()
-        box = QRectF(centre.x() - r, centre.y() - r, 2 * r, 2 * r)
-        box = box.intersected(QRectF(0, 0, w, h)).toAlignedRect()
+        region = self._ring_region(centre, radius)
+        if within is not None:
+            region = region.intersected(within)
+        box = region.boundingRect().intersected(QRect(0, 0, w, h))
         if box.isEmpty() or r <= 0:
             return
         layer = self._ping_image(w, h)
@@ -611,6 +743,7 @@ class PatternCard(QFrame):
         ring.setDevicePixelRatio(dpr)
         ring.fill(Qt.GlobalColor.transparent)
         q = QPainter(ring)
+        q.setClipRegion(region.translated(-box.x(), -box.y()))
         q.drawImage(QPointF(-box.x(), -box.y()), layer)
         k = ui_scale()
         grad = QRadialGradient(
@@ -648,12 +781,29 @@ class PatternCard(QFrame):
         """Masked white lattice for the current size, scale and DPR."""
         return self._lattice(w, h, masked=True)
 
+    def _lattice_centre(self, box: QRectF) -> QPointF:
+        """Where a centred lattice is centred: on the dial (the ping
+        origin), or where it will sit while it is not showing."""
+        centre = self._ping_centre()
+        if centre is None:
+            centre = QPointF(box.x() + MASK_CENTER[0] * box.width(),
+                             box.y() + MASK_CENTER[1] * box.height())
+        return centre
+
     def _lattice(self, w: int, h: int, masked: bool) -> QImage:
         """White lattice, through the radial mask or bare (cached)."""
         from ..styles import _card_border_width
         k = ui_scale()
         dpr = self.devicePixelRatioF()
-        key = (w, h, k, dpr)
+        kind = theme_style("lattice")
+        spec = patterns.spec(kind)
+        # The SVG fills the card's padding box (inside the border), and
+        # the card's rounded corners clip it.
+        b = float(_card_border_width(k))
+        box = QRectF(b, b, w - 2 * b, h - 2 * b)
+        centre = self._lattice_centre(box) if spec["centred"] else None
+        key = (w, h, k, dpr, kind, None if centre is None
+               else (round(centre.x(), 1), round(centre.y(), 1)))
         if masked and key == self._layer_key:
             return self._layer
         if not masked and key == self._bare_key:
@@ -663,11 +813,6 @@ class PatternCard(QFrame):
                        QImage.Format.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(dpr)
         image.fill(Qt.GlobalColor.transparent)
-
-        # The SVG fills the card's padding box (inside the border), and
-        # the card's rounded corners clip it.
-        b = float(_card_border_width(k))
-        box = QRectF(b, b, w - 2 * b, h - 2 * b)
         radius = max(0.0, CARD_RADIUS * k - b)
         clip = QPainterPath()
         clip.addRoundedRect(box, radius, radius)
@@ -675,49 +820,39 @@ class PatternCard(QFrame):
         p = QPainter(image)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setClipPath(clip)
-        ink = QColor(Qt.GlobalColor.white)
-        pen = QPen(ink, STROKE)
-        pen.setCapStyle(Qt.PenCapStyle.FlatCap)    # SVG butt caps
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-
-        # Paint the tiles opaque; the 20% opacity applies to the whole
-        # layer afterwards, so crossings do not double up.
-        cell = TILE * k
-        ox = box.x() + TILE_OFFSET[0] * k
-        oy = box.y() + TILE_OFFSET[1] * k
-        cols = int(box.width() / cell) + 2
-        rows = int(box.height() / cell) + 2
-        for i in range(cols):
-            for j in range(rows):
-                p.save()
-                p.translate(ox + i * cell, oy + j * cell)
-                p.scale(k, k)
-                # SVG patterns clip each tile to its own cell.
-                p.setClipRect(QRectF(0, 0, TILE, TILE),
-                              Qt.ClipOperation.IntersectClip)
-                p.setPen(pen)
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawPath(self._tile)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(ink)
-                p.drawEllipse(QPointF(32, 32), DOT_RADIUS, DOT_RADIUS)
-                p.restore()
+        # Paint the lines opaque; the layer's opacity applies to the whole
+        # of it afterwards, so crossings do not double up.
+        if spec["tile"] is None:
+            self._paint_dome(p, spec, centre, w, h, k)
+        else:
+            self._paint_tiles(p, kind, spec, box, centre, k)
 
         if masked:
-            # Mask: alpha 0 out to 40% of the radius, ramping to 1 at the
-            # rim (and padded beyond). The unit gradient is stretched to
-            # the box, as objectBoundingBox units are in SVG.
-            grad = QRadialGradient(QPointF(0, 0), 1.0)
-            grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
-            grad.setColorAt(1.0, QColor(255, 255, 255, 255))
-            grad.setSpread(QRadialGradient.Spread.PadSpread)
-            brush = QBrush(grad)
-            brush.setTransform(
-                QTransform()
-                .scale(MASK_RADIUS * box.width(), MASK_RADIUS * box.height())
-                * QTransform().translate(
-                    box.x() + MASK_CENTER[0] * box.width(),
-                    box.y() + MASK_CENTER[1] * box.height()))
+            if spec["mask"] == "dial":
+                # Clear round the dial, full strength further out.
+                grad = QRadialGradient(centre, patterns.DOME_MASK_R * k)
+                grad.setColorAt(patterns.DOME_CLEAR, QColor(255, 255, 255, 0))
+                grad.setColorAt(patterns.DOME_FULL,
+                                QColor(255, 255, 255, 255))
+                grad.setSpread(QRadialGradient.Spread.PadSpread)
+                brush = QBrush(grad)
+            else:
+                # Mask: alpha 0 out to 40% of the radius, ramping to 1 at
+                # the rim (and padded beyond). The unit gradient is
+                # stretched to the box, as objectBoundingBox units are in
+                # SVG.
+                grad = QRadialGradient(QPointF(0, 0), 1.0)
+                grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
+                grad.setColorAt(1.0, QColor(255, 255, 255, 255))
+                grad.setSpread(QRadialGradient.Spread.PadSpread)
+                brush = QBrush(grad)
+                brush.setTransform(
+                    QTransform()
+                    .scale(MASK_RADIUS * box.width(),
+                           MASK_RADIUS * box.height())
+                    * QTransform().translate(
+                        box.x() + MASK_CENTER[0] * box.width(),
+                        box.y() + MASK_CENTER[1] * box.height()))
             p.setClipping(False)
             p.setCompositionMode(
                 QPainter.CompositionMode.CompositionMode_DestinationIn)
@@ -729,3 +864,77 @@ class PatternCard(QFrame):
         else:
             self._bare_key, self._bare = key, image
         return image
+
+    @staticmethod
+    def _pens(spec: dict, k: float, rounded: bool):
+        """The pen for a lattice's lines and, for strapwork, the one that
+        clears each band's middle (None for plain lines)."""
+        cap = Qt.PenCapStyle.RoundCap if rounded else Qt.PenCapStyle.FlatCap
+        join = (Qt.PenJoinStyle.RoundJoin if rounded
+                else Qt.PenJoinStyle.MiterJoin)    # the first: SVG butt caps
+        ink = QPen(QColor(Qt.GlobalColor.white), spec["stroke"] * k,
+                   Qt.PenStyle.SolidLine, cap, join)
+        if not spec["gap"]:
+            return ink, None
+        gap = QPen(QColor(Qt.GlobalColor.white), spec["gap"] * k,
+                   Qt.PenStyle.SolidLine, cap, join)
+        return ink, gap
+
+    def _paint_tiles(self, p: QPainter, kind: str, spec: dict, box: QRectF,
+                     centre, k: float) -> None:
+        """A tiled lattice over `box`: in its fixed place, or with a tile
+        corner (a star) on `centre`."""
+        tw, th = spec["tile"]
+        cw, ch = tw * k, th * k
+        if centre is None:
+            ox = box.x() + TILE_OFFSET[0] * k
+            oy = box.y() + TILE_OFFSET[1] * k
+        else:
+            ox = centre.x() - math.ceil((centre.x() - box.x()) / cw) * cw
+            oy = centre.y() - math.ceil((centre.y() - box.y()) / ch) * ch
+        cols = int(math.ceil((box.right() - ox) / cw))
+        rows = int(math.ceil((box.bottom() - oy) / ch))
+        first = kind == patterns.DEFAULT
+        path = self._tile if first else patterns.tile_path(kind)
+        # In tile units: the painter is scaled by k below.
+        ink, gap = self._pens(spec, 1.0, rounded=not first)
+        dots = spec["dots"]
+        for i in range(cols):
+            for j in range(rows):
+                p.save()
+                p.translate(ox + i * cw, oy + j * ch)
+                p.scale(k, k)
+                # SVG patterns clip each tile to its own cell.
+                p.setClipRect(QRectF(0, 0, tw, th),
+                              Qt.ClipOperation.IntersectClip)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.setPen(ink)
+                p.drawPath(path)
+                if gap is not None:
+                    p.setCompositionMode(
+                        QPainter.CompositionMode.CompositionMode_DestinationOut)
+                    p.setPen(gap)
+                    p.drawPath(path)
+                    p.setCompositionMode(
+                        QPainter.CompositionMode.CompositionMode_SourceOver)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QColor(Qt.GlobalColor.white))
+                for x, y, r in dots:
+                    p.drawEllipse(QPointF(x, y), r, r)
+                p.restore()
+
+    def _paint_dome(self, p: QPainter, spec: dict, centre: QPointF,
+                    w: int, h: int, k: float) -> None:
+        """The dome of stars round `centre`, drawn whole."""
+        path = patterns.dome_path(centre.x(), centre.y(), w, h, k)
+        ink, gap = self._pens(spec, k, rounded=True)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(ink)
+        p.drawPath(path)
+        if gap is not None:
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_DestinationOut)
+            p.setPen(gap)
+            p.drawPath(path)
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_SourceOver)

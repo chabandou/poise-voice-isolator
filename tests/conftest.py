@@ -58,6 +58,11 @@ try:
     _seed.setValue("appearance/reduce_motion", False)
     _seed.sync()
     del _seed
+
+    # Poise reads POISE_NO_ANIM / POISE_REDUCE_MOTION once; tests switch
+    # them with monkeypatch, so here they are read on every call.
+    from stream_denoiser.gui import animations as _animations
+    _animations.LIVE_ENV = True
 except Exception:
     _SESSION_APP = None
 

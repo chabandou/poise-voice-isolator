@@ -43,5 +43,5 @@ def test_variant_mapping_matches_files():
     utils = _load_utils()
     for theme_id, filename in utils.THEME_ICON_VARIANTS.items():
         assert os.path.isfile(os.path.join(_ASSETS_DIR, filename)), theme_id
-    # Abyss intentionally keeps the signature cyan icon.
-    assert "abyss" not in utils.THEME_ICON_VARIANTS
+    # Halcyon intentionally keeps the signature cyan icon.
+    assert "halcyon" not in utils.THEME_ICON_VARIANTS
