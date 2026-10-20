@@ -3,7 +3,8 @@ import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 // Port of stream_denoiser/gui/widgets/dial.py: a 270-degree ring of ticks
 // around a power disc. Press the disc to start/stop; drag the ring (or use
 // the arrow keys) to set the reduction strength. Idle the lit ticks use the
-// secondary colour, while isolating they switch to the accent.
+// secondary colour, while isolating they switch to the accent. Themes whose
+// Home breathes (Vigil, Eclipse) breathe the lit ticks on the sky's cycle.
 
 const ATTEN_STRONG = -50;
 const ATTEN_GENTLE = -10;
@@ -57,10 +58,12 @@ type DialProps = {
 	strengthDb: number;
 	onToggle: () => void;
 	onStrengthChange: (db: number) => void;
+	/** The theme's motion is "breath" (themes.py). */
+	breath?: boolean;
 	className?: string;
 };
 
-const Dial = ({ live, strengthDb, onToggle, onStrengthChange, className = '' }: DialProps) => {
+const Dial = ({ live, strengthDb, onToggle, onStrengthChange, breath = false, className = '' }: DialProps) => {
 	const svgRef = useRef<SVGSVGElement>(null);
 	const dragRef = useRef<{ fraction: number; moved: boolean } | null>(null);
 	const pressRef = useRef(false);
@@ -146,7 +149,7 @@ const Dial = ({ live, strengthDb, onToggle, onStrengthChange, className = '' }: 
 		>
 			<svg
 				ref={svgRef}
-				className={`dial block h-full w-full select-none ${live ? 'dial--live' : ''}`}
+				className={`dial block h-full w-full select-none ${live ? 'dial--live' : ''} ${breath ? 'dial--breath' : ''}`}
 				onPointerCancel={handlePointerUp}
 				onPointerDown={handlePointerDown}
 				onPointerMove={handlePointerMove}

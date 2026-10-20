@@ -1,7 +1,8 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FileText, GearSix, Info, Minus, Square, Waveform, X } from '@phosphor-icons/react';
-import { Lattice, PoiseMark } from './Brand';
+import { PoiseMark } from './Brand';
 import Dial from './Dial';
+import HomeBackdrop, { type DialAnchor } from './HomeBackdrop';
 import { getTheme, setTheme, subscribeTheme, THEMES } from '../themes';
 import { reveal } from '../reveal';
 
@@ -16,7 +17,57 @@ const navIcons = [
 	{ label: 'About', Icon: Info },
 ];
 
+const useActiveTheme = () => {
+	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'abyss');
+	return THEMES.find((theme) => theme.id === active) ?? THEMES[0];
+};
+
+// Where the dial sits on the Home card, kept current as the preview resizes
+// (the backdrop's geometry is centred on it and sized to it).
+const useDialAnchor = () => {
+	const cardRef = useRef<HTMLDivElement>(null);
+	const dialRef = useRef<HTMLDivElement>(null);
+	const [anchor, setAnchor] = useState<DialAnchor | null>(null);
+
+	useEffect(() => {
+		const card = cardRef.current;
+		const dial = dialRef.current;
+		if (!card || !dial) {
+			return;
+		}
+		const measure = () => {
+			const c = card.getBoundingClientRect();
+			const d = dial.getBoundingClientRect();
+			if (c.width < 40 || d.width < 40) {
+				return;
+			}
+			const next = {
+				w: card.clientWidth,
+				h: card.clientHeight,
+				// The card's border is 1px; the backdrop fills its padding box.
+				cx: d.left + d.width / 2 - c.left - card.clientLeft,
+				cy: d.top + d.height / 2 - c.top - card.clientTop,
+				k: d.width / 300,
+			};
+			setAnchor((prev) =>
+				prev && Object.keys(next).every((key) => Math.abs(prev[key as keyof DialAnchor] - next[key as keyof DialAnchor]) < 0.5)
+					? prev
+					: next,
+			);
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(card);
+		observer.observe(dial);
+		return () => observer.disconnect();
+	}, []);
+
+	return { cardRef, dialRef, anchor };
+};
+
 const AppWindow = () => {
+	const theme = useActiveTheme();
+	const { cardRef, dialRef, anchor } = useDialAnchor();
 	const [live, setLive] = useState(false);
 	const [strengthDb, setStrengthDb] = useState(-50);
 	const [stats, setStats] = useState<Stats>(idleStats);
@@ -38,7 +89,7 @@ const AppWindow = () => {
 	}, [live]);
 
 	return (
-		<div className="overflow-hidden rounded-[18px] border border-edge bg-bg shadow-[0_40px_120px_-40px_rgb(0_0_0/0.8)]">
+		<div className="app-window overflow-hidden rounded-[18px] border border-edge shadow-[0_40px_120px_-40px_rgb(0_0_0/0.8)]">
 			{/* Title bar (themed, like the Windows build) */}
 			<div className="flex h-9 items-center justify-between border-b border-white/5 bg-deep pl-3.5 text-muted">
 				<div className="flex items-center gap-2 text-[0.75rem]">
@@ -69,22 +120,25 @@ const AppWindow = () => {
 
 				{/* Home page */}
 				<div className="min-w-0 flex-1 p-3 sm:p-5">
-					<div className="card relative overflow-hidden px-4 pb-5 pt-6 text-center sm:px-6">
-						<Lattice />
+					<div ref={cardRef} className="card relative overflow-hidden px-4 pb-5 pt-6 text-center sm:px-6">
+						<HomeBackdrop anchor={anchor} kind={theme.backdrop} live={live} />
 						<div className="relative">
-							<h3 className="font-heading text-[1.9rem] font-bold leading-tight text-ink sm:text-[2.25rem]">
+							<h3 className="app-heading font-heading text-[1.9rem] leading-tight text-ink sm:text-[2.25rem]">
 								{live ? 'Isolating voices' : 'Ready to isolate'}
 							</h3>
 							<p className={`mt-1 text-[0.95rem] transition-colors duration-300 ${live ? 'text-accent' : 'text-muted'}`}>
 								{live ? 'Processing' : 'Press the dial to start.'}
 							</p>
-							<Dial
-								className="mx-auto mt-4 aspect-square w-full max-w-[17rem]"
-								live={live}
-								onStrengthChange={setStrengthDb}
-								onToggle={() => setLive((value) => !value)}
-								strengthDb={strengthDb}
-							/>
+							<div ref={dialRef} className="mx-auto mt-4 aspect-square w-full max-w-[17rem]">
+								<Dial
+									breath={theme.backdrop === 'sky'}
+									className="h-full w-full"
+									live={live}
+									onStrengthChange={setStrengthDb}
+									onToggle={() => setLive((value) => !value)}
+									strengthDb={strengthDb}
+								/>
+							</div>
 							<p className="mt-3 text-[0.8rem] text-muted">Drag the ring to set the reduction strength.</p>
 						</div>
 					</div>
@@ -113,8 +167,8 @@ const AppWindow = () => {
 };
 
 const ThemePicker = () => {
-	const active = useSyncExternalStore(subscribeTheme, getTheme, () => 'abyss');
-	const activeTheme = THEMES.find((theme) => theme.id === active) ?? THEMES[0];
+	const activeTheme = useActiveTheme();
+	const active = activeTheme.id;
 
 	return (
 		<div>
@@ -138,7 +192,7 @@ const ThemePicker = () => {
 							<svg aria-hidden="true" className="h-6 w-6" fill="none" viewBox="1.5 1.5 21 21">
 								<path
 									d="M3 12C3.00015 8.14286 4.28571 3 6.85714 3C10.7143 2.9999 13.2857 21 17.1429 21C19.7143 21 21 15.8571 21 12 M3 12H5 M19 12H21 M15.5 12H16.5 M7.5 12H8.5"
-									stroke={theme.accent}
+									stroke={theme.icon}
 									strokeLinecap="round"
 									strokeLinejoin="round"
 									strokeWidth="1.9"

@@ -1,11 +1,11 @@
 import { useId } from 'react';
 
-// The app icon (stream_denoiser/gui/assets/icon.svg): a sine wave that
-// fades from the theme accent to silver, with a soft glow.
+// The app icon (stream_denoiser/gui/assets/icon*.svg): a sine wave that
+// fades from the theme's icon colour to silver, with a soft glow.
 export const PoiseMark = ({
 	className = '',
 	glow = true,
-	tone = 'var(--color-accent)',
+	tone = 'var(--color-icon)',
 }: {
 	className?: string;
 	glow?: boolean;
@@ -46,26 +46,35 @@ export const PoiseMark = ({
 	);
 };
 
-// PatternCard's 8-point-star lattice: two overlapping squares and a dot
-// per 72px cell, strongest at the edges and fading out toward the middle.
-export const Lattice = ({ className = '' }: { className?: string }) => {
+// The line work of one lattice tile (widgets/pattern_card.py _tile_path):
+// a square, its 45-degree twin, spokes to the tile's edges and a dot.
+export const LatticeTile = () => (
+	<g fill="none" stroke="currentColor" strokeWidth="1">
+		<rect height="22" width="22" x="21" y="21" />
+		<rect height="22" transform="rotate(45 32 32)" width="22" x="21" y="21" />
+		<path d="M32 0V16.4M32 47.6V64M0 32H16.4M47.6 32H64M0 0L21 21M64 0L43 21M0 64L21 43M64 64L43 43" />
+		<circle cx="32" cy="32" r="2.5" />
+	</g>
+);
+
+// PatternCard's gilded lattice: 64px tiles starting at (-14, -6), at 20%
+// through an elliptical radial mask, clear in the middle and full strength
+// at the edges. Colour it with a text-* class; the app's is the secondary
+// colour while idle, gliding to the accent while isolating.
+export const Lattice = ({ className = 'text-accent' }: { className?: string }) => {
 	const id = useId();
 	const patternId = `${id}-tile`;
 	const fadeId = `${id}-fade`;
 	const maskId = `${id}-mask`;
 
 	return (
-		<svg aria-hidden="true" className={`pointer-events-none absolute inset-0 h-full w-full text-accent ${className}`}>
+		<svg aria-hidden="true" className={`pointer-events-none absolute inset-0 h-full w-full ${className}`}>
 			<defs>
-				<pattern height="72" id={patternId} patternUnits="userSpaceOnUse" width="72" x="50%" y="50%">
-					<g fill="none" stroke="currentColor" strokeWidth="1" transform="translate(36 36)">
-						<rect height="30" width="30" x="-15" y="-15" />
-						<rect height="30" transform="rotate(45)" width="30" x="-15" y="-15" />
-						<circle r="3" />
-					</g>
+				<pattern height="64" id={patternId} patternUnits="userSpaceOnUse" width="64" x="-14" y="-6">
+					<LatticeTile />
 				</pattern>
-				<radialGradient id={fadeId} r="0.75">
-					<stop offset="0.42" stopColor="#000" />
+				<radialGradient cx="0.5" cy="0.55" id={fadeId} r="0.72">
+					<stop offset="0.4" stopColor="#000" />
 					<stop offset="1" stopColor="#fff" />
 				</radialGradient>
 				<mask id={maskId}>

@@ -27,7 +27,7 @@ const Transparency = () => {
 	return (
 		<section className="px-6 py-24 md:px-12 md:py-32">
 			<div className="card relative mx-auto max-w-6xl overflow-hidden p-8 md:p-16" {...reveal(0, 'scale')}>
-				<Lattice className="opacity-40" />
+				<Lattice className="text-accent opacity-40" />
 				<div className="relative flex flex-col items-center justify-between gap-12 md:flex-row">
 					<div className="max-w-xl space-y-8">
 						<div className="kicker" {...reveal(150)}>
