@@ -91,6 +91,7 @@ a = Analysis(
 # OpenSSL DLLs that only the excluded ssl/_hashlib modules used.
 sys.path.insert(0, os.path.join(PROJECT, "tools"))
 from qt_trim import trim as _qt_trim  # noqa: E402
+from win_version import version_info  # noqa: E402
 a.binaries, a.datas = _qt_trim(a.binaries, a.datas)
 _NO_OPENSSL = {"libssl-3.dll", "libcrypto-3.dll"}
 a.binaries = [e for e in a.binaries
@@ -116,6 +117,8 @@ exe = EXE(
     codesign_identity=None,
     entitlements=None,
     icon=ICON,
+    # Properties > Details: publisher, copyright, version (tools/win_version.py).
+    version=version_info(PROJECT, "Poise Setup", "Poise_Setup.exe"),
     # The core must write to Program Files and run the driver setup, so
     # a real build asks for elevation once, up front. A UI-only build
     # cannot install anything, so it does not demand admin.

@@ -98,6 +98,7 @@ a.binaries = [e for e in a.binaries if _qml_wanted(e)]
 # with the PDF image plugin that was its only user.
 sys.path.insert(0, os.path.join(SPECPATH, 'tools'))
 from qt_trim import trim as _qt_trim  # noqa: E402
+from win_version import version_info  # noqa: E402
 a.binaries, a.datas = _qt_trim(a.binaries, a.datas)
 
 # Qt DLLs still linked from what is left (Qt loads none of them by name).
@@ -136,6 +137,8 @@ exe = EXE(
     codesign_identity=None,
     entitlements=None,
     icon=icon_path,
+    # Properties > Details: publisher, copyright, version (tools/win_version.py).
+    version=version_info(SPECPATH, 'Poise Voice Isolator', 'Poise.exe'),
 )
 coll = COLLECT(
     exe,

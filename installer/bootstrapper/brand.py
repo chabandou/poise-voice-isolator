@@ -77,6 +77,9 @@ SUCCESS_CHIP = _rgba(hex_rgb(PALETTE["success"]), 0.14)
 WARNING_FILL = _rgba(hex_rgb(PALETTE["warning"]), 0.07)
 WARNING_BORDER = _rgba(hex_rgb(PALETTE["warning"]), 0.26)
 
+#: Who makes Poise, as credited in the rail and the exe's details.
+PUBLISHER = "chabandou"
+
 HEADING_FALLBACK = "Segoe UI"
 FONT_FILES = ("fonts/Rajdhani-Bold.ttf", "fonts/Rajdhani-SemiBold.ttf")
 

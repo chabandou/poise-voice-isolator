@@ -208,7 +208,7 @@ class Rail(QWidget):
 
         outer.addStretch(1)
 
-        version = QLabel(f"Version {brand.version()}")
+        version = QLabel(f"Version {brand.version()}  ·  by {brand.PUBLISHER}")
         version.setObjectName("version")
         version.setFont(ui_font(11))
         outer.addWidget(version)

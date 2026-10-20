@@ -4,7 +4,8 @@
 #define MyAppName "Poise Voice Isolator"
 ; Keep in step with version in pyproject.toml (release checklist there)
 #define MyAppVersion "1.5.0"
-#define MyAppPublisher "Poise"
+#define MyAppPublisher "chabandou"
+#define MyAppURL "https://github.com/chabandou/Poise-Voice-Isolator"
 #define MyAppExeName "Poise.exe"
 
 [Setup]
@@ -15,6 +16,11 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+; Shown in Add/Remove Programs and in the installer's Properties > Details.
+; Credit only: SmartScreen goes by a code signature, not by these fields.
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppCopyright=Copyright (c) 2026 {#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
