@@ -675,7 +675,9 @@ class PatternCard(QFrame):
 
     def _render_band(self, band: QRect) -> QImage:
         """The card's widgets within `band`, as drawn (with their effects),
-        on a clear image."""
+        on a clear image: without the card's own background (its QSS
+        fill, which Qt paints before any paintEvent), which would hide
+        the sky."""
         dpr = self.devicePixelRatioF()
         image = QImage(max(1, round(band.width() * dpr)),
                        max(1, round(band.height() * dpr)),
@@ -683,12 +685,16 @@ class PatternCard(QFrame):
         image.setDevicePixelRatio(dpr)
         image.fill(Qt.GlobalColor.transparent)
         p = QPainter(image)
+        bare = Qt.WidgetAttribute.WA_NoSystemBackground
+        had_bare = self.testAttribute(bare)
         self._mirroring = True
         self._view.quiet = True
+        self.setAttribute(bare, True)
         try:
             self.render(p, QPoint(), QRegion(band),
                         QWidget.RenderFlag.DrawChildren)
         finally:
+            self.setAttribute(bare, had_bare)
             self._mirroring = False
             self._view.quiet = False
             p.end()

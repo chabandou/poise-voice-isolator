@@ -147,6 +147,21 @@ def test_the_view_draws_the_dial_and_the_headline(app, vigil, monkeypatch):
     card.close()
 
 
+def test_the_headline_layer_is_clear_round_its_text(app, vigil, monkeypatch):
+    """The card's own (QSS) fill stays out of it: the sky shows round
+    the words."""
+    card, title, _, _, view = _card(app, monkeypatch)
+    card.setStyleSheet("PatternCard { background: #335577; }")
+    title.setText("Ready to isolate now")
+    _pump(app)
+    image, band = view.layers["text"]
+    assert image.pixelColor(2, 2).alpha() == 0
+    alphas = {image.pixelColor(x, image.height() // 2).alpha()
+              for x in range(0, image.width(), 3)}
+    assert 0 in alphas and max(alphas) > 0     # clear, and the words
+    card.close()
+
+
 def test_what_changes_on_the_card_redraws_its_layer(app, vigil, monkeypatch):
     from PyQt6.QtCore import QRectF
     card, title, error, dial, view = _card(app, monkeypatch)
