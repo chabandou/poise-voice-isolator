@@ -57,9 +57,10 @@ from PyQt6.QtCore import (
     Qt,
     QTimer,
     QVariantAnimation,
+    pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QGraphicsOpacityEffect,
@@ -733,6 +734,33 @@ def _cancel_slide(stack: QStackedWidget) -> None:
         pass
 
 
+class _Snapshot(QWidget):
+    """A page as it looked, drawn at an opacity: straight, each frame
+    of a slide (an opacity effect would draw it into a buffer of its own
+    first, and the snapshot is the size of the page)."""
+
+    def __init__(self, parent, pixmap):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._pixmap = pixmap
+        self._opacity = 1.0
+
+    def _get_opacity(self) -> float:
+        return self._opacity
+
+    def _set_opacity(self, value: float) -> None:
+        self._opacity = float(value)
+        self.update()
+
+    opacity = pyqtProperty(float, _get_opacity, _set_opacity)
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._opacity > 0.0:
+            p = QPainter(self)
+            p.setOpacity(self._opacity)
+            p.drawPixmap(0, 0, self._pixmap)
+
+
 def slide_stack(stack: QStackedWidget, index: int,
                 duration_ms: int = WS_MS) -> None:
     """Hyprland-workspace page switch: old slides out + fades, new slides in.
@@ -775,7 +803,6 @@ def slide_stack(stack: QStackedWidget, index: int,
         shift = -travel if index > old else travel
 
         from PyQt6.QtCore import QPoint, QParallelAnimationGroup, QRect
-        from PyQt6.QtWidgets import QLabel
 
         target = stack.contentsRect()
         tx, ty = target.x(), target.y()
@@ -799,10 +826,7 @@ def slide_stack(stack: QStackedWidget, index: int,
                     sgeo = stack.geometry()
                     obase = QPoint(sgeo.x(), sgeo.y())
                     orect = sgeo
-                overlay = QLabel(parent)
-                overlay.setPixmap(pix)
-                overlay.setAttribute(
-                    Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                overlay = _Snapshot(parent, pix)
                 overlay.setGeometry(orect)
                 overlay.show()
                 overlay.raise_()
@@ -815,9 +839,6 @@ def slide_stack(stack: QStackedWidget, index: int,
 
         if overlay is not None:
             try:
-                from PyQt6.QtWidgets import QGraphicsOpacityEffect
-                eff = QGraphicsOpacityEffect(overlay)
-                overlay.setGraphicsEffect(eff)
                 # Slide the old snapshot out along the travel direction
                 # (overlay frame, NOT the page frame — see above).
                 pos_anim = QPropertyAnimation(overlay, b"pos", stack)
@@ -826,8 +847,8 @@ def slide_stack(stack: QStackedWidget, index: int,
                 pos_anim.setEndValue(QPoint(obase.x(), obase.y() + shift))
                 pos_anim.setEasingCurve(curve)
                 group.addAnimation(pos_anim)
-                # ...while it fades out (plain QLabel: effect-safe).
-                fade_anim = QPropertyAnimation(eff, b"opacity", stack)
+                # ...while it fades out.
+                fade_anim = QPropertyAnimation(overlay, b"opacity", stack)
                 fade_anim.setDuration(max(1, int(duration_ms)))
                 fade_anim.setStartValue(1.0)
                 fade_anim.setEndValue(0.0)
