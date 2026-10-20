@@ -112,6 +112,18 @@ def card_base(size, radius: float, border: int, border_colour: QColor,
 
 
 # -- a frame of the sky as uniforms -----------------------------------------------
+def _alphas(tone: QColor):
+    """alpha -> sky._alpha(tone, alpha).alphaF() (the colour's alpha as Qt
+    keeps it), on one reused QColor rather than one per mote or sparkle."""
+    scratch, base = QColor(tone), tone.alphaF()
+
+    def alpha_of(alpha: float) -> float:
+        scratch.setAlphaF(max(0.0, min(1.0, base * alpha)))
+        return scratch.alphaF()
+
+    return alpha_of
+
+
 def frame_uniforms(frame, box) -> dict:
     """NightSky.frame's layers as the shader's uniforms (everything off
     for no frame)."""
@@ -127,12 +139,14 @@ def frame_uniforms(frame, box) -> dict:
         u["band"] = QVector4D(r, clear, core, colour.alphaF())
         u["bandRgb"] = _rgb(colour)
 
-    for i, (at, _, _, r, colour) in enumerate(frame["motes"]):
-        u["moteRgb"] = _rgb(colour)
-        u[f"m{i}"] = QVector4D(at.x(), at.y(), r, colour.alphaF())
-    for i, (x, y, size, _, colour) in enumerate(frame["sparkles"]):
-        u["sparkRgb"] = _rgb(colour)
-        u[f"s{i}"] = QVector4D(x, y, size, colour.alphaF())
+    tone, alpha_of = frame["mote_tone"], _alphas(frame["mote_tone"])
+    for i, (at, _, _, r, alpha) in enumerate(frame["motes"]):
+        u["moteRgb"] = _rgb(tone)
+        u[f"m{i}"] = QVector4D(at.x(), at.y(), r, alpha_of(alpha))
+    tone, alpha_of = frame["sparkle_tone"], _alphas(frame["sparkle_tone"])
+    for i, (x, y, size, _, alpha) in enumerate(frame["sparkles"]):
+        u["sparkRgb"] = _rgb(tone)
+        u[f"s{i}"] = QVector4D(x, y, size, alpha_of(alpha))
     m = frame["meteor"]
     if m is not None:
         a, b, c = m["arc"]
@@ -251,6 +265,7 @@ class SkyView(QQuickWidget):
     if the scene graph cannot draw it here."""
 
     failed = pyqtSignal()
+    QML = SKY_QML          # the scene (see HomeScene for more in it)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -259,8 +274,8 @@ class SkyView(QQuickWidget):
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self._ring_images = _RingImages()     # (kept: Qt does not own it)
         self.engine().addImageProvider("sky", self._ring_images)
-        self.setSource(QUrl.fromLocalFile(str(SKY_QML)))
-        self._root = self.rootObject()
+        self.setSource(QUrl.fromLocalFile(str(self.QML)))
+        self._root = self._sky_item()
         self._sent = {}
         self._ring_key = None
         self._ring_n = 0
@@ -268,6 +283,11 @@ class SkyView(QQuickWidget):
         window = self.quickWindow()
         window.sceneGraphError.connect(lambda *_: self.failed.emit())
         window.afterFrameEnd.connect(self._check_api)
+
+    def _sky_item(self):
+        """The ShaderEffect of sky.qml, whose properties are the sky's
+        uniforms."""
+        return self.rootObject()
 
     @property
     def ok(self) -> bool:

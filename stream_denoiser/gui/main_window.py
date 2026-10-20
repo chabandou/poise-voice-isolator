@@ -361,6 +361,8 @@ class MainWindow(QMainWindow):
         self._title_swap = TextSwap(self.home_title, out_ms=120, in_ms=240,
                                     rise=sp(14))
         self._sync_home_pace()
+        # A breathing theme's Home scene draws the headline over the sky.
+        stage.mirror_text(self.home_title, self._title_swap)
 
         stage_layout.addStretch(1)
         self.power_btn = DialButton()

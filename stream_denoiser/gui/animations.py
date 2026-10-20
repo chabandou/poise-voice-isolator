@@ -44,7 +44,9 @@ Usage:
 
 import math
 import os
+import time
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -54,9 +56,10 @@ from PyQt6.QtCore import (
     Qt,
     QTimer,
     QVariantAnimation,
+    pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QGraphicsOpacityEffect,
@@ -111,22 +114,22 @@ def cubic_bezier_fn(x1: float, y1: float, x2: float, y2: float):
     def _sample_y(t: float) -> float:
         return ((ay * t + by) * t + cy) * t
 
-    def _sample_dx(t: float) -> float:
-        return (3.0 * ax * t + 2.0 * bx) * t + cx
+    ax3, bx2 = 3.0 * ax, 2.0 * bx
 
     def fn(progress: float) -> float:
         if progress <= 0.0:
             return 0.0
         if progress >= 1.0:
             return 1.0
-        # Newton iterations.
+        # Newton iterations (the samples written out: the night sky asks
+        # for over a hundred of these a frame; same sums, same results).
         t = progress
         for _ in range(8):
-            err = _sample_x(t) - progress
-            if abs(err) < 1e-6:
-                return _sample_y(t)
-            d = _sample_dx(t)
-            if abs(d) < 1e-6:
+            err = ((ax * t + bx) * t + cx) * t - progress
+            if -1e-6 < err < 1e-6:
+                return ((ay * t + by) * t + cy) * t
+            d = (ax3 * t + bx2) * t + cx
+            if -1e-6 < d < 1e-6:
                 break
             t -= err / d
         # Bisection fallback.
@@ -183,12 +186,23 @@ def _hypr_curve(clamp: bool = False) -> QEasingCurve:
     return curve
 
 
+def _reduced_by_env() -> bool:
+    return (os.environ.get("POISE_NO_ANIM") == "1"
+            or os.environ.get("POISE_REDUCE_MOTION") == "1")
+
+
+# Read once: the flags are set before Poise starts, and its animations
+# ask well over a thousand times a second. LIVE_ENV reads them on every
+# call instead (the tests switch them while running; see conftest).
+_REDUCED_BY_ENV = _reduced_by_env()
+LIVE_ENV = False
+
+
 def motion_ok() -> bool:
     """False when the user asked for reduced motion (env override)."""
-    return not (
-        os.environ.get("POISE_NO_ANIM") == "1"
-        or os.environ.get("POISE_REDUCE_MOTION") == "1"
-    )
+    if LIVE_ENV:
+        return not _reduced_by_env()
+    return not _REDUCED_BY_ENV
 
 
 # The Settings page's "Reduce motion" (see set_still).
@@ -210,6 +224,166 @@ def ambient_ok() -> bool:
     keeps a clock running; short feedback on a hover or click checks
     motion_ok and stays."""
     return motion_ok() and not _still
+
+
+# -- one clock for the ambient loops -------------------------------------------
+# While another app is in front, Poise is at most glanced at: its steady
+# loops run this many times slower. Transitions (a frame every
+# TRANSITION_MAX_MS or sooner) answer the user, a wheel turn on the dial
+# or Start from the tray, and keep their pace.
+BACKGROUND_PACE = 2
+TRANSITION_MAX_MS = 20
+
+
+class _FrameClock(QObject):
+    """The one timer behind every FrameTimer. It runs at the shortest
+    interval any running FrameTimer asks for and, on each tick, fires
+    those that are due, together: what they repaint is painted in one
+    pass. (With a timer each, the dial was painted once for its own
+    clock and again for the card's behind it.) While the application is
+    not the active one, steady loops slow by BACKGROUND_PACE."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._running = {}                 # id -> FrameTimer
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._pace = 1
+        state_changed = getattr(parent, "applicationStateChanged", None)
+        if state_changed is not None:
+            state_changed.connect(self._on_state)
+            self._on_state(parent.applicationState())
+
+    def _on_state(self, state) -> None:
+        pace = (1 if state == Qt.ApplicationState.ApplicationActive
+                else BACKGROUND_PACE)
+        if pace != self._pace:
+            self._pace = pace
+            for frame_timer in self._running.values():
+                if not sip.isdeleted(frame_timer):
+                    frame_timer._due = time.monotonic()   # re-paced next tick
+            self._retime()
+
+    def interval_of(self, frame_timer) -> int:
+        """`frame_timer`'s interval at the current pace."""
+        interval = frame_timer.interval()
+        if interval > TRANSITION_MAX_MS:
+            interval *= self._pace
+        return interval
+
+    def add(self, frame_timer) -> None:
+        self._running[id(frame_timer)] = frame_timer
+        self._retime()
+
+    def remove(self, key: int) -> None:
+        if self._running.pop(key, None) is not None:
+            self._retime()
+
+    def _retime(self) -> None:
+        intervals = [self.interval_of(t) for t in self._running.values()
+                     if not sip.isdeleted(t)]
+        if not intervals:
+            self._timer.stop()
+            _fine_timers(False)
+            return
+        interval = min(intervals)
+        # Transitions want every frame: on Windows' default 15.6 ms tick a
+        # 16 ms timer fires after 16 or 31 ms, by turns (steady loops can
+        # take that).
+        fine = interval <= TRANSITION_MAX_MS
+        kind = (Qt.TimerType.PreciseTimer if fine
+                else Qt.TimerType.CoarseTimer)
+        _fine_timers(fine)
+        if self._timer.timerType() != kind:
+            self._timer.stop()
+            self._timer.setTimerType(kind)
+        if self._timer.interval() != interval:
+            self._timer.setInterval(interval)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _tick(self) -> None:
+        now = time.monotonic()
+        # Due within half a tick counts: a 33 ms loop on a 16 ms clock
+        # fires every other tick, not every third.
+        slack = self._timer.interval() / 2000.0
+        for key, frame_timer in list(self._running.items()):
+            if key not in self._running:
+                continue                    # stopped by one fired before
+            if sip.isdeleted(frame_timer):  # went with its widget
+                self.remove(key)
+                continue
+            if now < frame_timer._due - slack:
+                continue
+            frame_timer._due = now + self.interval_of(frame_timer) / 1000.0
+            frame_timer.timeout.emit()
+
+
+_frame_clock = None
+_fine = False
+
+
+def _fine_timers(on: bool) -> None:
+    """Ask Windows for 1 ms timer ticks while a transition runs (as
+    browsers do while they animate), and give them back after."""
+    global _fine
+    if on == _fine or os.name != "nt":
+        return
+    try:
+        import ctypes
+        winmm = ctypes.WinDLL("winmm")
+        (winmm.timeBeginPeriod if on else winmm.timeEndPeriod)(1)
+        _fine = on
+    except OSError:
+        pass
+
+
+class FrameTimer(QObject):
+    """A QTimer for an ambient loop (start, stop, setInterval, timeout),
+    on the clock it shares with every other: loops that run at once fire
+    on the same ticks."""
+
+    timeout = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._interval = 0
+        self._active = False
+        self._due = 0.0
+
+    def interval(self) -> int:
+        return self._interval
+
+    def setInterval(self, msec: int) -> None:  # noqa: N802 (QTimer API)
+        self._interval = max(1, int(msec))
+        if self._active:
+            _clock()._retime()
+
+    def isActive(self) -> bool:  # noqa: N802 (QTimer API)
+        return self._active
+
+    def start(self, msec: int = None) -> None:
+        if msec is not None:
+            self._interval = max(1, int(msec))
+        self._active = True
+        clock = _clock()
+        self._due = time.monotonic() + clock.interval_of(self) / 1000.0
+        clock.add(self)
+
+    def stop(self) -> None:
+        if self._active:
+            self._active = False
+            _clock().remove(id(self))
+
+
+def _clock() -> _FrameClock:
+    """The shared clock, owned by the application so it goes with it (a
+    timer left over after the application is gone crashes on exit)."""
+    global _frame_clock
+    if _frame_clock is None or sip.isdeleted(_frame_clock):
+        from PyQt6.QtCore import QCoreApplication
+        _frame_clock = _FrameClock(QCoreApplication.instance())
+    return _frame_clock
 
 
 def _keep(widget: QWidget, anim: QObject) -> QObject:
@@ -522,6 +696,33 @@ def _cancel_slide(stack: QStackedWidget) -> None:
         pass
 
 
+class _Snapshot(QWidget):
+    """A page as it looked, drawn at an opacity: straight, each frame
+    of a slide (an opacity effect would draw it into a buffer of its own
+    first, and the snapshot is the size of the page)."""
+
+    def __init__(self, parent, pixmap):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._pixmap = pixmap
+        self._opacity = 1.0
+
+    def _get_opacity(self) -> float:
+        return self._opacity
+
+    def _set_opacity(self, value: float) -> None:
+        self._opacity = float(value)
+        self.update()
+
+    opacity = pyqtProperty(float, _get_opacity, _set_opacity)
+
+    def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._opacity > 0.0:
+            p = QPainter(self)
+            p.setOpacity(self._opacity)
+            p.drawPixmap(0, 0, self._pixmap)
+
+
 def slide_stack(stack: QStackedWidget, index: int,
                 duration_ms: int = WS_MS) -> None:
     """Hyprland-workspace page switch: old slides out + fades, new slides in.
@@ -558,7 +759,6 @@ def slide_stack(stack: QStackedWidget, index: int,
         shift = -travel if index > old else travel
 
         from PyQt6.QtCore import QPoint, QParallelAnimationGroup, QRect
-        from PyQt6.QtWidgets import QLabel
 
         target = stack.contentsRect()
         tx, ty = target.x(), target.y()
@@ -582,10 +782,7 @@ def slide_stack(stack: QStackedWidget, index: int,
                     sgeo = stack.geometry()
                     obase = QPoint(sgeo.x(), sgeo.y())
                     orect = sgeo
-                overlay = QLabel(parent)
-                overlay.setPixmap(pix)
-                overlay.setAttribute(
-                    Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                overlay = _Snapshot(parent, pix)
                 overlay.setGeometry(orect)
                 overlay.show()
                 overlay.raise_()
@@ -598,9 +795,6 @@ def slide_stack(stack: QStackedWidget, index: int,
 
         if overlay is not None:
             try:
-                from PyQt6.QtWidgets import QGraphicsOpacityEffect
-                eff = QGraphicsOpacityEffect(overlay)
-                overlay.setGraphicsEffect(eff)
                 # Slide the old snapshot out along the travel direction
                 # (overlay frame, NOT the page frame — see above).
                 pos_anim = QPropertyAnimation(overlay, b"pos", stack)
@@ -609,8 +803,8 @@ def slide_stack(stack: QStackedWidget, index: int,
                 pos_anim.setEndValue(QPoint(obase.x(), obase.y() + shift))
                 pos_anim.setEasingCurve(curve)
                 group.addAnimation(pos_anim)
-                # ...while it fades out (plain QLabel: effect-safe).
-                fade_anim = QPropertyAnimation(eff, b"opacity", stack)
+                # ...while it fades out.
+                fade_anim = QPropertyAnimation(overlay, b"opacity", stack)
                 fade_anim.setDuration(max(1, int(duration_ms)))
                 fade_anim.setStartValue(1.0)
                 fade_anim.setEndValue(0.0)
@@ -1125,6 +1319,12 @@ _SMOKE_SPREAD = cubic_bezier_fn(0.3, 0.6, 0.2, 1.0)
 _SMOKE_RINGS = ((0.45, 6, 0.2, 0.6), (1.0, 10, 0.11, 1.4))
 
 
+def smoke_spread(smoke: float) -> float:
+    """How far out (a fraction of the reach) smoke_wisps' copies are at
+    `smoke`."""
+    return _SMOKE_SPREAD(smoke)
+
+
 def smoke_wisps(smoke: float, reach: float):
     """Text dissolving like smoke, the stand-in for a CSS blur: at `smoke`
     0..1 (0 sharp), the sharp copy's alpha factor and [(alpha factor, dx,
@@ -1189,10 +1389,13 @@ class TextSwap(QObject):
     The swap owns the label's effect while busy; a label that already has
     another effect (e.g. a pulse) is changed instantly instead of nesting
     fades. `settled` fires once the shown text is final and unfaded, so a
-    caller can start such a pulse only after the swap.
+    caller can start such a pulse only after the swap. `changed` fires
+    whenever what the label shows moves (its text, or a step of a fade:
+    see look), for whoever draws it instead (the Home scene).
     """
 
     settled = pyqtSignal()
+    changed = pyqtSignal()
 
     OUT_MS = 90
     IN_MS = 170
@@ -1229,6 +1432,12 @@ class TextSwap(QObject):
     def text(self) -> str:
         """The text being shown, or about to be once the fade-out ends."""
         return self._text
+
+    def look(self):
+        """(opacity, smoke reach px, roll offset px) of the label now."""
+        dy = self._eff._dy if isinstance(self._eff, _RollEffect) else 0.0
+        smoke = self._smoke if isinstance(self._eff, _SmokeEffect) else 0.0
+        return self._opacity(), smoke, dy
 
     def set_text(self, text: str, on_apply=None) -> None:
         """Swap to text. on_apply() runs as the new text appears (e.g. to
@@ -1279,6 +1488,7 @@ class TextSwap(QObject):
         anim.setEasingCurve(self._easing)
         if isinstance(self._eff, _RollEffect):
             anim.valueChanged.connect(self._roll)
+        anim.valueChanged.connect(lambda _v: self.changed.emit())
         anim.finished.connect(self._step)
         self._anim = anim
         anim.start()
@@ -1295,6 +1505,7 @@ class TextSwap(QObject):
         if apply is not None:
             apply()
         self._label.setText(self._text)
+        self.changed.emit()
 
     def _step(self) -> None:
         if self._phase == "out":
@@ -1317,4 +1528,5 @@ class TextSwap(QObject):
                 pass
             self._eff = None
         self._phase = None
+        self.changed.emit()
         self.settled.emit()

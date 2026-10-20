@@ -422,11 +422,13 @@ def test_dial_reuses_its_ring_while_it_holds_still(app, vigil, monkeypatch):
     dial._draw_ring = lambda *a: drawn.append(1) or draw(*a)
     dial._ring_key = None                         # forget the shown frame
     dial.grab()
+    first = len(drawn)                            # one image per layer
+    assert first >= 1
     dial.grab()
-    assert len(drawn) == 1                        # the same strokes: reused
+    assert len(drawn) == first                    # the same strokes: reused
     dial.set_strength_db(dial.strength_db() + 10)
     dial.grab()
-    assert len(drawn) == 2                        # fewer ticks lit: redrawn
+    assert len(drawn) > first                     # fewer ticks lit: redrawn
     dial.close()
 
 
