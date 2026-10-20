@@ -116,6 +116,9 @@ export const Emblem = ({ className = '' }: { className?: string }) => {
 		const inner = major ? 110 : 118;
 		return {
 			index,
+			// Its outward direction, for the entrance: it falls in along it.
+			dx: Math.cos(angle),
+			dy: Math.sin(angle),
 			x1: 150 + inner * Math.cos(angle),
 			y1: 150 + inner * Math.sin(angle),
 			x2: 150 + 136 * Math.cos(angle),
@@ -134,7 +137,7 @@ export const Emblem = ({ className = '' }: { className?: string }) => {
 						pathLength={1}
 						strokeLinecap="round"
 						strokeWidth={tick.index === 0 ? 5 : 4}
-						style={{ '--i': tick.index } as CSSProperties}
+						style={{ '--i': tick.index, '--dx': tick.dx.toFixed(4), '--dy': tick.dy.toFixed(4) } as CSSProperties}
 						x1={tick.x1}
 						x2={tick.x2}
 						y1={tick.y1}
