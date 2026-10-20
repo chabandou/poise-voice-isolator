@@ -552,3 +552,16 @@ def test_the_cached_disc_looks_as_drawn_and_a_charge_redraws_none(
         btn.close()
     finally:
         themes.set_current(before)
+
+
+def test_the_clock_waits_for_the_first_sweep(app, motion):
+    """Before the ring starts sweeping on, nothing in the dial moves: no
+    frames (an entrance effect over it would redraw for each)."""
+    btn = _make(app)
+    assert btn._sweep_at is not None and btn._since(btn._sweep_at) < 0
+    assert not btn._clock.isActive()
+    assert btn._sweeping()                      # (its ticks hide till then)
+    btn._sweep_at -= btn._sweep_ms()[0] / 1000.0  # it starts
+    btn._run_clock()
+    assert btn._clock.isActive()
+    btn.close()
