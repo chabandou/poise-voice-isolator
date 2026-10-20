@@ -42,6 +42,9 @@ heavy = [m for m in ("numpy", "onnxruntime", "stream_denoiser.processor",
                      "stream_denoiser.engines.base")
          if m in sys.modules]
 print("heavy:", ",".join(heavy))
+# And leave the way Poise does (see run_gui).
+from stream_denoiser.gui import delete_window
+delete_window(win)
 """
 
 
