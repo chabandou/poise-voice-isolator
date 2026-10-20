@@ -33,6 +33,11 @@ too, and the dial's ring of ticks: see DialButton.set_ring_sink);
 otherwise, or with POISE_SKY_RASTER=1, it is painted here. With the
 ambient motion still (animations.ambient_ok: Reduce motion in Settings)
 there is no GPU view: one still sky is painted here and kept.
+
+For a breathing theme the view is the whole Home scene
+(widgets/home_scene.py): it draws the dial over the sky (the dial
+hands it its look: DialButton.set_face_sink) and the headline
+(mirror_text), so neither paints itself while it is there.
 """
 import math
 import time
@@ -45,7 +50,8 @@ from PyQt6.QtGui import (QBrush, QColor, QImage, QPainter, QPainterPath,
 from ..animations import Blend, EASE_BREATHE, FrameTimer, ambient_ok
 from ...logging_config import get_logger
 from ..scaling import ui_scale
-from ..themes import current as current_theme, style as theme_style
+from ..themes import (breathing, current as current_theme,
+                      style as theme_style)
 from .sky import BREATH_MS, PULSE_FADE_MS, NightSky, meteor_due
 
 TILE = 64.0                 # design px per tile
@@ -78,6 +84,11 @@ SKY_LIVE_FADE_MS = 2400     # gold <-> lavender, as slowly as it breathes
 SKY_GATHER_MS = 600         # into and out of the starting draw-in
 SKY_REVEAL_DELAY_MS = 300   # first show: the sky surfaces...
 SKY_REVEAL_MS = 2400        # ...slowly
+
+# What moves the headline the Home scene draws (see mirror_text).
+_TEXT_EVENTS = (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show,
+                QEvent.Type.Hide, QEvent.Type.FontChange,
+                QEvent.Type.PaletteChange, QEvent.Type.StyleChange)
 
 _logger = get_logger(__name__)
 
@@ -155,6 +166,7 @@ class PatternCard(QFrame):
         self._view_failed = self._making_view = False
         self._base_key = self._base = None
         self._still_key = self._still = None   # the sky holding still
+        self._text = self._text_swap = None    # see mirror_text
 
     def _sky_on(self) -> bool:
         return theme_style("backdrop") == "sky"
@@ -522,7 +534,9 @@ class PatternCard(QFrame):
             if not gpu_sky_wanted():
                 self._view_failed = True
                 return
-            view = SkyView(self)
+            from .home_scene import HomeScene, home_scene_wanted
+            scene = home_scene_wanted() and breathing()
+            view = (HomeScene if scene else SkyView)(self)
         except Exception as e:   # no Qt Quick here
             _logger.warning(f"Night sky on the CPU (no Qt Quick: {e})")
             self._view_failed = True
@@ -548,11 +562,21 @@ class PatternCard(QFrame):
         self._view_failed = True
         self._drop_view()
 
+    def _scene(self):
+        """The view, when it is the whole Home scene (else None)."""
+        view = self._view
+        return view if hasattr(view, "show_dial") else None
+
     def _hand_ring(self, to_view: bool) -> None:
-        """The dial's ring drawn by the GPU sky (to_view) or by the dial."""
+        """The dial's ring drawn by the GPU sky (to_view) or by the dial
+        (and in the Home scene the rest of the dial, and the headline)."""
+        scene = self._scene()
+        self._hand_text(to_view and scene is not None)
         origin = self._origin
         if origin is not None and hasattr(origin, "set_ring_sink"):
             origin.set_ring_sink(self._view.show_ring if to_view else None)
+            if scene is not None and hasattr(origin, "set_face_sink"):
+                origin.set_face_sink(scene.show_dial if to_view else None)
             # Where the ticks go follows the dial (an error line under the
             # headline moves it), even when no sky frame is coming.
             if to_view:
@@ -561,10 +585,74 @@ class PatternCard(QFrame):
                 origin.removeEventFilter(self)
 
     def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
+        kind = event.type()
         if (watched is self._origin and self._view is not None
-                and event.type() in (QEvent.Type.Move, QEvent.Type.Resize)):
+                and kind in (QEvent.Type.Move, QEvent.Type.Resize,
+                             QEvent.Type.Show, QEvent.Type.Hide)):
             self._show_sky_frame()
+            if self._scene() is not None:
+                watched.update()            # the scene's dial follows
+        elif watched is self._text and self._scene() is not None:
+            if kind == QEvent.Type.Paint:
+                return True                 # the scene draws it
+            if kind in _TEXT_EVENTS:
+                self._show_headline()
         return super().eventFilter(watched, event)
+
+    # -- the headline in the Home scene ------------------------------------------------
+    def mirror_text(self, label, swap=None) -> None:
+        """Have the Home scene draw `label` (the headline) whenever it is
+        there, following its text swaps (`swap`, its animations.TextSwap);
+        the label keeps its place in the layout and paints nothing."""
+        self._text, self._text_swap = label, swap
+        if swap is not None:
+            swap.changed.connect(self._show_headline)
+        if self._scene() is not None:
+            self._hand_text(True)
+
+    def _hand_text(self, to_scene: bool) -> None:
+        label = self._text
+        if label is None:
+            return
+        if to_scene:
+            label.installEventFilter(self)
+            label.setUpdatesEnabled(False)
+            self._show_headline()
+        else:
+            label.removeEventFilter(self)
+            label.setUpdatesEnabled(True)
+            label.update()
+
+    def _show_headline(self) -> None:
+        scene = self._scene()
+        if scene is not None and self._text is not None:
+            scene.show_headline(self._headline_state())
+
+    def _headline_state(self):
+        """The headline as the scene's SmokeText draws it (None while
+        the label is hidden)."""
+        label = self._text
+        if not label.isVisible():
+            return None
+        from PyQt6.QtGui import QPalette
+        from ..animations import smoke_spread
+        alpha, reach, dy = (self._text_swap.look() if self._text_swap
+                            is not None else (1.0, 0.0, 0.0))
+        box = label.geometry()
+        align = label.alignment()
+        return {
+            "text": label.text(), "font": label.font(),
+            "color": label.palette().color(QPalette.ColorRole.WindowText),
+            "x": float(box.x()), "y": float(box.y()) + dy,
+            "width": float(box.width()), "height": float(box.height()),
+            "horizontalAlignment": int(
+                (align & Qt.AlignmentFlag.AlignHorizontal_Mask).value),
+            "verticalAlignment": int(
+                (align & Qt.AlignmentFlag.AlignVertical_Mask).value),
+            "wrapMode": 1 if label.wordWrap() else 0,   # Text.WordWrap
+            "alpha": float(alpha),
+            "spread": reach * smoke_spread(1.0 - alpha),
+        }
 
     def _drop_view(self) -> None:
         if self._view is not None:
@@ -591,10 +679,14 @@ class PatternCard(QFrame):
             # The ring is drawn about the dial's exact centre (the sky's
             # is the centre pixel of the widget, half a pixel off).
             at = QPointF(origin.mapTo(self, QPoint(0, 0)))
+            k = min(origin.width(), origin.height()) / 300.0
             self._view.place_ring(at.x() + origin.width() / 2,
-                                  at.y() + origin.height() / 2,
-                                  min(origin.width(), origin.height())
-                                  / 300.0)
+                                  at.y() + origin.height() / 2, k)
+            scene = self._scene()
+            if scene is not None:
+                scene.place_dial(at.x() + origin.width() / 2 - 150.0 * k,
+                                 at.y() + origin.height() / 2 - 150.0 * k,
+                                 k)
             if not origin.ring_animating():
                 self._view.show_breath(origin.ring_breath())
 

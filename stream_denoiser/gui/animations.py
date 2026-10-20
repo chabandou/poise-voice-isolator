@@ -1319,6 +1319,12 @@ _SMOKE_SPREAD = cubic_bezier_fn(0.3, 0.6, 0.2, 1.0)
 _SMOKE_RINGS = ((0.45, 6, 0.2, 0.6), (1.0, 10, 0.11, 1.4))
 
 
+def smoke_spread(smoke: float) -> float:
+    """How far out (a fraction of the reach) smoke_wisps' copies are at
+    `smoke`."""
+    return _SMOKE_SPREAD(smoke)
+
+
 def smoke_wisps(smoke: float, reach: float):
     """Text dissolving like smoke, the stand-in for a CSS blur: at `smoke`
     0..1 (0 sharp), the sharp copy's alpha factor and [(alpha factor, dx,
@@ -1383,10 +1389,13 @@ class TextSwap(QObject):
     The swap owns the label's effect while busy; a label that already has
     another effect (e.g. a pulse) is changed instantly instead of nesting
     fades. `settled` fires once the shown text is final and unfaded, so a
-    caller can start such a pulse only after the swap.
+    caller can start such a pulse only after the swap. `changed` fires
+    whenever what the label shows moves (its text, or a step of a fade:
+    see look), for whoever draws it instead (the Home scene).
     """
 
     settled = pyqtSignal()
+    changed = pyqtSignal()
 
     OUT_MS = 90
     IN_MS = 170
@@ -1423,6 +1432,12 @@ class TextSwap(QObject):
     def text(self) -> str:
         """The text being shown, or about to be once the fade-out ends."""
         return self._text
+
+    def look(self):
+        """(opacity, smoke reach px, roll offset px) of the label now."""
+        dy = self._eff._dy if isinstance(self._eff, _RollEffect) else 0.0
+        smoke = self._smoke if isinstance(self._eff, _SmokeEffect) else 0.0
+        return self._opacity(), smoke, dy
 
     def set_text(self, text: str, on_apply=None) -> None:
         """Swap to text. on_apply() runs as the new text appears (e.g. to
@@ -1473,6 +1488,7 @@ class TextSwap(QObject):
         anim.setEasingCurve(self._easing)
         if isinstance(self._eff, _RollEffect):
             anim.valueChanged.connect(self._roll)
+        anim.valueChanged.connect(lambda _v: self.changed.emit())
         anim.finished.connect(self._step)
         self._anim = anim
         anim.start()
@@ -1489,6 +1505,7 @@ class TextSwap(QObject):
         if apply is not None:
             apply()
         self._label.setText(self._text)
+        self.changed.emit()
 
     def _step(self) -> None:
         if self._phase == "out":
@@ -1511,4 +1528,5 @@ class TextSwap(QObject):
                 pass
             self._eff = None
         self._phase = None
+        self.changed.emit()
         self.settled.emit()

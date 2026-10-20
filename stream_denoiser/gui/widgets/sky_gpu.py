@@ -265,6 +265,7 @@ class SkyView(QQuickWidget):
     if the scene graph cannot draw it here."""
 
     failed = pyqtSignal()
+    QML = SKY_QML          # the scene (see HomeScene for more in it)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -273,8 +274,8 @@ class SkyView(QQuickWidget):
         self.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
         self._ring_images = _RingImages()     # (kept: Qt does not own it)
         self.engine().addImageProvider("sky", self._ring_images)
-        self.setSource(QUrl.fromLocalFile(str(SKY_QML)))
-        self._root = self.rootObject()
+        self.setSource(QUrl.fromLocalFile(str(self.QML)))
+        self._root = self._sky_item()
         self._sent = {}
         self._ring_key = None
         self._ring_n = 0
@@ -282,6 +283,11 @@ class SkyView(QQuickWidget):
         window = self.quickWindow()
         window.sceneGraphError.connect(lambda *_: self.failed.emit())
         window.afterFrameEnd.connect(self._check_api)
+
+    def _sky_item(self):
+        """The ShaderEffect of sky.qml, whose properties are the sky's
+        uniforms."""
+        return self.rootObject()
 
     @property
     def ok(self) -> bool:

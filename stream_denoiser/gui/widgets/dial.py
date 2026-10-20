@@ -73,7 +73,8 @@ from .sky import (
     breath_pos, keyframes,
 )
 from ..animations import (
-    Blend, EASE_BREATHE, FrameTimer, ambient_ok, mix_rgba, smoke_wisps,
+    Blend, EASE_BREATHE, FrameTimer, ambient_ok, mix_rgba, smoke_spread,
+    smoke_wisps,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
@@ -314,6 +315,11 @@ class DialButton(PowerButton):
         self._ring = self._ring_key = None   # see _paint_ring
         self._disc_parts = {}                  # see _paint_disc_cached
         self._ring_sink = None            # see set_ring_sink
+        self._face_sink = None            # see set_face_sink
+        self._push_timer = QTimer(self)   # coalesces a frame's changes
+        self._push_timer.setSingleShot(True)
+        self._push_timer.setInterval(0)
+        self._push_timer.timeout.connect(self._push_face)
 
         # Eased states.
         self._swell = Blend(self, self.update, 220)
@@ -1215,6 +1221,9 @@ class DialButton(PowerButton):
                    QPointF(c + r1 * cs, c + r1 * sn))
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
+        if self._face_sink is not None:
+            self.update()                 # drawn by the Home scene
+            return
         w, h = self.width(), self.height()
         k = min(w, h) / REF
         col = self._colours(current_theme())
@@ -1244,6 +1253,111 @@ class DialButton(PowerButton):
         """
         self._ring_sink = sink
         self.update()
+
+    def set_face_sink(self, sink) -> None:
+        """Hand the whole look to `sink(face_state())`, with the ring to
+        the ring sink, instead of painting (the Home scene draws it: see
+        widgets/home_scene.py): each repaint asked for becomes one push
+        of both, at most one per pass of the event loop; sink(None) while
+        the dial is hidden. None paints here again. Breathing themes
+        only (face_state draws their dial)."""
+        self._face_sink = sink
+        self._push_timer.stop()
+        if sink is None:
+            super().update()
+        else:
+            self._push_face()
+
+    def update(self, *args):
+        """Repaint, or with a face sink push the next look to it."""
+        if self._face_sink is None:
+            super().update(*args)
+        elif not self._push_timer.isActive():
+            self._push_timer.start()
+
+    def _push_face(self) -> None:
+        self._push_timer.stop()
+        sink = self._face_sink
+        if sink is None:
+            return
+        if not self.isVisible():
+            sink(None)
+            return
+        t = self._ms()
+        col = self._colours(current_theme())
+        if self._ring_sink is not None:
+            self._ring_sink(self._over, self._ring_strokes(col, t, True),
+                            self.ring_breath(t))
+        sink(self.face_state(col, t))
+
+    def face_state(self, col=None, t=None) -> dict:
+        """The dial at this moment but for its ring, as the Home scene
+        draws it (assets/sky/HomeDial.qml's properties and disc.frag's
+        uniforms): what _paint_core and _paint_readout paint for a
+        breathing theme. Colours are QColors."""
+        if col is None:
+            col = self._colours(current_theme())
+        if t is None:
+            t = self._ms()
+        live = self._phase == "live"
+        press = max(0.0, min(1.0, self._press))
+        scale = (1.0 - 0.07 * press) * self._pop_scale(t)
+        hot = self._disc_hot.value
+        accent = col["accent"]
+        tint = QColor(accent if live else col["gold"])
+        tint.setAlphaF(0.45)
+        edge = QColor(accent)
+        edge.setAlphaF(0.2)
+        focus = QColor(col["focus"])
+        if not (self._key_focus and self.hasFocus()):
+            focus.setAlpha(0)
+        k = min(self.width(), self.height()) / REF
+        dpr = self.devicePixelRatioF()
+
+        labels, dots = [], []
+        mist = self._label_mist.value
+        leaving = 1.0 - _clamp(mist / 0.6)
+        arriving = _clamp((mist - 0.35) / 0.65)
+        for index, alpha in ((self._label_from, leaving),
+                             (self._label_to, arriving)):
+            if alpha <= 0.01:
+                continue
+            if index == 1:
+                dots = [list(look) for look in
+                        self._dot_looks(col, t, 186.0, alpha)]
+            else:
+                labels.append([LABELS[index],
+                               col["error"] if index == 3 else col["text"],
+                               alpha])
+
+        minus_x, digits, unit_x, bump = self._readout_breath_layout()
+        gentle, strong = self._gentle_hot.value, self._strong_hot.value
+        return {
+            # The disc (disc.frag).
+            "faceTop": col["pill"].lighter(132 + int(10 * hot)),
+            "faceMid": col["pill"].lighter(100 + int(8 * hot)),
+            "faceEdge": mix_rgba(edge, tint, hot),
+            "accentRgb": accent, "rimRgb": col["focus"],
+            "charge": min(1.0, self._charge(t)),
+            "focusRgba": focus,
+            "glyphRgba": self._glyph_colour(col, t),
+            "stem": 3.0 * press - 1.5 * hot,
+            "unit": 1.0 / max(1e-6, k * dpr * scale),
+            # The rest (HomeDial.qml).
+            "coreScale": scale, "shake": self._shake_px(t),
+            "labelFont": self._heading(20, 114.0),
+            "bigFont": self._heading(30, 104.0),
+            "smallFont": self._small_font(),
+            "labels": labels, "dots": dots,
+            "digits": [[text, x, alpha, SMOKE_PX * smoke_spread(1.0 - alpha)]
+                       for text, x, alpha in digits],
+            "minusX": minus_x, "unitX": unit_x, "bump": bump,
+            "textColour": col["text"], "captionColour": col["muted"],
+            "gentleColour": mix_rgba(col["muted"], col["text"], gentle),
+            "gentleX": 52.0 - 3.0 * gentle,
+            "strongColour": mix_rgba(col["muted"], col["text"], strong),
+            "strongX": 248.0 + 3.0 * strong,
+        }
 
     def ring_frame(self):
         """(stretch in degrees, strokes, breath): the ring at this moment
@@ -1685,14 +1799,27 @@ class DialButton(PowerButton):
                                   alpha)
 
     def _paint_dots(self, p, col, t, cy, fade: float = 1.0) -> None:
-        """The "..." label: lit in step with the comet while starting,
-        settling right to left while stopping. (Breath: they breathe a
-        beat apart, then settle.)"""
-        c = REF / 2
+        """The "..." label (see _dot_looks)."""
         p.setPen(Qt.PenStyle.NoPen)
+        for x, y, r, colour, glow_r, glow in self._dot_looks(col, t, cy,
+                                                              fade):
+            if glow_r > 0.0:   # its glow at the top of the breath
+                p.setBrush(glow)
+                p.drawEllipse(QPointF(x, y), glow_r, glow_r)
+            p.setBrush(colour)
+            p.drawEllipse(QPointF(x, y), r, r)
+
+    def _dot_looks(self, col, t, cy, fade: float = 1.0) -> list:
+        """The "..." label's dots: lit in step with the comet while
+        starting, settling right to left while stopping. (Breath: they
+        breathe a beat apart, then settle.) As (x, y, r, colour, glow r
+        (0: none), glow colour) each."""
+        c = REF / 2
         breath = breathing()
+        looks = []
         for j in range(3):
             colour, alpha, lift, scale = QColor(col["text"]), 0.35, 0.0, 1.0
+            glow_r, glow = 0.0, QColor(0, 0, 0, 0)
             if breath and self._phase == "starting" and ambient_ok():
                 colour, alpha, scale = QColor(col["gold"]), 0.25, 0.8
                 u = t - j * DOT_BREATH_STEP
@@ -1701,10 +1828,9 @@ class DialButton(PowerButton):
                     v = (_breath(ph / 0.35) if ph < 0.35
                          else 1.0 - _breath((ph - 0.35) / 0.65))
                     alpha, scale = 0.25 + 0.75 * v, 0.8 + 0.4 * v
-                    if v > 0.01:   # its glow at the top of the breath
-                        p.setBrush(self._tone(col["gold"], 0.3 * v * fade))
-                        p.drawEllipse(QPointF(c + (j - 1) * 13.0, cy),
-                                      6.0 * scale, 6.0 * scale)
+                    if v > 0.01:
+                        glow = self._tone(col["gold"], 0.3 * v * fade)
+                        glow_r = 6.0 * scale
             elif breath and self._phase == "stopping":
                 q = _breath(_clamp((t - j * DOT_SETTLE_STEP) / DOT_SETTLE_MS))
                 colour = mix_rgba(col["accent"], col["gold"], q)
@@ -1729,9 +1855,9 @@ class DialButton(PowerButton):
                 colour = mix_rgba(col["accent"], col["gold"], q)
                 alpha, lift, scale = 1.0 - 0.75 * q, 3.0 * q, 1.0 - 0.3 * q
             colour.setAlphaF(colour.alphaF() * alpha * fade)
-            p.setBrush(colour)
-            r = 3.0 * scale
-            p.drawEllipse(QPointF(c + (j - 1) * 13.0, cy + lift), r, r)
+            looks.append((c + (j - 1) * 13.0, cy + lift, 3.0 * scale,
+                          colour, glow_r, glow))
+        return looks
 
     def _paint_readout(self, p, col) -> None:
         """"-50 dB" with rolling digits, its caption and the end labels."""
@@ -1740,8 +1866,7 @@ class DialButton(PowerButton):
         else:
             self._paint_digits(p, col)
         c = REF / 2
-        small = QFont(self.font())
-        small.setPixelSize(12)
+        small = self._small_font()
         self._centered_text(p, "reduction strength", c, 294.0, small,
                             col["muted"])
         for label, x, blend, shift in (
@@ -1751,39 +1876,55 @@ class DialButton(PowerButton):
             self._centered_text(p, label, x + shift * blend.value, 278.0,
                                 small, tone)
 
+    def _small_font(self) -> QFont:
+        """The caption's and the end labels' face."""
+        small = QFont(self.font())
+        small.setPixelSize(12)
+        return small
+
+    def _readout_breath_layout(self):
+        """Breath: (the minus's x, [(digit, x, alpha)] for each digit
+        shown, misting ones too, "dB"'s x, the bump's scale)."""
+        c = REF / 2
+        metrics = QFontMetricsF(self._heading(30, 104.0))
+        minus_w = metrics.horizontalAdvance("-")
+        digit_w = max(metrics.horizontalAdvance(str(d)) for d in range(10))
+        unit_w = metrics.horizontalAdvance("dB")
+        gap = 7.0
+        minus_x = c - (minus_w + 2 * digit_w + gap + unit_w) / 2
+        x = minus_x + minus_w
+        now = time.monotonic()
+        digits = []
+        for column in self._mists:
+            for digit, entry in sorted(column.items()):
+                text = str(digit)
+                left = x + (digit_w - metrics.horizontalAdvance(text)) / 2
+                digits.append((text, left, self._mist_alpha(entry, now)))
+            x += digit_w
+        bump = _rise_fall(self._since(self._bump_at) / BUMP_MS, 0.4)
+        return minus_x, digits, x + gap, 1.0 + 0.04 * bump
+
     def _paint_readout_breath(self, p, col) -> None:
         """Breath: each digit that changes dissolves like smoke as the
         next condenses in its place (no roll, no drift)."""
         c = REF / 2
         big = self._heading(30, 104.0)
-        metrics = QFontMetricsF(big)
-        minus_w = metrics.horizontalAdvance("-")
-        digit_w = max(metrics.horizontalAdvance(str(d)) for d in range(10))
-        unit_w = metrics.horizontalAdvance("dB")
-        gap = 7.0
-        x = c - (minus_w + 2 * digit_w + gap + unit_w) / 2
         baseline = 276.0
+        minus_x, digits, unit_x, bump = self._readout_breath_layout()
         p.save()
-        bump = _rise_fall(self._since(self._bump_at) / BUMP_MS, 0.4)
-        if bump > 0:
+        if bump > 1.0:
             p.translate(c, baseline - 11)
-            p.scale(1 + 0.04 * bump, 1 + 0.04 * bump)
+            p.scale(bump, bump)
             p.translate(-c, -(baseline - 11))
         p.setFont(big)
         p.setPen(col["text"])
-        p.drawText(QPointF(x, baseline), "-")
-        x += minus_w
-        now = time.monotonic()
-        for column in self._mists:
-            for digit, entry in sorted(column.items()):
-                text = str(digit)
-                left = x + (digit_w - metrics.horizontalAdvance(text)) / 2
-                self._smoked_text(p, text, left, baseline, big, col["text"],
-                                  self._mist_alpha(entry, now))
-            x += digit_w
+        p.drawText(QPointF(minus_x, baseline), "-")
+        for text, left, alpha in digits:
+            self._smoked_text(p, text, left, baseline, big, col["text"],
+                              alpha)
         p.setFont(big)
         p.setPen(col["text"])
-        p.drawText(QPointF(x + gap, baseline), "dB")
+        p.drawText(QPointF(unit_x, baseline), "dB")
         p.restore()
 
     def _smoked_text(self, p, text, x, baseline, font, colour,
