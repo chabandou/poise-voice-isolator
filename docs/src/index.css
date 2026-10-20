@@ -461,6 +461,9 @@ body {
 :root {
 	--breath-ease: cubic-bezier(0.45, 0, 0.25, 1);
 	--reveal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	/* Every scroll-in entrance's durations and delays, staggers included,
+	   are multiplied by this: raise it to slow them all together. */
+	--reveal-pace: 1.2;
 }
 
 /* Only hide when JS is running (index.html adds .js); without JS the
@@ -470,32 +473,32 @@ body {
 }
 
 [data-reveal][data-revealed] {
-	animation: reveal-up 820ms var(--reveal-ease) var(--reveal-delay, 0ms) backwards;
+	animation: reveal-up calc(820ms * var(--reveal-pace)) var(--reveal-ease) calc(var(--reveal-delay, 0ms) * var(--reveal-pace)) backwards;
 }
 
 [data-reveal="fade"][data-revealed] {
 	animation-name: reveal-fade;
-	animation-duration: 1100ms;
+	animation-duration: calc(1100ms * var(--reveal-pace));
 }
 
 [data-reveal="scale"][data-revealed] {
 	animation-name: reveal-scale;
-	animation-duration: 950ms;
+	animation-duration: calc(950ms * var(--reveal-pace));
 }
 
 [data-reveal="line"][data-revealed] {
 	animation-name: reveal-line;
-	animation-duration: 900ms;
+	animation-duration: calc(900ms * var(--reveal-pace));
 }
 
 [data-reveal="tilt"][data-revealed] {
 	animation-name: reveal-tilt;
-	animation-duration: 1100ms;
+	animation-duration: calc(1100ms * var(--reveal-pace));
 }
 
 [data-reveal="spin"][data-revealed] {
 	animation-name: reveal-spin;
-	animation-duration: 1300ms;
+	animation-duration: calc(1300ms * var(--reveal-pace));
 }
 
 @keyframes reveal-up {
@@ -955,32 +958,32 @@ body {
 
 	[data-revealed] .emblem__face {
 		animation:
-			emblem-stroke 620ms var(--manim-ease) backwards,
-			emblem-fill 700ms var(--manim-ease) 380ms backwards;
+			emblem-stroke calc(620ms * var(--reveal-pace)) var(--manim-ease) backwards,
+			emblem-fill calc(700ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__tick {
-		animation: emblem-stroke 380ms var(--manim-ease) calc(420ms + var(--i) * 9ms) backwards;
+		animation: emblem-stroke calc(380ms * var(--reveal-pace)) var(--manim-ease) calc((420ms + var(--i) * 9ms) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__wave {
-		animation: emblem-stroke 1050ms var(--manim-ease) 380ms backwards;
+		animation: emblem-stroke calc(1050ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__dash {
 		transform-box: fill-box;
 		transform-origin: center;
-		animation: emblem-dash 320ms var(--reveal-ease) calc(1250ms + var(--i) * 60ms) backwards;
+		animation: emblem-dash calc(320ms * var(--reveal-pace)) var(--reveal-ease) calc((1250ms + var(--i) * 60ms) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__needle {
 		transform-box: fill-box;
 		transform-origin: center;
-		animation: emblem-needle 560ms cubic-bezier(0.34, 1.56, 0.64, 1) 1300ms backwards;
+		animation: emblem-needle calc(560ms * var(--reveal-pace)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(1300ms * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__mark {
-		animation: emblem-bloom 900ms var(--manim-ease) 1300ms;
+		animation: emblem-bloom calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(1300ms * var(--reveal-pace));
 	}
 }
 
