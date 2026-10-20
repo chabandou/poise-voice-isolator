@@ -5,59 +5,44 @@ A DenoiseEngine wraps one model (DeepFilterNet3 and GTCRN via ONNX Runtime,
 RNNoise via librnnoise) behind a common frame-based interface used by
 DenoiserAudioProcessor.
 """
-from typing import List, Optional
-import sys
+import importlib
 
-from .base import DenoiseEngine
-from .deepfilternet3 import (
-    DeepFilterNet3Engine,
-    DEFAULT_DF3_ONNX,
-)
-from .gtcrn import GTCRNEngine, GTCRN_ONNX
-from .rnnoise import RNNoiseEngine
+from .availability import available_models, model_unavailable_reason
 from ..constants import (
     ALL_MODELS,
+    DEFAULT_DF3_ONNX,
     DEFAULT_MODEL,
     MODEL_DEEPFILTERNET3,
     MODEL_GTCRN,
     MODEL_RNNOISE,
 )
 
-
-def available_models() -> List[str]:
-    """Model names usable on this machine (needs model files / native lib)."""
-    models = []
-    if DeepFilterNet3Engine.is_available():
-        models.append(MODEL_DEEPFILTERNET3)
-    if GTCRNEngine.is_available():
-        models.append(MODEL_GTCRN)
-    if RNNoiseEngine.is_available():
-        models.append(MODEL_RNNOISE)
-    return models
+# The engines (numpy, ONNX Runtime) load on first use: importing this
+# package (the UI does, to list the models) loads only the light names.
+_LAZY = {
+    "DenoiseEngine": ".base",
+    "DeepFilterNet3Engine": ".deepfilternet3",
+    "GTCRNEngine": ".gtcrn",
+    "RNNoiseEngine": ".rnnoise",
+}
 
 
-def model_unavailable_reason(name: str) -> Optional[str]:
-    """
-    Why a model cannot be used on this machine, or None if available.
+def __getattr__(name):
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(module, __name__), name)
+    globals()[name] = value
+    return value
 
-    Used by the UI to explain unavailable entries (with install hints).
-    """
-    key = (name or "").strip().lower()
-    if key == MODEL_DEEPFILTERNET3 and not DeepFilterNet3Engine.is_available():
-        return ("model files not found "
-                "(denoiser_model_df3.onnx + denoiser_model_df3_states.npz)")
-    if key == MODEL_GTCRN and not GTCRNEngine.is_available():
-        return f"model file not found ({GTCRN_ONNX})"
-    if key == MODEL_RNNOISE and not RNNoiseEngine.is_available():
-        if sys.platform == "win32":
-            return "rnnoise.dll not found next to the app (reinstall Poise)"
-        return "librnnoise not installed (e.g. 'sudo pacman -S rnnoise' on Arch)"
-    return None
+
+def __dir__():
+    return sorted(set(globals()) | set(_LAZY))
 
 
 def create_engine(name: str = DEFAULT_MODEL,
                   onnx_path: str = DEFAULT_DF3_ONNX,
-                  atten_lim_db: float = -60.0) -> DenoiseEngine:
+                  atten_lim_db: float = -60.0) -> "DenoiseEngine":
     """
     Create a denoising engine by model name.
 
@@ -74,6 +59,10 @@ def create_engine(name: str = DEFAULT_MODEL,
         FileNotFoundError: Model file not found
         RuntimeError: RNNoise library unavailable
     """
+    from .deepfilternet3 import DeepFilterNet3Engine
+    from .gtcrn import GTCRNEngine
+    from .rnnoise import RNNoiseEngine
+
     key = (name or DEFAULT_MODEL).strip().lower()
     if key == MODEL_DEEPFILTERNET3:
         if onnx_path == DEFAULT_DF3_ONNX:
