@@ -690,8 +690,15 @@ body {
 	animation: sky-star-idle 7s var(--breath-ease) infinite;
 }
 
-.sky--live .sky__star {
-	animation: sky-star-kick 8s infinite;
+.sky--live .sky__star,
+.sky--live .sky__ring {
+	animation: sky-swell 8s infinite;
+}
+
+/* The ring's parts scale about the dial's centre, their group's origin. */
+.sky__ring {
+	transform-box: view-box;
+	transform-origin: 0 0;
 }
 
 .sky__star-lines {
@@ -763,12 +770,13 @@ body {
 	45% { transform: scale(1.02); }
 }
 
-/* Each pulse kicks the star round; it settles before the next. */
-@keyframes sky-star-kick {
-	0% { transform: rotate(0deg); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
-	9% { transform: rotate(7deg); animation-timing-function: ease; }
-	75% { transform: rotate(1deg); animation-timing-function: ease-in; }
-	100% { transform: rotate(0deg); }
+/* The star and the ring swell 5% as each pulse's band reaches them and
+   settle back, dipping a hair under on the way (sky.py LIVE_SWELL). */
+@keyframes sky-swell {
+	0% { transform: scale(1); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+	2% { transform: scale(1.05); animation-timing-function: cubic-bezier(0.45, 0, 0.3, 1); }
+	10% { transform: scale(0.995); animation-timing-function: ease-in-out; }
+	16%, 100% { transform: scale(1); }
 }
 
 @keyframes sky-bead {

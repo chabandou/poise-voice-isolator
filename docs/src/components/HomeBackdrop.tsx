@@ -343,7 +343,7 @@ const NightSky = ({ anchor, live }: { anchor: DialAnchor; live: boolean }) => {
 
 				{/* The ring with its beads, and the eight-point star turning slowly. */}
 				<g className={`sky__tone ${live ? 'text-accent' : 'text-secondary'}`} fill="none" stroke="currentColor">
-					<circle opacity="0.13" r={RING_R} strokeWidth={Math.max(1, k) / k} />
+					<circle className="sky__ring" opacity="0.13" r={RING_R} strokeWidth={Math.max(1, k) / k} />
 					<g className="sky__turn">
 						<g className="sky__star">
 							<g className="sky__star-lines" strokeWidth="1">
@@ -358,7 +358,7 @@ const NightSky = ({ anchor, live }: { anchor: DialAnchor; live: boolean }) => {
 							)}
 						</g>
 					</g>
-					<g fill="currentColor" stroke="none">
+					<g className="sky__ring" fill="currentColor" stroke="none">
 						{beads.map((b) => (
 							<circle key={b.i} className="sky__bead" cx={b.x} cy={b.y} r="1.8" style={{ animationDelay: ms(b.i * 750 - 6000) }} />
 						))}
@@ -369,14 +369,16 @@ const NightSky = ({ anchor, live }: { anchor: DialAnchor; live: boolean }) => {
 					<>
 						{/* The charge the ring holds, gathering before each pulse (the
 						    star's turns with it, above). */}
-						<g className="sky__charge text-accent-light" fill="none" stroke="currentColor">
-							<circle opacity="0.04" r={RING_R} strokeWidth="10" />
-							<circle opacity="0.08" r={RING_R} strokeWidth="4" />
-							<circle opacity="0.32" r={RING_R} strokeWidth="1" />
+						<g className="sky__ring">
+							<g className="sky__charge text-accent-light" fill="none" stroke="currentColor">
+								<circle opacity="0.04" r={RING_R} strokeWidth="10" />
+								<circle opacity="0.08" r={RING_R} strokeWidth="4" />
+								<circle opacity="0.32" r={RING_R} strokeWidth="1" />
+							</g>
 						</g>
 
-						{/* The beads flare as the band passes them. */}
-						<g className="text-accent" fill="currentColor">
+						{/* The beads flare as the band passes them, riding the ring's swell. */}
+						<g className="sky__ring text-accent" fill="currentColor">
 							{beads.map((b) => (
 								<circle key={b.i} className="sky__flare" cx={b.x} cy={b.y} r="3.2" />
 							))}
