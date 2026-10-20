@@ -51,6 +51,7 @@ WIN_RENDER_FILL_SAMPLES = 0
 # Windows backend: "auto" (native path when available, else PortAudio),
 # "wasapi" or "portaudio". Override with POISE_BACKEND or --backend.
 WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
+BACKEND_ENV = "POISE_BACKEND"     # picks the backend on Linux and Windows
 DEFAULT_FRAME_SIZE = 480
 
 # Model / engine selection
@@ -59,6 +60,10 @@ MODEL_GTCRN = "gtcrn"
 MODEL_RNNOISE = "rnnoise"
 ALL_MODELS = (MODEL_DEEPFILTERNET3, MODEL_GTCRN, MODEL_RNNOISE)
 DEFAULT_MODEL = MODEL_DEEPFILTERNET3
+# The vendored model files (here, not in engines/, so the UI can name
+# them without loading the engines and numpy).
+DEFAULT_DF3_ONNX = 'denoiser_model_df3.onnx'
+GTCRN_ONNX = 'gtcrn.onnx'
 
 # Display info per model (single source for TUI picker, GUI tooltips, ...).
 # Future engines only need an entry here to show up everywhere.

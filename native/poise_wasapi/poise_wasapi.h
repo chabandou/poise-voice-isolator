@@ -125,4 +125,25 @@ uint32_t poise_holes_push(poise_holes *h, poise_bridge *b, const float *in,
 		uint32_t n, double now, uint32_t room);
 void poise_holes_get_stats(poise_holes *h, uint64_t *out, uint32_t n);
 
+/*
+ * The volume mirror (see "volume mirror" in poise_wasapi.c): CABLE
+ * Input's level and mute, which VB-Cable ignores, and the output
+ * device's kept equal both ways while it lives, starting from the output
+ * device's. Names as for poise_wasapi_new. Returns NULL with a message
+ * in err on failure.
+ */
+typedef struct poise_volmirror poise_volmirror;
+poise_volmirror *poise_volmirror_new(const char *cable, const char *output,
+		char *err, size_t errlen);
+void poise_volmirror_free(poise_volmirror *m);
+
+/* A render endpoint's volume control, read or set as anyone would (tests
+ * and diagnostics): level is the 0..1 scalar Windows shows as a
+ * percentage, mute 0 or 1; for set, a negative value leaves that one as
+ * it is. Return 0, or 1 with a message in err. */
+int poise_volume_get(const char *name, float *level, int *mute,
+		char *err, size_t errlen);
+int poise_volume_set(const char *name, float level, int mute,
+		char *err, size_t errlen);
+
 #endif

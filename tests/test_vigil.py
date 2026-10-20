@@ -67,12 +67,263 @@ def test_band_arrival_follows_the_band(app):
     assert times == sorted(times) and 0 < times[0] < times[-1] < sky.BAND_MS
 
 
+def test_star_outline_draws_what_the_rotated_rect_did(app):
+    """The stars' squares are drawn as lines and corner pieces (far
+    cheaper rotated): the same pixels as stroking the rect, give or take
+    a seam's rounding where the pieces meet."""
+    import numpy as np
+    from PyQt6.QtCore import QRectF, Qt
+    from PyQt6.QtGui import QColor, QImage, QPainter, QPen
+    from stream_denoiser.gui.widgets.sky import _square_outline
+
+    def draw(width, pieces):
+        image = QImage(420, 420, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.translate(210, 210)
+        p.rotate(17.0)
+        pen = QPen(QColor(200, 180, 255, 70), width)
+        if pieces:
+            flat, brush, edges, corners = _square_outline(150.0, pen)
+            p.setPen(flat)
+            p.drawLines(edges)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(brush)
+            p.drawPath(corners)
+        else:
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(QRectF(-150, -150, 300, 300))
+        p.end()
+        bits = image.constBits()
+        bits.setsize(image.sizeInBytes())
+        return np.frombuffer(bits, np.uint8).astype(int)
+
+    for width in (1.0, 4.0, 10.0):
+        rect, pieces = draw(width, False), draw(width, True)
+        diff = np.abs(rect - pieces)
+        assert (rect > 0).sum() > 1000                # something was drawn
+        assert diff.max() <= 8, width
+        assert (diff > 2).sum() < 0.01 * (rect > 0).sum(), width
+
+
 def test_keyframes_interpolate_between_frames(app):
     from stream_denoiser.gui.widgets.sky import CHARGE, keyframes
     assert keyframes(0.0, CHARGE) == 1.0          # full as the pulse leaves
     assert keyframes(0.5, CHARGE) == 0.0          # gone mid-breath
     assert 0.0 < keyframes(0.9, CHARGE) < 1.0     # gathering again
     assert keyframes(1.0, CHARGE) == 1.0
+
+
+def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
+    from PyQt6.QtCore import QPointF, QRectF
+    from PyQt6.QtGui import QColor
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+    seen = []    # (glow, star scale) per frame
+    box = QRectF(0, 0, 900, 520)
+    later = sky.BREATH_MS     # the second pulse on (the first lights up)
+    cycles = [later + ms for ms in (0, 500, 1000, 4000, 6000, 7000, 7900)]
+    for cycle in cycles:
+        frame = night.frame(box, QPointF(450, 280), 1.0, 1.0, 1000.0, {
+            "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
+            "gather_ms": 0.0, "cycle": cycle, "stopped": None,
+            "gain": lambda index: 1.0, "moving": True,
+            "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
+            "accent_light": QColor("#e4dcff")})
+        seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
+    glow = {cycle - later: g for cycle, (g, _) in zip(cycles, seen)}
+    assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
+    assert glow[0] == pytest.approx(1.0)              # full as it leaves
+    assert glow[4000] == 0.0                          # gone mid-breath
+    assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again
+
+
+def test_the_star_holds_its_size_starting_and_lights_with_the_first_pulse(
+        app):
+    from PyQt6.QtCore import QPointF, QRectF
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+
+    def frame(gather_ms, cycle, live):
+        look = dict(_idle_look(), live=live, gather=1.0 - live,
+                    gather_ms=gather_ms, cycle=cycle)
+        return night.frame(QRectF(0, 0, 900, 520), QPointF(450, 280), 1.0,
+                           1.0, 1000.0, look)
+
+    for ms in range(0, sky.GATHER_MS, 150):          # loading, switching
+        f = frame(ms, None, 0.0)
+        assert f["geometry"]["stars_scale"] == 1.0
+        assert f["glow"] == 0.0
+    assert frame(0.0, None, 0.4)["glow"] == 0.0       # dark until it leaves
+    lit = [frame(0.0, ms, 0.4)["glow"]
+           for ms in range(0, sky.FIRST_GLOW_MS + 1, 20)]
+    assert lit[0] == 0.0 and lit == sorted(lit)       # lights up quickly...
+    assert lit[-1] == pytest.approx(1.0, abs=0.02)    # ...full with the pulse
+
+
+def _idle_look(moving=True):
+    from PyQt6.QtGui import QColor
+    return {"live": 0.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
+            "gather_ms": 0.0, "cycle": None, "stopped": None,
+            "gain": lambda index: 1.0, "moving": moving,
+            "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
+            "accent_light": QColor("#e4dcff")}
+
+
+def test_a_shooting_star_crosses_each_span_once(app):
+    from stream_denoiser.gui.widgets import sky
+    every, span = sky.METEOR_EVERY_MS, sky.METEOR_MS
+    starts = []
+    for index in range(40):
+        start, _ = sky.meteor_flight(index * every + 1.0)
+        assert index * every < start < start + span < (index + 1) * every
+        assert sky.meteor_flight(start + span / 2)[0] == start
+        starts.append(start)
+    assert min(b - a for a, b in zip(starts, starts[1:])) > span
+    start = starts[5]
+    assert sky.meteor_due(start + span / 2)            # crossing
+    assert sky.meteor_due(start - 10.0, 33.0)          # about to leave
+    assert not sky.meteor_due(start - 100.0, 33.0)
+    assert not sky.meteor_due(start + span + 1.0)
+
+
+# The Home card at 1100 x 720: its sky's box and the dial (centre, k).
+_CARD = (1.0, 1.0, 839.0, 478.0)
+_DIAL = (420.5, 271.0, 0.94)
+
+
+def _meteor_at(night, start, u, moving=True):
+    from PyQt6.QtCore import QPointF, QRectF
+    from stream_denoiser.gui.widgets import sky
+    cx, cy, k = _DIAL
+    return night.frame(QRectF(*_CARD), QPointF(cx, cy), k, 1.0,
+                       start + u * sky.METEOR_MS, _idle_look(moving))["meteor"]
+
+
+def _trail_length(m):
+    """The trail's length along its arc."""
+    from stream_denoiser.gui.widgets import sky
+    points = [sky.arc_point(m["arc"], m["s0"] + (m["s1"] - m["s0"]) * i / 24)
+              for i in range(25)]
+    return sum(math.hypot(b.x() - a.x(), b.y() - a.y())
+               for a, b in zip(points, points[1:]))
+
+
+def _first_flight(night):
+    from stream_denoiser.gui.widgets import sky
+    return next(s for s, _ in (sky.meteor_flight(i * sky.METEOR_EVERY_MS + 1.0)
+                               for i in range(30))
+                if _meteor_at(night, s, 0.3) is not None)
+
+
+def test_a_shooting_star_arcs_down_a_side_clear_of_the_dial(app):
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+    width = _CARD[2]
+    cx, cy, k = _DIAL
+    clear = sky.METEOR_CLEAR * k
+    flown = 0
+    for index in range(30):
+        start, _ = sky.meteor_flight(index * sky.METEOR_EVERY_MS + 1.0)
+        if _meteor_at(night, start, 0.3) is None:
+            continue                               # no room this time
+        flown += 1
+        assert _meteor_at(night, start, -0.01) is None   # only in flight
+        assert _meteor_at(night, start, 1.0) is None
+        assert _meteor_at(night, start, 0.3, moving=False) is None
+        frames = [_meteor_at(night, start, i / 40) for i in range(1, 36)]
+        frames = [m for m in frames if m is not None]
+        for m in frames:                           # clear of dial, headline
+            for s in (m["s0"], (m["s0"] + m["s1"]) / 2, m["s1"]):
+                point = sky.arc_point(m["arc"], s)
+                dx, dy = point.x() - cx, point.y() - cy
+                assert math.hypot(dx, dy) > clear - 0.5
+                assert abs(dx) > clear - 0.5 or dy > 0
+        a, b, c = night._meteor_path[0]
+        assert math.hypot(c.x() - a.x(), c.y() - a.y()) >= (
+            sky.METEOR_TRAVEL[0] * width - 0.5)
+        assert b.y() < (a.y() + c.y()) / 2         # bowed up: an arc
+        # Rising into view slowing, then diving faster: the drop per step
+        # grows all the way.
+        ys = [sky.arc_point((a, b, c), s / 10).y() for s in range(11)]
+        drops = [y1 - y0 for y0, y1 in zip(ys, ys[1:])]
+        assert drops == sorted(drops) and drops[0] < 0.8 * drops[-1]
+        assert max(_trail_length(m) for m in frames) >= 0.2 * width
+    assert flown == 30                             # room every time here
+
+
+def test_a_shooting_star_surfaces_then_dives(app):
+    from stream_denoiser.gui.widgets import sky
+    night = sky.NightSky()
+    start = _first_flight(night)
+    at = lambda u: _meteor_at(night, start, u)     # noqa: E731
+    us = [i / 50 for i in range(1, 50)]
+    frames = [(u, at(u)) for u in us]
+    frames = [(u, m) for u, m in frames if m is not None]
+    heads = [(u, m["head"]) for u, m in frames]
+    peak = max(heads, key=lambda h: h[1])[0]
+    assert 0.5 <= peak <= 0.62                     # a late peak...
+    rise = next(u for u, h in heads if h > 0.5 * sky.METEOR_ALPHA)
+    fall = next(u for u, h in heads if u > peak
+                and h < 0.5 * sky.METEOR_ALPHA)
+    assert fall - peak < peak - rise               # ...falling away faster
+    # Nearer as it surfaces: bigger and whiter; smaller as it dives.
+    sizes = {u: m["head_r"] for u, m in frames}
+    assert sizes[0.2] < sizes[0.56] > sizes[0.8]
+    assert at(0.56)["white"] > at(0.2)["white"]
+    # The trail grows as it surfaces and is drawn down after it as it
+    # dives, its light lagging the head's.
+    lengths = {u: _trail_length(m) for u, m in frames}
+    assert lengths[0.2] < lengths[0.6] > lengths[0.84]
+    late = at(0.92)
+    assert late["head"] == 0.0 and late["colour"].alphaF() > 0
+    # The head never stops: an even pace along the arc.
+    assert at(0.7)["s1"] == pytest.approx(0.7)
+    lit = [sky.meteor_trail_at(t) for t in (0.0, 0.5, 1.0)]
+    assert lit[0][0] == 0.0 < lit[1][0] < lit[2][0] == 1.0   # by the head
+    assert lit[0][2] < lit[1][2] < lit[2][2] == 1.0           # tapering
+
+
+def test_the_raster_sky_paints_the_shooting_star(app, monkeypatch):
+    from PyQt6.QtCore import QPointF, QRectF, Qt
+    from PyQt6.QtGui import QImage, QPainter, QPainterPath
+    from stream_denoiser.gui.widgets import sky
+    box, (cx, cy, k) = QRectF(*_CARD), _DIAL
+    centre = QPointF(cx, cy)
+    clip = QPainterPath()
+    clip.addRect(box)
+    night = sky.NightSky()
+    start = _first_flight(night)
+    now = start + 0.56 * sky.METEOR_MS             # at its brightest
+    head = _meteor_at(night, start, 0.56)["front"]
+
+    def painted():
+        image = QImage(842, 481, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.black)
+        p = QPainter(image)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        night.paint(p, box, clip, centre, k, 1.0, now, _idle_look())
+        p.end()
+        return image.pixelColor(round(head.x()), round(head.y())).lightness()
+
+    lit = painted()
+    monkeypatch.setattr(sky.NightSky, "_meteor",
+                        staticmethod(lambda *args: None))
+    assert lit > painted() + 40
+
+
+def test_the_charge_fades_from_where_stop_caught_it(app):
+    from stream_denoiser.gui.widgets import sky
+    assert sky.charge(None) == 0.0                # dark until the first
+    stopped = sky.BREATH_MS * 0.99                # just before a pulse
+    held = sky.charge(stopped)
+    assert held > 0.9
+    after = [sky.charge(stopped + ms, stopped) for ms in range(0, 700, 20)]
+    assert after[0] == pytest.approx(held)
+    assert after == sorted(after, reverse=True)   # fades, no jump at the
+    assert after[-1] == 0.0                       # breath it never takes
 
 
 # -- the dial on the breathing rhythm --------------------------------------------
@@ -134,11 +385,20 @@ def test_label_and_readout_mist_instead_of_rolling(app, vigil):
     _pump(app, 0.7)
     assert dial._label_mist.value == pytest.approx(1.0)
     dial.set_transitioning(False)
-    dial._nudge_to(dial.strength_db() + 1)        # one step gentler
-    assert len(dial._mists) == 2                  # old misting out, new in
+    dial._nudge_to(-50)
+    _pump(app, 0.7)
+    dial._nudge_to(-49)                           # both digits change
+    assert [len(column) for column in dial._mists] == [2, 2]
     dial.grab()
-    _pump(app, 0.9)
-    assert list(dial._mists) == [dial.strength_db()]
+    _pump(app, 0.7)
+    assert [list(column) for column in dial._mists] == [[4], [9]]
+    tens = dial._mists[0]
+    dial._nudge_to(-48)                           # only the ones change
+    assert [len(column) for column in dial._mists] == [1, 2]
+    assert dial._mists[0] is tens                 # the tens hold still
+    dial.grab()
+    _pump(app, 0.7)
+    assert [list(column) for column in dial._mists] == [[4], [8]]
     dial.close()
 
 
@@ -151,6 +411,22 @@ def test_tactile_themes_keep_the_odometer_and_ripple(app, monkeypatch):
     dial.set_active(True)
     lit = d.lit_count(dial.strength_db())
     assert dial._ignite_end() == lit * d.IGNITE_STEP + d.IGNITE_TAIL
+    dial.close()
+
+
+def test_dial_reuses_its_ring_while_it_holds_still(app, vigil, monkeypatch):
+    monkeypatch.setenv("POISE_REDUCE_MOTION", "1")   # idle holds still
+    dial = _dial(app)
+    drawn = []
+    draw = dial._draw_ring
+    dial._draw_ring = lambda *a: drawn.append(1) or draw(*a)
+    dial._ring_key = None                         # forget the shown frame
+    dial.grab()
+    dial.grab()
+    assert len(drawn) == 1                        # the same strokes: reused
+    dial.set_strength_db(dial.strength_db() + 10)
+    dial.grab()
+    assert len(drawn) == 2                        # fewer ticks lit: redrawn
     dial.close()
 
 
@@ -169,8 +445,10 @@ def _sky_card(app):
     return card
 
 
-def test_sky_moves_on_its_own_clock_and_breathes_while_live(app, vigil):
+def test_sky_moves_on_its_own_clock_and_breathes_while_live(app, vigil,
+                                                            monkeypatch):
     from stream_denoiser.gui.widgets import pattern_card as pc
+    monkeypatch.setattr(pc, "meteor_due", lambda now, ahead=0.0: False)
     card = _sky_card(app)
     assert card._sky_timer.isActive()            # always gently moving
     assert card._sky_timer.interval() == pc.SKY_FRAME_MS
@@ -203,6 +481,22 @@ def test_stop_fades_the_pulse_in_flight_and_sends_no_more(app, vigil):
     card.set_live(False)
     _pump(app, 2.4 + sky.PULSE_FADE_MS / 1000)
     assert card._ping_at is None                 # back to gold: all done
+    card.close()
+
+
+def test_the_clock_speeds_up_for_a_shooting_star(app, vigil, monkeypatch):
+    from stream_denoiser.gui.widgets import pattern_card as pc
+    due = []
+    monkeypatch.setattr(pc, "meteor_due",
+                        lambda now, ahead=0.0: bool(due))
+    card = _sky_card(app)
+    assert card._sky_timer.interval() == pc.SKY_FRAME_MS
+    due.append(True)
+    card._run_sky()
+    assert card._sky_timer.interval() == pc.SKY_METEOR_FRAME_MS
+    due.clear()
+    card._run_sky()
+    assert card._sky_timer.interval() == pc.SKY_FRAME_MS
     card.close()
 
 
@@ -242,5 +536,16 @@ def test_saved_ultraviolet_opens_as_vigil(app):
     try:
         settings.set(settings.KEY_THEME, "ultraviolet")
         assert settings.theme == "vigil"
+    finally:
+        settings.set(settings.KEY_THEME, before or "halcyon")
+
+
+def test_saved_mono_opens_as_eclipse(app):
+    from stream_denoiser.gui.settings import Settings
+    settings = Settings()
+    before = settings.get(settings.KEY_THEME, None)
+    try:
+        settings.set(settings.KEY_THEME, "mono")
+        assert settings.theme == "eclipse"
     finally:
         settings.set(settings.KEY_THEME, before or "halcyon")

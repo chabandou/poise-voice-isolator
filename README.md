@@ -511,6 +511,13 @@ uses the pulse-simple path instead: it creates a null sink
 (`Poise_Capture`), makes it the default, captures from its monitor, and
 plays the processed audio to your speakers.
 
+On Windows, Poise makes VB-Cable's **CABLE Input** the default playback
+device, captures **CABLE Output** and plays the processed audio to your
+speakers or headphones. VB-Cable ignores CABLE Input's own volume control,
+so while Poise runs it mirrors that control onto the output device: the
+volume keys, the taskbar slider and mute work as usual, and the output
+device keeps the level you leave it at when Poise stops.
+
 ## Special Thanks
 
 DeepFilterNet (Rikorose) for the [DeepFilterNet3 model](https://github.com/Rikorose/DeepFilterNet).

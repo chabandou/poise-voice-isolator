@@ -78,6 +78,7 @@ class Settings:
     KEY_MODEL = "model/name"
 
     KEY_THEME = "appearance/theme"
+    KEY_REDUCE_MOTION = "appearance/reduce_motion"
     
     # Default values
     DEFAULTS = {
@@ -307,6 +308,18 @@ class Settings:
     @theme.setter
     def theme(self, value: str) -> None:
         self.set(self.KEY_THEME, value)
+
+    @property
+    def reduce_motion(self) -> bool:
+        """Hold the ambient animations still. Until set here, on only when
+        Windows' "Animation effects" is off."""
+        if self.contains(self.KEY_REDUCE_MOTION):
+            return bool(self.get(self.KEY_REDUCE_MOTION, False))
+        return not system_animations()
+
+    @reduce_motion.setter
+    def reduce_motion(self, value: bool) -> None:
+        self.set(self.KEY_REDUCE_MOTION, bool(value))
     
     def save_window_geometry(self, geometry: bytes) -> None:
         """Save window geometry."""
@@ -323,6 +336,24 @@ class Settings:
     def load_window_state(self) -> Optional[bytes]:
         """Load window state."""
         return self.get(self.KEY_WINDOW_STATE)
+
+
+def system_animations() -> bool:
+    """False when Windows' "Animation effects" (Accessibility > Visual
+    effects) is off; True elsewhere or if it cannot be read."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        SPI_GETCLIENTAREAANIMATION = 0x1042
+        on = wintypes.BOOL(True)
+        if ctypes.windll.user32.SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(on), 0):
+            return bool(on.value)
+    except Exception:
+        pass
+    return True
 
 
 # Global settings instance

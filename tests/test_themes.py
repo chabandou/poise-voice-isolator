@@ -63,9 +63,9 @@ def test_unknown_theme_falls_back():
 
 
 def test_set_current_roundtrip():
-    assert themes.set_current("mono") == "mono"
-    assert themes.current_id() == "mono"
-    assert themes.current()["label"] == "Mono"
+    assert themes.set_current("eclipse") == "eclipse"
+    assert themes.current_id() == "eclipse"
+    assert themes.current()["label"] == "Eclipse"
     themes.set_current(themes.DEFAULT_THEME)
 
 
@@ -81,13 +81,6 @@ def test_halcyon_preserves_current_look():
     css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     assert "background-color: #0a111e" in css  # page bg unchanged
     assert "95, 213, 235" in css  # halcyon accent rgb
-
-
-def test_mono_is_cyan_free():
-    css = styles.get_stylesheet(scale=1.0, theme="mono")
-    for cyan in ("#5fd5eb", "#22d3ee", "95, 213, 235", "34, 211, 238"):
-        assert cyan not in css
-    assert "201, 209, 219" in css  # mono accent rgb
 
 
 def _rgb(hex_color):
@@ -184,6 +177,15 @@ def test_vigil_replaces_ultraviolet():
     assert themes.style("backdrop") == "lattice"
 
 
+def test_eclipse_replaces_mono():
+    """Mono was renamed Eclipse; a saved choice lands on it."""
+    ids = themes.theme_ids()
+    assert "mono" not in ids and "eclipse" in ids
+    assert themes.resolve_id("mono") == "eclipse"
+    assert themes.set_current("mono") == "eclipse"
+    themes.set_current(themes.DEFAULT_THEME)
+
+
 def _heading_weight(css):
     rule = re.search(r"QLabel#home-title \{[^}]*?font-weight: (\d+);", css)
     return int(rule.group(1))
@@ -197,3 +199,32 @@ def test_vigil_stylesheet_glows_with_lighter_headings():
     halcyon = styles.get_stylesheet(scale=1.0, theme="halcyon")
     assert "qradialgradient" not in halcyon      # flat, as before
     assert _heading_weight(halcyon) == 700
+
+
+def _hls(hex_color):
+    import colorsys
+    return colorsys.rgb_to_hls(*(c / 255.0 for c in _rgb(hex_color)))
+
+
+def test_eclipse_is_vigil_in_soft_graphite():
+    """Eclipse shares Vigil's sky, rhythm and lit surfaces in its own calm
+    palette: graphite, a deep blue idle (Vigil's gold) and silver live
+    (its lavender), with no cyan."""
+    for key in ("backdrop", "motion", "heading_weight"):
+        assert themes.style(key, "eclipse") == themes.style(key, "vigil")
+    css = styles.get_stylesheet(scale=1.0, theme="eclipse")
+    assert "qradialgradient" in css and "qlineargradient" in css
+    assert _heading_weight(css) == 600
+    eclipse = themes.get_theme("eclipse")
+    hue, light, sat = _hls(eclipse["secondary"])
+    assert 205 <= hue * 360 <= 225 and sat > 0.5      # a moon blue...
+    assert light < 0.65
+    assert _hls(eclipse["accent"])[2] < 0.15             # ...and a silver
+    for key in ("accent", "accent_light", "nav_active", "badge_fg"):
+        hue, _, sat = _hls(eclipse[key])                 # nothing cyan
+        assert sat < 0.15 or not 170 <= hue * 360 <= 200, key
+    for cyan in ("#5fd5eb", "95, 213, 235", "#98c5cd"):
+        assert cyan not in css
+    # Easy on the eyes: no near-white text, faint edges.
+    assert _contrast(eclipse["text"], "#ffffff") > 1.1
+    assert eclipse["border_alpha"] <= 0.2 and eclipse["divider_alpha"] <= 0.25

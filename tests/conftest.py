@@ -53,10 +53,24 @@ try:
                       "Poise", "VoiceIsolator")
     _seed.setValue("behavior/minimize_to_tray_asked", True)
     _seed.setValue("behavior/minimize_to_tray", True)
+    # Reduce motion off, whatever the machine's animation effects (its
+    # default follows them, and CI's Windows runner has them off).
+    _seed.setValue("appearance/reduce_motion", False)
     _seed.sync()
     del _seed
 except Exception:
     _SESSION_APP = None
+
+
+@pytest.fixture(autouse=True)
+def _ambient_motion_on():
+    """Each test starts with the ambient motion on: a window a test
+    builds sets Reduce motion for the whole process (animations.set_still)
+    and would leave it set for the tests after it."""
+    yield
+    if _HAS_PYQT6:
+        from stream_denoiser.gui import animations
+        animations.set_still(False)
 
 
 def session_app():

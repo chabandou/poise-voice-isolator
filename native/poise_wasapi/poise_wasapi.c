@@ -35,6 +35,7 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <endpointvolume.h>
 #include <mmreg.h>
 
 #include <math.h>
@@ -76,6 +77,12 @@ static const GUID SUBTYPE_IEEE_FLOAT_ = {0x00000003, 0x0000, 0x0010,
 	{0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 static const PROPERTYKEY PKEY_Device_FriendlyName_ = {{0xA45C254E, 0xDF1C,
 	0x4EFD, {0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0}}, 14};
+static const IID IID_IUnknown_ = {0x00000000, 0x0000, 0x0000,
+	{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID IID_IAudioEndpointVolume_ = {0x5CDF2C82, 0x841E, 0x4546,
+	{0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A}};
+static const IID IID_IAudioEndpointVolumeCallback_ = {0x657804FA, 0xD6AD,
+	0x4496, {0x8A, 0x60, 0x35, 0x27, 0x52, 0xAF, 0x4F, 0x89}};
 
 /* ==== clock bridge ===================================================== */
 
@@ -1350,4 +1357,356 @@ uint32_t poise_wasapi_io_latency(poise_wasapi *w)
 			memory_order_relaxed) +
 		atomic_load_explicit(&w->stats[POISE_WIN_RENDER_FILL],
 			memory_order_relaxed));
+}
+
+/* ==== volume mirror ==================================================== */
+
+/*
+ * VB-Cable tells Windows that CABLE Input has a volume control of its
+ * own (hardware volume, so the audio engine leaves the level alone) and
+ * then passes the audio on at full level whatever it is set to. While
+ * Poise runs, CABLE Input is the default device: the volume keys and the
+ * taskbar slider move a control nothing obeys, and only the slider of
+ * the device Poise plays to changes what is heard.
+ *
+ * The mirror makes the two one control: a change to either's level or
+ * mute is copied onto the other, from a thread of its own. It starts by
+ * copying the output device's onto CABLE Input, so the slider shows what
+ * is heard and nothing jumps. Its own writes carry MIRROR_CONTEXT, and
+ * the notifications they cause are not copied back. Levels go across as
+ * the 0..1 scalar Windows shows as a percentage, whatever the two
+ * devices' dB ranges.
+ */
+
+enum { MIRROR_CABLE, MIRROR_OUTPUT };
+
+/* {BA46AE0B-BA4B-48CA-B6B0-EE1D746AA777} */
+static const GUID MIRROR_CONTEXT = {0xBA46AE0B, 0xBA4B, 0x48CA,
+	{0xB6, 0xB0, 0xEE, 0x1D, 0x74, 0x6A, 0xA7, 0x77}};
+/* Levels this close count as equal (the scalar is 0..1). */
+#define LEVEL_EPSILON 0.0005f
+
+struct mirror_cb {
+	IAudioEndpointVolumeCallback iface;
+	poise_volmirror *m;
+	int side;
+};
+
+struct poise_volmirror {
+	char names[2][512];
+	struct mirror_cb cb[2];
+	IAudioEndpointVolume *vol[2];
+	int registered[2];
+	HANDLE thread;
+	HANDLE ready;      /* set once both controls are open (or failed to) */
+	HANDLE stop;
+	HANDLE wake;       /* a control changed */
+	/* Ours, plus Windows' on the callbacks: freed when the last goes. */
+	_Atomic long refs;
+	_Atomic int changed;   /* a bit per side changed by someone else */
+	int failed;
+	char error[512];
+};
+
+static ULONG mirror_release(poise_volmirror *m)
+{
+	long n = atomic_fetch_sub(&m->refs, 1) - 1;
+
+	if (n == 0) {
+		if (m->ready)
+			CloseHandle(m->ready);
+		if (m->stop)
+			CloseHandle(m->stop);
+		if (m->wake)
+			CloseHandle(m->wake);
+		free(m);
+	}
+	return (ULONG)n;
+}
+
+static HRESULT STDMETHODCALLTYPE cb_query(IAudioEndpointVolumeCallback *self,
+		REFIID riid, void **out)
+{
+	if (IsEqualIID(riid, &IID_IUnknown_) ||
+	    IsEqualIID(riid, &IID_IAudioEndpointVolumeCallback_)) {
+		*out = self;
+		IAudioEndpointVolumeCallback_AddRef(self);
+		return S_OK;
+	}
+	*out = NULL;
+	return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE cb_addref(IAudioEndpointVolumeCallback *self)
+{
+	poise_volmirror *m = ((struct mirror_cb *)self)->m;
+
+	return (ULONG)(atomic_fetch_add(&m->refs, 1) + 1);
+}
+
+static ULONG STDMETHODCALLTYPE cb_release(IAudioEndpointVolumeCallback *self)
+{
+	return mirror_release(((struct mirror_cb *)self)->m);
+}
+
+/* On Windows' thread: note the change and wake the mirror, no more. */
+static HRESULT STDMETHODCALLTYPE cb_notify(IAudioEndpointVolumeCallback *self,
+		PAUDIO_VOLUME_NOTIFICATION_DATA data)
+{
+	struct mirror_cb *cb = (struct mirror_cb *)self;
+
+	if (data != NULL && IsEqualGUID(&data->guidEventContext, &MIRROR_CONTEXT))
+		return S_OK;
+	atomic_fetch_or(&cb->m->changed, 1 << cb->side);
+	SetEvent(cb->m->wake);
+	return S_OK;
+}
+
+static IAudioEndpointVolumeCallbackVtbl mirror_cb_vtbl = {
+	cb_query, cb_addref, cb_release, cb_notify
+};
+
+/* A render endpoint's volume control, by name as for find_device(); its
+ * endpoint ID too if `id` is not NULL (free with CoTaskMemFree). */
+static HRESULT open_volume(IMMDeviceEnumerator *en, const char *name,
+		IAudioEndpointVolume **out, wchar_t **id)
+{
+	IMMDevice *dev = NULL;
+	HRESULT hr;
+
+	*out = NULL;
+	hr = find_device(en, eRender, name, &dev);
+	if (FAILED(hr))
+		return hr;
+	if (id != NULL)
+		hr = IMMDevice_GetId(dev, id);
+	if (SUCCEEDED(hr))
+		hr = IMMDevice_Activate(dev, &IID_IAudioEndpointVolume_, CLSCTX_ALL,
+				NULL, (void **)out);
+	IMMDevice_Release(dev);
+	return hr;
+}
+
+/* Copy side `from`'s level and mute onto the other side, where they
+ * differ. */
+static HRESULT mirror_copy(poise_volmirror *m, int from)
+{
+	IAudioEndpointVolume *src = m->vol[from], *dst = m->vol[!from];
+	float level = 0.0f, have = 0.0f;
+	BOOL mute = FALSE, have_mute = FALSE;
+	HRESULT hr;
+
+	hr = IAudioEndpointVolume_GetMasterVolumeLevelScalar(src, &level);
+	if (SUCCEEDED(hr))
+		hr = IAudioEndpointVolume_GetMute(src, &mute);
+	if (SUCCEEDED(hr))
+		hr = IAudioEndpointVolume_GetMasterVolumeLevelScalar(dst, &have);
+	if (SUCCEEDED(hr))
+		hr = IAudioEndpointVolume_GetMute(dst, &have_mute);
+	if (SUCCEEDED(hr) && fabsf(level - have) > LEVEL_EPSILON)
+		hr = IAudioEndpointVolume_SetMasterVolumeLevelScalar(dst, level,
+				&MIRROR_CONTEXT);
+	if (SUCCEEDED(hr) && !mute != !have_mute)
+		hr = IAudioEndpointVolume_SetMute(dst, mute, &MIRROR_CONTEXT);
+	return hr;
+}
+
+static void mirror_fail(poise_volmirror *m, const char *what, HRESULT hr)
+{
+	snprintf(m->error, sizeof(m->error), "%s: %s (0x%08lx)", what,
+			hr_name(hr), (unsigned long)hr);
+	m->failed = 1;
+}
+
+static DWORD WINAPI mirror_thread(void *arg)
+{
+	poise_volmirror *m = arg;
+	IMMDeviceEnumerator *en = NULL;
+	wchar_t *id[2] = { NULL, NULL };
+	const char *what = "COM";
+	HRESULT hr;
+	int side, com;
+
+	hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	com = SUCCEEDED(hr);
+	if (com) {
+		what = "device enumerator";
+		hr = CoCreateInstance(&CLSID_MMDeviceEnumerator_, NULL, CLSCTX_ALL,
+				&IID_IMMDeviceEnumerator_, (void **)&en);
+	}
+	for (side = 0; SUCCEEDED(hr) && side < 2; side++) {
+		what = side == MIRROR_CABLE ? "CABLE Input" : "output device";
+		hr = open_volume(en, m->names[side], &m->vol[side], &id[side]);
+	}
+	if (en)
+		IMMDeviceEnumerator_Release(en);
+	if (SUCCEEDED(hr) && wcscmp(id[0], id[1]) == 0) {
+		snprintf(m->error, sizeof(m->error),
+				"CABLE Input and the output device are the same device");
+		m->failed = 1;
+	}
+	CoTaskMemFree(id[0]);
+	CoTaskMemFree(id[1]);
+	/* Start from what is heard: the output device's. */
+	if (SUCCEEDED(hr) && !m->failed) {
+		what = "volume";
+		hr = mirror_copy(m, MIRROR_OUTPUT);
+	}
+	for (side = 0; SUCCEEDED(hr) && !m->failed && side < 2; side++) {
+		hr = IAudioEndpointVolume_RegisterControlChangeNotify(m->vol[side],
+				&m->cb[side].iface);
+		m->registered[side] = SUCCEEDED(hr);
+	}
+	if (FAILED(hr))
+		mirror_fail(m, what, hr);
+	if (m->failed)
+		goto out;
+	SetEvent(m->ready);
+
+	for (;;) {
+		HANDLE waits[2] = { m->stop, m->wake };
+		int changed;
+
+		if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0 + 1)
+			break;
+		/* A failed copy (a device just removed, say) is let go: the
+		 * next change tries again. When both changed, CABLE Input, the
+		 * one the volume keys move, wins. */
+		changed = atomic_exchange(&m->changed, 0);
+		if (changed & (1 << MIRROR_CABLE))
+			mirror_copy(m, MIRROR_CABLE);
+		else if (changed & (1 << MIRROR_OUTPUT))
+			mirror_copy(m, MIRROR_OUTPUT);
+	}
+
+out:
+	for (side = 0; side < 2; side++) {
+		if (m->registered[side])
+			IAudioEndpointVolume_UnregisterControlChangeNotify(m->vol[side],
+					&m->cb[side].iface);
+		if (m->vol[side])
+			IAudioEndpointVolume_Release(m->vol[side]);
+		m->vol[side] = NULL;
+	}
+	if (com)
+		CoUninitialize();
+	SetEvent(m->ready);
+	return 0;
+}
+
+poise_volmirror *poise_volmirror_new(const char *cable, const char *output,
+		char *err, size_t errlen)
+{
+	poise_volmirror *m = calloc(1, sizeof(*m));
+	int side;
+
+	if (m == NULL) {
+		snprintf(err, errlen, "out of memory");
+		return NULL;
+	}
+	atomic_store(&m->refs, 1);
+	snprintf(m->names[MIRROR_CABLE], sizeof(m->names[0]), "%s", cable ? cable : "");
+	snprintf(m->names[MIRROR_OUTPUT], sizeof(m->names[0]), "%s", output ? output : "");
+	for (side = 0; side < 2; side++) {
+		m->cb[side].iface.lpVtbl = &mirror_cb_vtbl;
+		m->cb[side].m = m;
+		m->cb[side].side = side;
+	}
+	m->ready = CreateEventW(NULL, TRUE, FALSE, NULL);
+	m->stop = CreateEventW(NULL, TRUE, FALSE, NULL);
+	m->wake = CreateEventW(NULL, FALSE, FALSE, NULL);
+	if (m->ready == NULL || m->stop == NULL || m->wake == NULL) {
+		snprintf(err, errlen, "cannot create events");
+		poise_volmirror_free(m);
+		return NULL;
+	}
+	m->thread = CreateThread(NULL, 0, mirror_thread, m, 0, NULL);
+	if (m->thread == NULL) {
+		snprintf(err, errlen, "cannot start the mirror thread");
+		poise_volmirror_free(m);
+		return NULL;
+	}
+	if (WaitForSingleObject(m->ready, 10000) != WAIT_OBJECT_0) {
+		snprintf(err, errlen, "volume controls did not open within 10 s");
+		poise_volmirror_free(m);
+		return NULL;
+	}
+	if (m->failed) {
+		snprintf(err, errlen, "%s", m->error);
+		poise_volmirror_free(m);
+		return NULL;
+	}
+	return m;
+}
+
+void poise_volmirror_free(poise_volmirror *m)
+{
+	if (m == NULL)
+		return;
+	if (m->thread) {
+		SetEvent(m->stop);
+		WaitForSingleObject(m->thread, INFINITE);
+		CloseHandle(m->thread);
+		m->thread = NULL;
+	}
+	mirror_release(m);
+}
+
+/* poise_volume_get/set: on the caller's thread, in whatever apartment it
+ * has (RPC_E_CHANGED_MODE: an STA, which serves as well). */
+static HRESULT volume_call(const char *name, float *level, int *mute,
+		int set, char *err, size_t errlen)
+{
+	IMMDeviceEnumerator *en = NULL;
+	IAudioEndpointVolume *vol = NULL;
+	const char *what = "COM";
+	BOOL b = FALSE;
+	HRESULT hr, init;
+
+	init = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	hr = init == RPC_E_CHANGED_MODE ? S_OK : init;
+	if (SUCCEEDED(hr)) {
+		what = "device enumerator";
+		hr = CoCreateInstance(&CLSID_MMDeviceEnumerator_, NULL, CLSCTX_ALL,
+				&IID_IMMDeviceEnumerator_, (void **)&en);
+	}
+	if (SUCCEEDED(hr)) {
+		what = name && name[0] ? name : "default output device";
+		hr = open_volume(en, name, &vol, NULL);
+	}
+	if (SUCCEEDED(hr) && set) {
+		/* No event context: to the mirror this is anyone's change. */
+		if (*level >= 0.0f)
+			hr = IAudioEndpointVolume_SetMasterVolumeLevelScalar(vol,
+					*level > 1.0f ? 1.0f : *level, NULL);
+		if (SUCCEEDED(hr) && *mute >= 0)
+			hr = IAudioEndpointVolume_SetMute(vol, *mute != 0, NULL);
+	} else if (SUCCEEDED(hr)) {
+		hr = IAudioEndpointVolume_GetMasterVolumeLevelScalar(vol, level);
+		if (SUCCEEDED(hr))
+			hr = IAudioEndpointVolume_GetMute(vol, &b);
+		*mute = b != FALSE;
+	}
+	if (FAILED(hr))
+		snprintf(err, errlen, "%s: %s (0x%08lx)", what, hr_name(hr),
+				(unsigned long)hr);
+	if (vol)
+		IAudioEndpointVolume_Release(vol);
+	if (en)
+		IMMDeviceEnumerator_Release(en);
+	if (SUCCEEDED(init))
+		CoUninitialize();
+	return hr;
+}
+
+int poise_volume_get(const char *name, float *level, int *mute,
+		char *err, size_t errlen)
+{
+	return FAILED(volume_call(name, level, mute, 0, err, errlen));
+}
+
+int poise_volume_set(const char *name, float level, int mute,
+		char *err, size_t errlen)
+{
+	return FAILED(volume_call(name, &level, &mute, 1, err, errlen));
 }

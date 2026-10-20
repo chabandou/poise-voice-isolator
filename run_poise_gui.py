@@ -4,6 +4,15 @@ Run Poise Voice Isolator (GUI Mode)
 
 Entry point script for the graphical interface.
 """
+import os
+
+# Before anything loads numpy: OpenBLAS otherwise commits a buffer per
+# core (~160 MB of private memory in each of this process and the audio
+# process, which inherits the setting) that Poise never uses; its numpy
+# work is per-frame and tiny, and onnxruntime threads on its own. A value
+# set by the user still wins.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 if __name__ == "__main__":
     import ctypes
     import multiprocessing

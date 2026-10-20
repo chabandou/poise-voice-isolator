@@ -154,7 +154,7 @@ def test_outline_fades_in_and_out_with_selection(app):
 
 def test_outline_uses_the_current_themes_secondary(app):
     from stream_denoiser.gui import themes
-    tile = _make_tile(checked=True, theme_id="mono")
+    tile = _make_tile(checked=True, theme_id="eclipse")
     _pump(app)
     halcyon_gold = themes.get_theme("halcyon")["secondary"]
     ember_teal = themes.get_theme("ember")["secondary"]

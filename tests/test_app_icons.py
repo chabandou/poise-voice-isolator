@@ -36,12 +36,12 @@ def test_themed_variants_recolor_accent_only():
     assert _stops("icon-ember.svg") == ["#f5a524", "#f5a524", GRAY_TIP]
     assert _stops("icon-verdant.svg") == ["#35e0a8", "#35e0a8", GRAY_TIP]
     assert _stops("icon-orchid.svg") == ["#f472b6", "#f472b6", GRAY_TIP]
+    assert _stops("icon-eclipse.svg") == ["#4A83C9", "#4A83C9", GRAY_TIP]
 
 
 def test_variant_mapping_matches_files():
     utils = _load_utils()
     for theme_id, filename in utils.THEME_ICON_VARIANTS.items():
         assert os.path.isfile(os.path.join(_ASSETS_DIR, filename)), theme_id
-    # Mono and Halcyon intentionally keep the signature cyan icon.
-    assert "mono" not in utils.THEME_ICON_VARIANTS
+    # Halcyon intentionally keeps the signature cyan icon.
     assert "halcyon" not in utils.THEME_ICON_VARIANTS

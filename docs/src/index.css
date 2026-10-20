@@ -45,19 +45,22 @@
 	--color-divider: rgb(140 205 185 / 0.3);
 }
 
-[data-theme="mono"] {
-	--color-bg: #101012;
-	--color-deep: #0c0c0e;
-	--color-card: #151517;
-	--color-pill: #1a1a1e;
-	--color-groove: #2e2e34;
-	--color-ink: #f5f5f5;
-	--color-muted: #a7a7ae;
-	--color-accent: #c9d1db;
-	--color-accent-light: #eceff3;
-	--color-secondary: #b9b3a8;
-	--color-edge: rgb(255 255 255 / 0.3);
-	--color-divider: rgb(255 255 255 / 0.42);
+[data-theme="eclipse"] {
+	--color-bg: #0a0a0a;
+	--color-deep: #070707;
+	--color-card: #111111;
+	--color-pill: #141414;
+	--color-groove: #282828;
+	--color-ink: #e6e6e6;
+	--color-muted: #a3a3a3;
+	--color-accent: #c8c8c8;
+	--color-accent-light: #ececec;
+	--color-secondary: #4a83c9;
+	--color-edge: rgb(220 220 220 / 0.14);
+	--color-divider: rgb(220 220 220 / 0.2);
+	--color-success: #86d0ae;
+	--color-warning: #e2c983;
+	--color-error: #e89aa2;
 }
 
 [data-theme="vigil"] {
