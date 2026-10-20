@@ -116,15 +116,17 @@ def test_keyframes_interpolate_between_frames(app):
     assert keyframes(1.0, CHARGE) == 1.0
 
 
-def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
+def test_live_star_and_ring_swell_with_each_pulse_and_charge(app):
     from PyQt6.QtCore import QPointF, QRectF
     from PyQt6.QtGui import QColor
     from stream_denoiser.gui.widgets import sky
     night = sky.NightSky()
     seen = []    # (glow, star scale) per frame
+    rings = []   # the ring's radius over its rest
     box = QRectF(0, 0, 900, 520)
     later = sky.BREATH_MS     # the second pulse on (the first lights up)
-    cycles = [later + ms for ms in (0, 500, 1000, 4000, 6000, 7000, 7900)]
+    cycles = [later + ms
+              for ms in (0, 160, 500, 1000, 1400, 4000, 6000, 7000, 7900)]
     for cycle in cycles:
         frame = night.frame(box, QPointF(450, 280), 1.0, 1.0, 1000.0, {
             "live": 1.0, "gather": 0.0, "error": 0.0, "reveal": 1.0,
@@ -133,8 +135,16 @@ def test_live_stars_hold_their_size_and_charge_with_the_disc(app):
             "secondary": QColor("#E6CD8A"), "accent": QColor("#b9a6ff"),
             "accent_light": QColor("#e4dcff")})
         seen.append((frame["glow"], frame["geometry"]["stars_scale"]))
+        rings.append(frame["geometry"]["ring_r"] / sky.RING_R)
     glow = {cycle - later: g for cycle, (g, _) in zip(cycles, seen)}
-    assert all(scale == 1.0 for _, scale in seen)    # no swell with pulses
+    scale = {cycle - later: s for cycle, (_, s) in zip(cycles, seen)}
+    assert scale[0] == 1.0                            # swells as the band
+    assert scale[160] == pytest.approx(1.05)          # reaches it...
+    assert 1.0 < scale[500] < scale[160]
+    assert scale[1000] < 1.0                          # ...dips a hair...
+    assert all(scale[ms] == 1.0                       # ...and holds
+               for ms in (1400, 4000, 6000, 7000, 7900))
+    assert rings == pytest.approx(list(scale.values()))   # the ring too
     assert glow[0] == pytest.approx(1.0)              # full as it leaves
     assert glow[4000] == 0.0                          # gone mid-breath
     assert 0.0 < glow[7000] < glow[7900] < 1.0        # gathering again
