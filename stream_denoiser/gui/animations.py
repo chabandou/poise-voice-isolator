@@ -284,8 +284,19 @@ class _FrameClock(QObject):
                      if not sip.isdeleted(t)]
         if not intervals:
             self._timer.stop()
+            _fine_timers(False)
             return
         interval = min(intervals)
+        # Transitions want every frame: on Windows' default 15.6 ms tick a
+        # 16 ms timer fires after 16 or 31 ms, by turns (steady loops can
+        # take that).
+        fine = interval <= TRANSITION_MAX_MS
+        kind = (Qt.TimerType.PreciseTimer if fine
+                else Qt.TimerType.CoarseTimer)
+        _fine_timers(fine)
+        if self._timer.timerType() != kind:
+            self._timer.stop()
+            self._timer.setTimerType(kind)
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
         if not self._timer.isActive():
@@ -309,6 +320,22 @@ class _FrameClock(QObject):
 
 
 _frame_clock = None
+_fine = False
+
+
+def _fine_timers(on: bool) -> None:
+    """Ask Windows for 1 ms timer ticks while a transition runs (as
+    browsers do while they animate), and give them back after."""
+    global _fine
+    if on == _fine or os.name != "nt":
+        return
+    try:
+        import ctypes
+        winmm = ctypes.WinDLL("winmm")
+        (winmm.timeBeginPeriod if on else winmm.timeEndPeriod)(1)
+        _fine = on
+    except OSError:
+        pass
 
 
 class FrameTimer(QObject):

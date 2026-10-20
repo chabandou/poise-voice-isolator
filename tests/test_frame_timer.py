@@ -100,3 +100,27 @@ def test_a_loop_gone_with_its_widget_is_dropped(app):
     sip.delete(owner)                     # the loop goes with it
     _pump(app, 0.1)
     assert key not in _clock()._running
+
+
+def test_transitions_tick_on_a_precise_clock(app, monkeypatch):
+    """A 16 ms loop must not land on Windows' 15.6 ms ticks (16 or 31 ms,
+    by turns); steady loops stay coarse."""
+    from PyQt6.QtCore import Qt
+    from stream_denoiser.gui import animations
+    asked = []
+    monkeypatch.setattr(animations, "_fine_timers", asked.append)
+    clock = animations._clock()
+    steady = animations.FrameTimer()
+    steady.start(50)
+    try:
+        assert clock._timer.timerType() == Qt.TimerType.CoarseTimer
+        assert asked[-1] is False
+        fast = animations.FrameTimer()
+        fast.start(16)
+        assert clock._timer.timerType() == Qt.TimerType.PreciseTimer
+        assert asked[-1] is True
+        fast.stop()
+        assert clock._timer.timerType() == Qt.TimerType.CoarseTimer
+        assert asked[-1] is False
+    finally:
+        steady.stop()
