@@ -164,19 +164,26 @@ vec3 pageColour(float t) {
 // took seconds to compile when the sky first shows).
 int dynamic(int n) { return n + int(card.w); }
 
+float segment2(vec2 p, vec2 a, vec2 b) {
+    vec2 e = b - a, w = p - a;
+    vec2 q = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
+    return dot(q, q);
+}
+
+// The sparkle mirrors onto itself across both axes and both diagonals:
+// folded into the eighth between the +x axis and the diagonal, a point
+// is as far from its outline as it was, and only the long arm's edge
+// (SPARKLE[4] to [5]) and the short arm's ([5] to [6]) are there. The
+// corner between them points in, so inside is inside either edge.
 float sdSparkle(vec2 p) {
-    float d = dot(p - SPARKLE[0], p - SPARKLE[0]);
-    float s = 1.0;
-    for (int i = 0, j = 15; i < dynamic(16); j = i, i++) {
-        vec2 e = SPARKLE[j] - SPARKLE[i];
-        vec2 w = p - SPARKLE[i];
-        vec2 b = w - e * clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
-        d = min(d, dot(b, b));
-        bvec3 c = bvec3(p.y >= SPARKLE[i].y, p.y < SPARKLE[j].y,
-                        e.x * w.y > e.y * w.x);
-        if (all(c) || all(not(c))) s *= -1.0;
-    }
-    return s * sqrt(d);
+    p = abs(p);
+    if (p.y > p.x) p = p.yx;
+    vec2 tip = SPARKLE[4], notch = SPARKLE[5], arm = SPARKLE[6];
+    float d = min(segment2(p, tip, notch), segment2(p, notch, arm));
+    vec2 e0 = notch - tip, w0 = p - tip, e1 = arm - notch, w1 = p - notch;
+    bool inside = e0.x * w0.y - e0.y * w0.x > 0.0
+               || e1.x * w1.y - e1.y * w1.x > 0.0;
+    return (inside ? -1.0 : 1.0) * sqrt(d);
 }
 
 vec3 mote(vec3 col, vec2 p, vec4 m) {
@@ -191,7 +198,13 @@ vec3 mote(vec3 col, vec2 p, vec4 m) {
 // How much of this pixel a sparkle `scale` across covers. Its arms are
 // thinner than a pixel, so the edge ramp of cover() would overstate
 // them: sample the pixel's area instead (4 x 4), as QPainter fills it.
+// The samples lie within 0.53 px of the centre, and sdSparkle is the
+// exact distance to the edge: a pixel further from it than that has
+// all 16 on one side, so only the pixels on the edge are sampled.
 float sparkleCover(vec2 v, float scale) {
+    float edge = sdSparkle(v / scale) * scale;
+    if (edge > 0.75 * px) return 0.0;
+    if (edge < -0.75 * px) return 1.0;
     float c = 0.0;
     for (int i = 0; i < dynamic(4); ++i) {
         for (int j = 0; j < dynamic(4); ++j) {
