@@ -183,12 +183,23 @@ def _hypr_curve(clamp: bool = False) -> QEasingCurve:
     return curve
 
 
+def _reduced_by_env() -> bool:
+    return (os.environ.get("POISE_NO_ANIM") == "1"
+            or os.environ.get("POISE_REDUCE_MOTION") == "1")
+
+
+# Read once: the flags are set before Poise starts, and its animations
+# ask well over a thousand times a second. LIVE_ENV reads them on every
+# call instead (the tests switch them while running; see conftest).
+_REDUCED_BY_ENV = _reduced_by_env()
+LIVE_ENV = False
+
+
 def motion_ok() -> bool:
     """False when the user asked for reduced motion (env override)."""
-    return not (
-        os.environ.get("POISE_NO_ANIM") == "1"
-        or os.environ.get("POISE_REDUCE_MOTION") == "1"
-    )
+    if LIVE_ENV:
+        return not _reduced_by_env()
+    return not _REDUCED_BY_ENV
 
 
 # The Settings page's "Reduce motion" (see set_still).
