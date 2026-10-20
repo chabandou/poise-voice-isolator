@@ -863,8 +863,9 @@ body {
 
 .app-glow {
 	position: absolute;
-	/* Past the window's sides, so its light spills round them. */
-	inset: 10% -5% 0;
+	/* The window's own shape, blurred so its light spills out round every
+	   edge (a gradient behind an opaque window would barely show). */
+	inset: 3% 2%;
 	z-index: -1;
 	opacity: 0;
 	transition: opacity 1200ms var(--breath-ease);
@@ -878,10 +879,10 @@ body {
 .app-glow__pulse {
 	position: absolute;
 	inset: 0;
-	border-radius: 40%;
-	background: radial-gradient(closest-side, color-mix(in srgb, var(--color-accent) 30%, transparent), transparent);
-	filter: blur(44px);
-	opacity: 0.28;
+	border-radius: 28px;
+	background: var(--color-accent);
+	filter: blur(56px);
+	opacity: 0.22;
 }
 
 /* In step with the lattice's pings (5.2 s) or the sky's breaths (8 s):
@@ -895,10 +896,10 @@ body {
 }
 
 @keyframes app-glow {
-	0% { opacity: 0.75; scale: 1.04; animation-timing-function: cubic-bezier(0.3, 0.6, 0.2, 1); }
-	30% { opacity: 0.28; scale: 0.98; }
-	75% { opacity: 0.28; scale: 0.98; animation-timing-function: ease-in; }
-	100% { opacity: 0.75; scale: 1.04; }
+	0% { opacity: 0.5; scale: 1.03; animation-timing-function: cubic-bezier(0.3, 0.6, 0.2, 1); }
+	30% { opacity: 0.22; scale: 1; }
+	75% { opacity: 0.22; scale: 1; animation-timing-function: ease-in; }
+	100% { opacity: 0.5; scale: 1.03; }
 }
 
 @media (prefers-reduced-motion: reduce) {

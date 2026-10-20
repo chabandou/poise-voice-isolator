@@ -255,8 +255,7 @@ const AppPreview = () => (
 					<span className="text-accent">Six colorways.</span>
 				</h2>
 				<p className="mt-5 max-w-md text-[1.05rem] leading-[1.7] text-muted" {...reveal(180)}>
-					Preview a theme and press the dial to start isolating, drag the ring to choose how strongly music and noise are
-					removed. Fully yours, and in your control. 
+					Press the dial to start isolating, drag the ring to choose how strongly music and noise are removed. Make it yours, you're in control. 
 				</p>
 				<div className="mt-9">
 					<ThemePicker />
