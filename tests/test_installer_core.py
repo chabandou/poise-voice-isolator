@@ -200,3 +200,14 @@ def test_version_is_read_from_the_bundled_file(tmp_path, monkeypatch):
     monkeypatch.setattr(brand.sys, "_MEIPASS", str(tmp_path), raising=False)
     monkeypatch.setattr(brand, "_version", None)
     assert brand.version() == "9.9.9"
+
+
+def test_colours_come_only_from_the_palette():
+    """No hex colour outside brand.py: everything derives from Halcyon."""
+    import re
+    here = os.path.join(os.path.dirname(__file__), "..", "installer",
+                        "bootstrapper")
+    for name in ("widgets.py", "pages.py", "window.py", "chrome.py"):
+        with open(os.path.join(here, name), encoding="utf-8") as fh:
+            found = re.findall(r"#[0-9a-fA-F]{6}\b", fh.read())
+        assert not found, f"{name} hard-codes {found}"

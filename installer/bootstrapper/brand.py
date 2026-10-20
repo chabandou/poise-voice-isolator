@@ -5,11 +5,12 @@ Standalone on purpose. Importing stream_denoiser.gui would execute
 gui/__init__.py, which imports MainWindow and drags the entire
 application (audio backends, models, Qt Quick) into a 40 MB setup
 window. PALETTE therefore repeats gui/themes.py's "halcyon" entry verbatim;
-tests/test_installer_ui.py asserts the two stay identical.
+tests/test_installer_core.py asserts the two stay identical.
 
-Colours that are not palette tokens (washes, hairlines, the dark ink on
-an accent fill) are derived there too, so the setup window can never
-drift into a palette of its own.
+Every other colour is one the app itself uses for the same element
+(gui/styles.py, gui/titlebar.py), built from PALETTE or from the app's
+own fixed neutrals (its slate hairlines, its checkbox grey). Nothing
+here is a colour of the installer's own.
 """
 from __future__ import annotations
 
@@ -35,20 +36,46 @@ PALETTE = {
     "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
 }
 
-# Derived surfaces and hairlines (see module docstring).
-WINDOW = PALETTE["bg"]
-RAIL_TOP = "#0c1626"
-RAIL_BOTTOM = "#070b14"
-LOG_BG = "#070d16"
-INK = "#04141b"                       # text on an accent fill
-ACCENT_DIM = "#3aa8bd"                # pressed
-ACCENT_FAINT = "rgba(95, 213, 235, 0.07)"
-ACCENT_WASH = "rgba(95, 213, 235, 0.13)"
-ACCENT_BORDER = "rgba(95, 213, 235, 0.32)"
-ACCENT_GLOW = (95, 213, 235)
-BORDER = "rgba(165, 200, 255, 0.14)"
-BORDER_STRONG = "rgba(165, 200, 255, 0.26)"
-DIVIDER = "rgba(150, 185, 225, 0.18)"
+# Derived values, each named after the app rule it copies.
+
+
+def _rgba(rgb: str, alpha: float) -> str:
+    return f"rgba({rgb}, {alpha})"
+
+
+#: The app's fixed slate neutral (148, 163, 184): sidebar edge, ghost
+#: buttons, log and scrollbar hairlines, at the app's own alphas.
+SLATE_RGB = "148, 163, 184"
+#: styles.py ACCENT_WASH_ALPHA (themes.py): hover/pressed accent washes.
+ACCENT_WASH_ALPHA = 0.12
+
+WINDOW = PALETTE["bg"]                       # QMainWindow / page fill
+RAIL = PALETTE["sidebar"]                    # QFrame#sidebar
+RAIL_EDGE = _rgba(SLATE_RGB, 0.12)           # its border-right
+FRAME = PALETTE["sidebar"]                   # titlebar.py BORDER_KEY
+INK = PALETTE["bg"]                          # text on an accent fill
+CARD_BORDER = _rgba(PALETTE["border_rgb"], PALETTE["border_alpha"])
+ACCENT_WASH = _rgba(PALETTE["accent_rgb"], ACCENT_WASH_ALPHA)
+ACCENT_DISABLED = _rgba(PALETTE["accent_rgb"], 0.3)
+GHOST_FILL = _rgba(SLATE_RGB, 0.08)
+GHOST_BORDER = _rgba(SLATE_RGB, 0.18)
+LOG_BORDER = _rgba(SLATE_RGB, 0.14)
+SCROLL = _rgba(SLATE_RGB, 0.25)
+SCROLL_HOVER = _rgba(SLATE_RGB, 0.45)
+CHIP = _rgba(PALETTE["secondary_rgb"], 0.16)    # QFrame#chip
+CHECK_BORDER = "#475569"                     # QCheckBox::indicator
+
+
+def hex_rgb(colour: str) -> str:
+    """'#RRGGBB' -> 'r, g, b'."""
+    value = colour.lstrip("#")
+    return ", ".join(str(int(value[i:i + 2], 16)) for i in (0, 2, 4))
+
+
+#: The app's status chips are their colour at 14% (QFrame#err-chip).
+SUCCESS_CHIP = _rgba(hex_rgb(PALETTE["success"]), 0.14)
+WARNING_FILL = _rgba(hex_rgb(PALETTE["warning"]), 0.07)
+WARNING_BORDER = _rgba(hex_rgb(PALETTE["warning"]), 0.26)
 
 HEADING_FALLBACK = "Segoe UI"
 FONT_FILES = ("fonts/Rajdhani-Bold.ttf", "fonts/Rajdhani-SemiBold.ttf")
@@ -170,7 +197,7 @@ QLabel#sub { color: @muted@; }
 QLabel#small { color: @muted@; }
 QLabel#card-title { color: @text@; }
 QLabel#card-sub { color: @muted@; }
-QLabel#notice-title { color: @accent_light@; }
+QLabel#notice-title { color: @text@; }
 QLabel#notice-sub { color: @muted@; }
 QLabel#warn-title { color: @warning@; }
 QLabel#warning { color: @warning@; }
@@ -180,61 +207,55 @@ QLabel#wordsub { color: @accent@; }
 QLabel#tagline { color: @muted@; }
 QLabel#version { color: @muted@; }
 
-QFrame#card {
+/* QFrame#card in the app; the driver notice is a card too. */
+QFrame#card, QFrame#notice {
     background-color: @card@;
-    border: 1px solid @border@;
-    border-radius: 12px;
+    border: 1px solid @card_border@;
+    border-radius: 16px;
 }
-QFrame#notice {
-    background-color: @accent_faint@;
-    border: 1px solid @accent_border@;
-    border-radius: 12px;
+/* QFrame#chip: the secondary-tinted icon chip on the app's cards. */
+QLabel#chip {
+    color: @secondary@;
+    background-color: @chip@;
+    border-radius: 11px;
+    font-size: 11px;
+    font-weight: 700;
 }
 QFrame#warn {
-    background-color: rgba(250, 204, 21, 0.07);
-    border: 1px solid rgba(250, 204, 21, 0.26);
-    border-radius: 12px;
-}
-QFrame#rule {
-    background-color: @border@;
-    border: none;
-    min-height: 1px;
-    max-height: 1px;
+    background-color: @warning_fill@;
+    border: 1px solid @warning_border@;
+    border-radius: 16px;
 }
 
 QPushButton#primary {
     background-color: @accent@;
     color: @ink@;
     border: none;
-    border-radius: 9px;
+    border-radius: 10px;
     padding: 0 26px;
     min-height: 42px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
 }
 QPushButton#primary:hover { background-color: @accent_light@; }
-QPushButton#primary:pressed { background-color: @accent_dim@; }
 QPushButton#primary:disabled {
-    background-color: rgba(95, 213, 235, 0.20);
+    background-color: @accent_disabled@;
     color: @muted@;
 }
 
 QPushButton#ghost {
-    background-color: transparent;
-    color: @device_title@;
-    border: 1px solid @border_strong@;
-    border-radius: 9px;
+    background-color: @ghost_fill@;
+    color: @text@;
+    border: 1px solid @ghost_border@;
+    border-radius: 10px;
     padding: 0 20px;
     min-height: 42px;
     font-size: 13px;
+    font-weight: 600;
 }
-QPushButton#ghost:hover {
-    color: @text@;
-    border-color: @accent_border@;
-    background-color: @accent_faint@;
-}
+QPushButton#ghost:hover { border-color: @secondary@; }
 QPushButton#ghost:pressed { background-color: @accent_wash@; }
-QPushButton#ghost:disabled { color: @muted@; border-color: @border@; }
+QPushButton#ghost:disabled { color: @muted@; }
 
 QPushButton#tool {
     background: transparent;
@@ -246,11 +267,12 @@ QPushButton#tool {
 QPushButton#tool:hover { color: @accent_light@; }
 QPushButton#tool:disabled { color: @muted@; }
 
+/* QPlainTextEdit#logs */
 QPlainTextEdit#log {
-    background-color: @log@;
-    border: 1px solid @border@;
-    border-radius: 8px;
-    color: @muted@;
+    background-color: @sidebar@;
+    border: 1px solid @log_border@;
+    border-radius: 12px;
+    color: @text@;
     font-family: 'Consolas', 'Cascadia Mono', monospace;
     font-size: 11px;
     padding: 8px;
@@ -258,36 +280,42 @@ QPlainTextEdit#log {
 
 QScrollBar:vertical {
     background: transparent;
-    width: 9px;
+    width: 10px;
     margin: 2px;
 }
 QScrollBar::handle:vertical {
-    background: @border_strong@;
+    background: @scroll@;
     border-radius: 4px;
-    min-height: 24px;
+    min-height: 30px;
 }
+QScrollBar::handle:vertical:hover { background: @scroll_hover@; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
 """
 
 _TOKENS = {
     "bg": WINDOW,
+    "sidebar": PALETTE["sidebar"],
     "card": PALETTE["card"],
     "text": PALETTE["text"],
     "muted": PALETTE["muted"],
-    "device_title": PALETTE["device_title"],
     "warning": PALETTE["warning"],
     "error": PALETTE["error"],
     "accent": PALETTE["accent"],
     "accent_light": PALETTE["accent_light"],
-    "accent_dim": ACCENT_DIM,
-    "accent_faint": ACCENT_FAINT,
+    "secondary": PALETTE["secondary"],
     "accent_wash": ACCENT_WASH,
-    "accent_border": ACCENT_BORDER,
-    "border": BORDER,
-    "border_strong": BORDER_STRONG,
+    "accent_disabled": ACCENT_DISABLED,
+    "card_border": CARD_BORDER,
+    "chip": CHIP,
+    "ghost_fill": GHOST_FILL,
+    "ghost_border": GHOST_BORDER,
+    "log_border": LOG_BORDER,
+    "scroll": SCROLL,
+    "scroll_hover": SCROLL_HOVER,
+    "warning_fill": WARNING_FILL,
+    "warning_border": WARNING_BORDER,
     "ink": INK,
-    "log": LOG_BG,
 }
 
 

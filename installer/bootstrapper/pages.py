@@ -109,8 +109,9 @@ def _button(text: str, kind: str = "ghost") -> QPushButton:
     return button
 
 
-READY_FG = "#7ee0b0"
-READY_BG = "rgba(126, 224, 176, 0.12)"
+#: Status chips: the app's colour-at-14% chips (QFrame#err-chip).
+READY_FG = brand.PALETTE["success"]
+READY_BG = brand.SUCCESS_CHIP
 
 
 class WelcomePage(Page):
@@ -196,12 +197,11 @@ class WelcomePage(Page):
         box.setContentsMargins(16, 13, 16, 13)
         box.setSpacing(13)
 
+        # The app's icon chip: the secondary colour on its 16% tint.
         dot = QLabel("i")
+        dot.setObjectName("chip")
         dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dot.setFixedSize(22, 22)
-        dot.setStyleSheet(
-            "QLabel { color: #a5f3fc; background-color: rgba(95, 213, 235, 0.16);"
-            " border-radius: 11px; font-size: 11px; font-weight: 700; }")
         box.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
 
         texts = QVBoxLayout()

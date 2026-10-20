@@ -18,8 +18,9 @@ DWMWA_BORDER_COLOR = 34
 DWMWCP_ROUND = 2
 WIN11_BUILD = 22000
 
-#: The hairline DWM draws around the frame, matched to the rail.
-FRAME_COLOR = "#16233a"
+#: The hairline DWM draws around the frame: the app's own title bar
+#: uses the theme's sidebar colour (gui/titlebar.py BORDER_KEY).
+from .brand import FRAME as FRAME_COLOR  # noqa: E402
 
 
 class _Margins(ctypes.Structure):

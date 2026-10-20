@@ -16,22 +16,38 @@ from PyQt6.QtCore import (
     QVariantAnimation,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter,
+    QBrush, QColor, QFont, QFontMetrics, QImage, QPainter,
     QPainterPath, QPen, QPixmap, QRadialGradient, QTransform,
 )
 from PyQt6.QtWidgets import QAbstractButton, QLabel, QSizePolicy, QWidget
 
 from . import brand
 
-ACCENT = QColor(95, 213, 235)
-ACCENT_LIGHT = QColor(165, 243, 252)
-TEXT = QColor(248, 250, 252)
-MUTED = QColor(139, 148, 163)
-DEVICE_TITLE = QColor(154, 163, 178)
-BORDER_RGB = (165, 200, 255)
-SUCCESS = QColor(74, 222, 128)
-ERROR = QColor(248, 113, 113)
-WARNING = QColor(250, 204, 21)
+_P = brand.PALETTE
+
+
+def _triple(rgb: str) -> tuple:
+    return tuple(int(part) for part in rgb.split(","))
+
+
+ACCENT = QColor(_P["accent"])
+ACCENT_LIGHT = QColor(_P["accent_light"])
+SECONDARY = QColor(_P["secondary"])
+TEXT = QColor(_P["text"])
+MUTED = QColor(_P["muted"])
+NAV_MUTED = QColor(_P["nav_muted"])
+GROOVE = QColor(_P["groove"])
+SIDEBAR = QColor(_P["sidebar"])
+INK = QColor(brand.INK)
+BORDER_RGB = _triple(_P["border_rgb"])
+SLATE_RGB = _triple(brand.SLATE_RGB)
+CHECK_BORDER = QColor(brand.CHECK_BORDER)
+SUCCESS = QColor(_P["success"])
+ERROR = QColor(_P["error"])
+WARNING = QColor(_P["warning"])
+#: Alphas the app uses, as 0-255.
+WASH = round(brand.ACCENT_WASH_ALPHA * 255)
+BORDER_ALPHA = round(_P["border_alpha"] * 255)
 
 
 def rgba(colour, alpha: int) -> QColor:
@@ -276,22 +292,15 @@ class Rail(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect())
 
-        background = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-        background.setColorAt(0.0, QColor(brand.RAIL_TOP))
-        background.setColorAt(1.0, QColor(brand.RAIL_BOTTOM))
-        painter.fillRect(rect, background)
-
-        glow = QRadialGradient(rect.width() / 2, 132, 250)
-        glow.setColorAt(0.0, QColor(95, 213, 235, 26))
-        glow.setColorAt(1.0, QColor(95, 213, 235, 0))
-        painter.fillRect(rect, glow)
+        # The app's sidebar: one flat fill, no gradient of its own.
+        painter.fillRect(rect, SIDEBAR)
 
         # The Home card's lattice, at the design's 20% over the whole rail.
         painter.setOpacity(LATTICE_OPACITY)
         painter.drawImage(0, 0, self._lattice_image())
         painter.setOpacity(1.0)
 
-        painter.setPen(QPen(rgba(BORDER_RGB, 24), 1))
+        painter.setPen(QPen(rgba(SLATE_RGB, 31), 1))      # 12%, as the app
         painter.drawLine(int(rect.width()) - 1, 0,
                          int(rect.width()) - 1, int(rect.height()))
 
@@ -309,7 +318,7 @@ class Ornament(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         mid = self.height() / 2
-        painter.setPen(QPen(rgba((232, 196, 104), 70), 1))
+        painter.setPen(QPen(rgba(SECONDARY, 70), 1))
         painter.drawLine(0, int(mid), self.width(), int(mid))
         centre = self.width() / 2
         diamond = QPainterPath()
@@ -319,7 +328,7 @@ class Ornament(QWidget):
         diamond.lineTo(centre - 4.2, mid)
         diamond.closeSubpath()
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(rgba((232, 196, 104), 190))
+        painter.setBrush(rgba(SECONDARY, 190))
         painter.drawPath(diamond)
 
 
@@ -357,8 +366,8 @@ class Check(QAbstractButton):
         if checked:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(ACCENT)
-            painter.drawRoundedRect(box, 5, 5)
-            pen = QPen(QColor(brand.INK), 2.0)
+            painter.drawRoundedRect(box, 4, 4)
+            pen = QPen(INK, 2.0)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)
@@ -369,19 +378,20 @@ class Check(QAbstractButton):
             tick.lineTo(box.left() + 13.6, box.top() + 5.4)
             painter.drawPath(tick)
         else:
-            painter.setPen(QPen(rgba(BORDER_RGB, 96 if hovered else 62), 1.2))
+            # QCheckBox::indicator: 2px slate, the accent on hover.
+            painter.setPen(QPen(ACCENT if hovered else CHECK_BORDER, 2.0))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(box.adjusted(0.6, 0.6, -0.6, -0.6), 5, 5)
+            painter.drawRoundedRect(box.adjusted(1, 1, -1, -1), 4, 4)
 
         if self.hasFocus():
-            painter.setPen(QPen(rgba((95, 213, 235), 120), 1.2))
+            painter.setPen(QPen(rgba(ACCENT, 120), 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(
                 box.adjusted(-self.RING, -self.RING,
                              self.RING, self.RING), 7, 7)
 
         painter.setFont(self.font())
-        painter.setPen(TEXT if (checked or hovered) else DEVICE_TITLE)
+        painter.setPen(TEXT)
         painter.drawText(
             QRectF(self.INSET + self.BOX + 10, 0,
                    self.width() - self.INSET - self.BOX - 10, self.height()),
@@ -415,13 +425,13 @@ class WindowButton(QAbstractButton):
         hovered = self.underMouse() and enabled
         if hovered:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(rgba(BORDER_RGB, 26))
+            painter.setBrush(rgba(ACCENT, WASH))
             painter.drawEllipse(QRectF(1, 1, self.width() - 2,
                                        self.height() - 2))
         if not enabled:
             colour = rgba(TEXT, 70)
         else:
-            colour = TEXT if hovered else DEVICE_TITLE
+            colour = TEXT if hovered else NAV_MUTED
         pen = QPen(colour, 1.4)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
@@ -456,7 +466,7 @@ class Progress(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         track = QRectF(0, (self.height() - 6) / 2, self.width(), 6)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(rgba(BORDER_RGB, 26))
+        painter.setBrush(GROOVE)
         painter.drawRoundedRect(track, 3, 3)
         if self._value <= 0:
             return
@@ -465,15 +475,12 @@ class Progress(QWidget):
         # The head's halo sits behind the fill, so it reads as a soft edge
         # rather than a grey smudge over the empty track.
         head = QRadialGradient(fill.right(), fill.center().y(), 12)
-        head.setColorAt(0.0, QColor(165, 243, 252, 45))
-        head.setColorAt(1.0, QColor(165, 243, 252, 0))
+        head.setColorAt(0.0, rgba(ACCENT_LIGHT, 45))
+        head.setColorAt(1.0, rgba(ACCENT_LIGHT, 0))
         painter.setBrush(head)
         painter.drawEllipse(
             QRectF(fill.right() - 12, fill.center().y() - 12, 24, 24))
-        wash = QLinearGradient(fill.topLeft(), fill.topRight())
-        wash.setColorAt(0.0, QColor(95, 213, 235, 190))
-        wash.setColorAt(1.0, ACCENT_LIGHT)
-        painter.setBrush(wash)
+        painter.setBrush(ACCENT)
         painter.drawRoundedRect(fill, 3, 3)
 
 
@@ -526,7 +533,7 @@ class StepRow(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(ACCENT)
             painter.drawEllipse(centre)
-            pen = QPen(QColor(brand.INK), 1.4)
+            pen = QPen(INK, 1.4)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -536,16 +543,16 @@ class StepRow(QWidget):
             tick.lineTo(centre.left() + 6.2, mid - 2.0)
             painter.drawPath(tick)
         else:
-            colour = rgba(BORDER_RGB, 70)
+            colour = rgba(BORDER_RGB, BORDER_ALPHA + 14)
             if self._state == self.SKIPPED:
-                colour = rgba((95, 213, 235), 90)
+                colour = rgba(ACCENT, 90)
             painter.setPen(QPen(colour, 1.2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(centre)
 
         painter.setFont(ui_font(12.5, QFont.Weight.Medium))
         painter.setPen(TEXT if self._state == self.ACTIVE else
-                      (DEVICE_TITLE if self._state == self.DONE else MUTED))
+                      (NAV_MUTED if self._state == self.DONE else MUTED))
         painter.drawText(QRectF(22, 0, self.width() - 140, self.height()),
                          int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                          self._label)
@@ -573,8 +580,8 @@ class StepRow(QWidget):
         radius = self.SPIN_RADIUS
 
         halo = QRadialGradient(centre, 13)
-        halo.setColorAt(0.0, QColor(95, 213, 235, 46))
-        halo.setColorAt(1.0, QColor(95, 213, 235, 0))
+        halo.setColorAt(0.0, rgba(ACCENT, 46))
+        halo.setColorAt(1.0, rgba(ACCENT, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(halo)
         painter.drawEllipse(centre, 13, 13)
@@ -750,7 +757,7 @@ class ElidedLabel(QWidget):
     def __init__(self, text: str = "", colour: QColor = None, parent=None):
         super().__init__(parent)
         self._text = text
-        self._colour = colour if colour is not None else DEVICE_TITLE
+        self._colour = colour if colour is not None else NAV_MUTED
         self.setFont(ui_font(12))
         self.setFixedHeight(18)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
