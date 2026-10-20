@@ -279,3 +279,16 @@ def test_running_step_spins_and_stops_when_done(app):
         assert not row._timer.isActive()
     finally:
         row.deleteLater()
+
+
+def test_driver_card_credits_vb_audio_with_a_link(app):
+    from installer_harness import load
+    pages = load("pages")
+    for cable in (True, False, None):
+        page = pages.WelcomePage("C:\\Poise", cable=cable)
+        try:
+            text = page.driver_credit.text()
+            assert "Donationware by VB-Audio" in text
+            assert f'href="{pages.VB_AUDIO_URL}"' in text
+        finally:
+            page.deleteLater()

@@ -110,6 +110,29 @@ def _button(text: str, kind: str = "ghost") -> QPushButton:
 
 
 #: Status chips: the app's colour-at-14% chips (QFrame#err-chip).
+VB_AUDIO_URL = "https://vb-audio.com/Cable/"
+
+
+def open_url(url: str) -> None:
+    """Open a link in the user's browser.
+
+    Setup runs elevated, and a browser started from it would run as
+    administrator too. On Windows the link goes through explorer.exe,
+    which hands it to the user's own (unelevated) shell instead.
+    """
+    import subprocess
+    import sys
+    if sys.platform == "win32":
+        try:
+            subprocess.Popen(["explorer.exe", url])
+            return
+        except OSError:
+            pass
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+    QDesktopServices.openUrl(QUrl(url))
+
+
 READY_FG = brand.PALETTE["success"]
 READY_BG = brand.SUCCESS_CHIP
 
@@ -222,6 +245,24 @@ class WelcomePage(Page):
             state = ("AUTOMATIC", brand.PALETTE["badge_fg"], brand.PALETTE["badge_bg"])
         self.driver_detail = _label(detail, ui_font(11.5), "notice-sub", wrap=True)
         texts.addWidget(self.driver_detail)
+
+        # VB-Audio's terms ask for this credit; the same text is in
+        # installer/windows/vbcable-notice.txt.
+        accent = brand.PALETTE["accent"]
+        self.driver_credit = _label(
+            "Donationware by VB-Audio Software · donations welcome at "
+            # nowrap: the link moves to the next line whole, never split.
+            '<span style="white-space: nowrap;">'
+            f'<a href="{VB_AUDIO_URL}" style="color: {accent};'
+            ' text-decoration: none;">vb-audio.com/Cable</a></span>',
+            ui_font(11), "small", wrap=True)
+        self.driver_credit.setTextFormat(Qt.TextFormat.RichText)
+        self.driver_credit.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self.driver_credit.linkActivated.connect(open_url)
+        texts.addSpacing(2)
+        texts.addWidget(self.driver_credit)
         box.addLayout(texts, 1)
         box.addWidget(_chip(*state), 0, Qt.AlignmentFlag.AlignTop)
         return card
