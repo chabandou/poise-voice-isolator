@@ -226,18 +226,49 @@ def ambient_ok() -> bool:
 
 
 # -- one clock for the ambient loops -------------------------------------------
+# While another app is in front, Poise is at most glanced at: its steady
+# loops run this many times slower. Transitions (a frame every
+# TRANSITION_MAX_MS or sooner) answer the user, a wheel turn on the dial
+# or Start from the tray, and keep their pace.
+BACKGROUND_PACE = 2
+TRANSITION_MAX_MS = 20
+
+
 class _FrameClock(QObject):
     """The one timer behind every FrameTimer. It runs at the shortest
     interval any running FrameTimer asks for and, on each tick, fires
     those that are due, together: what they repaint is painted in one
     pass. (With a timer each, the dial was painted once for its own
-    clock and again for the card's behind it.)"""
+    clock and again for the card's behind it.) While the application is
+    not the active one, steady loops slow by BACKGROUND_PACE."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._running = {}                 # id -> FrameTimer
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
+        self._pace = 1
+        state_changed = getattr(parent, "applicationStateChanged", None)
+        if state_changed is not None:
+            state_changed.connect(self._on_state)
+            self._on_state(parent.applicationState())
+
+    def _on_state(self, state) -> None:
+        pace = (1 if state == Qt.ApplicationState.ApplicationActive
+                else BACKGROUND_PACE)
+        if pace != self._pace:
+            self._pace = pace
+            for frame_timer in self._running.values():
+                if not sip.isdeleted(frame_timer):
+                    frame_timer._due = time.monotonic()   # re-paced next tick
+            self._retime()
+
+    def interval_of(self, frame_timer) -> int:
+        """`frame_timer`'s interval at the current pace."""
+        interval = frame_timer.interval()
+        if interval > TRANSITION_MAX_MS:
+            interval *= self._pace
+        return interval
 
     def add(self, frame_timer) -> None:
         self._running[id(frame_timer)] = frame_timer
@@ -248,10 +279,12 @@ class _FrameClock(QObject):
             self._retime()
 
     def _retime(self) -> None:
-        if not self._running:
+        intervals = [self.interval_of(t) for t in self._running.values()
+                     if not sip.isdeleted(t)]
+        if not intervals:
             self._timer.stop()
             return
-        interval = min(t.interval() for t in self._running.values())
+        interval = min(intervals)
         if self._timer.interval() != interval:
             self._timer.setInterval(interval)
         if not self._timer.isActive():
@@ -270,7 +303,7 @@ class _FrameClock(QObject):
                 continue
             if now < frame_timer._due - slack:
                 continue
-            frame_timer._due = now + frame_timer.interval() / 1000.0
+            frame_timer._due = now + self.interval_of(frame_timer) / 1000.0
             frame_timer.timeout.emit()
 
 
@@ -305,8 +338,9 @@ class FrameTimer(QObject):
         if msec is not None:
             self._interval = max(1, int(msec))
         self._active = True
-        self._due = time.monotonic() + self._interval / 1000.0
-        _clock().add(self)
+        clock = _clock()
+        self._due = time.monotonic() + clock.interval_of(self) / 1000.0
+        clock.add(self)
 
     def stop(self) -> None:
         if self._active:

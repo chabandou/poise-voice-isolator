@@ -45,6 +45,39 @@ def test_loops_fire_on_the_same_ticks(app):
         assert min(abs(t - f) for f in ticks["fast"]) < 0.002
 
 
+def _count(app, loop, secs):
+    fired = []
+    loop.timeout.connect(lambda: fired.append(1))
+    _pump(app, secs)
+    loop.timeout.disconnect()
+    return len(fired)
+
+
+def test_steady_loops_slow_while_another_app_is_in_front(app):
+    from PyQt6.QtCore import Qt
+    from stream_denoiser.gui.animations import (
+        BACKGROUND_PACE, FrameTimer, _clock)
+    clock = _clock()
+    steady, transition = FrameTimer(), FrameTimer()
+    steady.start(50)
+    transition.start(16)
+    try:
+        clock._on_state(Qt.ApplicationState.ApplicationActive)
+        in_front = _count(app, steady, 1.0)
+        clock._on_state(Qt.ApplicationState.ApplicationInactive)
+        assert clock.interval_of(steady) == 50 * BACKGROUND_PACE
+        assert clock.interval_of(transition) == 16
+        behind = _count(app, steady, 1.0)
+        fast_behind = _count(app, transition, 0.5)
+    finally:
+        clock._on_state(app.applicationState())
+        steady.stop()
+        transition.stop()
+    assert 16 <= in_front <= 21              # ~20 a second
+    assert 8 <= behind <= 11                 # ~10
+    assert fast_behind >= 20                 # still ~one a clock tick
+
+
 def test_a_stopped_loop_stays_quiet(app):
     from stream_denoiser.gui.animations import FrameTimer
     quiet = FrameTimer()
