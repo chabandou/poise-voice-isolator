@@ -74,6 +74,7 @@ class SetupWindow(QWidget):
         self._value = 0.0
         self._target = 0.0
         self._log_path = ""
+        self._driver_reboot = False
         self._fade = None
         self._animation = None
         self._drag_offset = None
@@ -158,6 +159,7 @@ class SetupWindow(QWidget):
         self.close_button.setEnabled(False)
         self._value = 0.0
         self._target = 8.0
+        self._driver_reboot = False
         self._installing = True
         self._show(self.progress)
         self._pump.start()
@@ -179,14 +181,21 @@ class SetupWindow(QWidget):
             self._target = PHASE_TARGETS[name]
 
     def _on_driver(self, event: str) -> None:
-        if self._installing:
-            self.progress.set_driver(event)
+        if not self._installing:
+            return
+        if event == "reboot":
+            self._driver_reboot = True
+        self.progress.set_driver(event)
 
     def _on_finished(self, status: str) -> None:
         self._installing = False
         self._pump.stop()
         self.welcome.set_installing(False)
         self.close_button.setEnabled(True)
+        # Inno exits 0 under /NORESTART even when NeedRestart() says yes;
+        # only the core's driver marker knows a restart is due.
+        if status == core.OK and self._driver_reboot:
+            status = core.REBOOT
 
         if status in (core.OK, core.REBOOT):
             self._value = 100.0

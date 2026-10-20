@@ -162,6 +162,30 @@ def test_reboot_outcome_disables_launch_and_warns(app, tmp_path):
         w.deleteLater()
 
 
+def test_driver_reboot_marker_turns_a_clean_exit_into_a_restart(app, tmp_path):
+    # Inno exits 0 under /NORESTART even when a restart is due; the
+    # driver marker is the only signal, and it must reach the finish page.
+    fake = FakeInstaller()
+    w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))
+    try:
+        w.start_install()
+        fake.phase_changed.emit("driver")
+        fake.driver_event.emit("reboot")
+        fake.finished.emit("ok")
+        QTest.qWait(600)
+        assert w.stack.currentWidget() is w.finish
+        assert w.finish.reboot_frame.isVisibleTo(w.finish)
+        assert w.finish.restart.isChecked()
+
+        # A retry starts clean: the previous run's restart does not leak.
+        w.start_install()
+        fake.finished.emit("ok")
+        QTest.qWait(600)
+        assert not w.finish.reboot_frame.isVisibleTo(w.finish)
+    finally:
+        w.deleteLater()
+
+
 def test_failure_shows_the_error_page_with_the_log(app, tmp_path):
     fake = FakeInstaller()
     w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))
