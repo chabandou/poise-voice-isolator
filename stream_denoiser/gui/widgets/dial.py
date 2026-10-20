@@ -618,11 +618,17 @@ class DialButton(PowerButton):
             return True
         return (self._since(self._pluck_at) < PLUCK_BIG_MS
                 or self._since(self._bump_at) < BUMP_MS
-                or self._sweeping())
+                or self._sweep_moving())
 
     def _sweeping(self) -> bool:
+        """The first show's sweep is due or drawing the ring (the ticks
+        hide till it reaches them)."""
         return (self._sweep_at is not None
                 and self._since(self._sweep_at) < self._sweep_ms()[1])
+
+    def _sweep_moving(self) -> bool:
+        """The sweep has begun (before, nothing moves: see showEvent)."""
+        return self._sweeping() and self._since(self._sweep_at) >= 0.0
 
     def _tick(self) -> None:
         if any(len(column) > 1 for column in self._mists):
@@ -662,6 +668,8 @@ class DialButton(PowerButton):
             if ambient_ok():
                 delay = self._sweep_ms()[0]
                 self._sweep_at = time.monotonic() + delay / 1000.0
+                # The clock starts with the sweep.
+                QTimer.singleShot(delay, self._run_clock)
         self._run_clock()
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
