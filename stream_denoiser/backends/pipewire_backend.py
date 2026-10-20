@@ -19,6 +19,7 @@ from typing import Callable, Optional, Tuple
 
 from ..audio_gc import gc_paused
 from ..constants import (
+    BACKEND_ENV,
     LINUX_BACKENDS,
     PULSE_TARGET_SR,
     PW_FADE_SAMPLES,
@@ -41,7 +42,6 @@ from .pipewire_node import (
 
 _logger = get_logger(__name__)
 
-BACKEND_ENV = "POISE_BACKEND"
 MARGIN_ENV = "POISE_PW_MARGIN_MS"
 
 # How long the new sink may take to show up at the Pulse level.

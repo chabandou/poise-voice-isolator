@@ -64,10 +64,11 @@ def test_win32_branch_raises_windows_error_when_unloadable(monkeypatch):
     # Pretend to be Windows on a host that cannot load PE binaries:
     # every candidate (incl. the vendored DLL) fails with OSError,
     # so the loader must surface the Windows-specific message.
-    import stream_denoiser.engines.rnnoise as rnnoise_mod
+    # The loader (and its cache) live in rnnoise_lib, apart from the engine.
+    import stream_denoiser.engines.rnnoise_lib as rnnoise_lib
 
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(rnnoise_mod, "_lib", None)
+    monkeypatch.setattr(rnnoise_lib, "_lib", None)
     with pytest.raises(RuntimeError, match=r"rnnoise\.dll"):
-        rnnoise_mod._load_library()
-    assert rnnoise_mod._lib is None, "failed load must not be cached"
+        rnnoise_lib._load_library()
+    assert rnnoise_lib._lib is None, "failed load must not be cached"

@@ -13,40 +13,16 @@ The vendored file is that export rewritten by tools/optimize_df3.py (its
 inverse FFT done as small MatMuls instead of a 4.2 MB matrix): same inputs,
 outputs and states, same output to within float rounding.
 """
-import os
 from typing import Dict, Optional
 
 import numpy as np
 
+from .availability import _search_model_files, df3_available
 from .base import DelayLine, DenoiseEngine, mix_dry
-from .onnx_model import find_model_file, load_session
-from ..constants import MODEL_DEEPFILTERNET3
+from .onnx_model import load_session
+from ..constants import DEFAULT_DF3_ONNX, MODEL_DEEPFILTERNET3
 
-DEFAULT_DF3_ONNX = 'denoiser_model_df3.onnx'
 DEFAULT_DF3_STATES = 'denoiser_model_df3_states.npz'
-
-
-def _search_model_files(onnx_name: str, states_name: Optional[str] = None):
-    """
-    Locate the DF3 ONNX file (and its states .npz) in the usual locations
-    (see onnx_model.model_search_paths).
-
-    Returns (onnx_path, states_path); states_path is resolved as the
-    `<onnx_stem>_states.npz` sibling unless states_name is given.
-    Raises FileNotFoundError listing every searched location.
-    """
-    onnx_path = find_model_file(onnx_name, "DeepFilterNet3")
-
-    if states_name is None:
-        stem, _ = os.path.splitext(os.path.basename(onnx_path))
-        states_name = stem + '_states.npz'
-    states_path = os.path.join(os.path.dirname(onnx_path), states_name)
-    if not os.path.exists(states_path):
-        raise FileNotFoundError(
-            f"DeepFilterNet3 states not found: {states_path}\n"
-            f"(expected next to {onnx_path})"
-        )
-    return onnx_path, states_path
 
 
 def _to_df3_atten_lim_db(atten_lim_db: Optional[float]) -> Optional[float]:
@@ -124,11 +100,7 @@ class DeepFilterNet3Engine(DenoiseEngine):
     @classmethod
     def is_available(cls) -> bool:
         """True if the vendored DF3 model files can be found."""
-        try:
-            _search_model_files(DEFAULT_DF3_ONNX)
-            return True
-        except FileNotFoundError:
-            return False
+        return df3_available()
 
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         feeds = {'input_frame': np.ascontiguousarray(frame, dtype=np.float32)}
