@@ -6,7 +6,7 @@ this sheet is a {token} resolved per theme, so all colorways stay
 self-matching. {HEADING_FONT} is the bundled heading face (gui/fonts.py);
 {HEADING_WEIGHT}, {WINDOW_FILL} and {CARD_FILL} are optional per theme
 (themes.STYLE_DEFAULTS: bold headings on flat surfaces unless a theme,
-like Vigil or Mono, says otherwise).
+like Vigil or Eclipse, says otherwise).
 Custom-painted widgets (DialButton, ToggleSwitch) draw
 themselves from the same palette; icons come from the vendored
 Phosphor SVGs (see widgets/phosphor.py).

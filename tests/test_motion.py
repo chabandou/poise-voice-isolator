@@ -1,4 +1,5 @@
 """Motion: eased state blends, hover fades and the theme crossfade (needs Qt)."""
+import math
 import os
 import re
 import time
@@ -379,6 +380,29 @@ def test_text_swap_can_roll_and_still_drops_its_effect(app, shown_label, monkeyp
     _pump(app, 0.5)
     assert shown_label.text() == "rolled"
     assert shown_label.graphicsEffect() is None
+
+
+def test_text_swap_can_smoke_in_place(app, shown_label, monkeypatch):
+    from stream_denoiser.gui.animations import (
+        TextSwap, _SmokeEffect, smoke_wisps,
+    )
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    swap = TextSwap(shown_label, rise=12)
+    swap.set_timing(120, 240, smoke=6)            # smoke wins over the roll
+    swap.set_text("smoked")
+    assert isinstance(shown_label.graphicsEffect(), _SmokeEffect)
+    _pump(app, 0.06)
+    assert 0.0 < shown_label.graphicsEffect().opacity() < 0.97
+    shown_label.grab()                            # draws mid-dissolve
+    _pump(app, 0.5)
+    assert shown_label.text() == "smoked"
+    assert shown_label.graphicsEffect() is None
+    core, wisps = smoke_wisps(0.0, 6)
+    assert core == 1.0 and all(w == dx == dy == 0 for w, dx, dy in wisps)
+    core, wisps = smoke_wisps(1.0, 6)
+    assert core == 0.0
+    assert max(math.hypot(dx, dy) for _, dx, dy in wisps) == pytest.approx(6)
 
 
 def test_rise_in_lands_and_removes_its_effect(app, shown_label, monkeypatch):
