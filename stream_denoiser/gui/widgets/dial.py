@@ -73,7 +73,7 @@ from .sky import (
     breath_pos, keyframes,
 )
 from ..animations import (
-    Blend, EASE_BREATHE, ambient_ok, mix_rgba, smoke_wisps,
+    Blend, EASE_BREATHE, FrameTimer, ambient_ok, mix_rgba, smoke_wisps,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
@@ -304,7 +304,7 @@ class DialButton(PowerButton):
         self._pluck_at = None
         self._pluck_big = False
         self._bump_at = None
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)   # shared with the card's
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)
         self._ring = self._ring_key = None   # see _paint_ring

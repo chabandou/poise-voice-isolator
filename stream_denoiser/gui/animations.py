@@ -44,7 +44,9 @@ Usage:
 
 import math
 import os
+import time
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -221,6 +223,105 @@ def ambient_ok() -> bool:
     keeps a clock running; short feedback on a hover or click checks
     motion_ok and stays."""
     return motion_ok() and not _still
+
+
+# -- one clock for the ambient loops -------------------------------------------
+class _FrameClock(QObject):
+    """The one timer behind every FrameTimer. It runs at the shortest
+    interval any running FrameTimer asks for and, on each tick, fires
+    those that are due, together: what they repaint is painted in one
+    pass. (With a timer each, the dial was painted once for its own
+    clock and again for the card's behind it.)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._running = {}                 # id -> FrameTimer
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+
+    def add(self, frame_timer) -> None:
+        self._running[id(frame_timer)] = frame_timer
+        self._retime()
+
+    def remove(self, key: int) -> None:
+        if self._running.pop(key, None) is not None:
+            self._retime()
+
+    def _retime(self) -> None:
+        if not self._running:
+            self._timer.stop()
+            return
+        interval = min(t.interval() for t in self._running.values())
+        if self._timer.interval() != interval:
+            self._timer.setInterval(interval)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _tick(self) -> None:
+        now = time.monotonic()
+        # Due within half a tick counts: a 33 ms loop on a 16 ms clock
+        # fires every other tick, not every third.
+        slack = self._timer.interval() / 2000.0
+        for key, frame_timer in list(self._running.items()):
+            if key not in self._running:
+                continue                    # stopped by one fired before
+            if sip.isdeleted(frame_timer):  # went with its widget
+                self.remove(key)
+                continue
+            if now < frame_timer._due - slack:
+                continue
+            frame_timer._due = now + frame_timer.interval() / 1000.0
+            frame_timer.timeout.emit()
+
+
+_frame_clock = None
+
+
+class FrameTimer(QObject):
+    """A QTimer for an ambient loop (start, stop, setInterval, timeout),
+    on the clock it shares with every other: loops that run at once fire
+    on the same ticks."""
+
+    timeout = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._interval = 0
+        self._active = False
+        self._due = 0.0
+
+    def interval(self) -> int:
+        return self._interval
+
+    def setInterval(self, msec: int) -> None:  # noqa: N802 (QTimer API)
+        self._interval = max(1, int(msec))
+        if self._active:
+            _clock()._retime()
+
+    def isActive(self) -> bool:  # noqa: N802 (QTimer API)
+        return self._active
+
+    def start(self, msec: int = None) -> None:
+        if msec is not None:
+            self._interval = max(1, int(msec))
+        self._active = True
+        self._due = time.monotonic() + self._interval / 1000.0
+        _clock().add(self)
+
+    def stop(self) -> None:
+        if self._active:
+            self._active = False
+            _clock().remove(id(self))
+
+
+def _clock() -> _FrameClock:
+    """The shared clock, owned by the application so it goes with it (a
+    timer left over after the application is gone crashes on exit)."""
+    global _frame_clock
+    if _frame_clock is None or sip.isdeleted(_frame_clock):
+        from PyQt6.QtCore import QCoreApplication
+        _frame_clock = _FrameClock(QCoreApplication.instance())
+    return _frame_clock
 
 
 def _keep(widget: QWidget, anim: QObject) -> QObject:
