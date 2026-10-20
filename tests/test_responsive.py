@@ -45,6 +45,12 @@ def _wide(app, window, w=1250, h=760):
     _pump(app)
 
 
+def _theme_cols(window):
+    grid = window.theme_grid
+    return 1 + max(grid.getItemPosition(grid.indexOf(t))[1]
+                   for t in window.theme_tiles)
+
+
 def test_wide_mode_is_the_layout(app):
     from PyQt6.QtWidgets import QBoxLayout, QLabel
     from stream_denoiser.gui.scaling import sp
@@ -53,8 +59,7 @@ def test_wide_mode_is_the_layout(app):
     assert window._resp == "wide"
     assert window._home_layout.direction() == QBoxLayout.Direction.TopToBottom
     assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
-    assert (window._settings_bottom.direction()
-            == QBoxLayout.Direction.LeftToRight)
+    assert _theme_cols(window) == 6
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     m = window._home_layout.contentsMargins()
@@ -76,8 +81,7 @@ def test_compact_mode_tightens_chrome(app):
     window = _make_window(app)
     _wide(app, window, w=1000, h=700)
     assert window._resp == "compact"
-    assert (window._settings_bottom.direction()
-            == QBoxLayout.Direction.LeftToRight)
+    assert _theme_cols(window) == 6
     assert not window.sidebar.is_compact
     m = window._home_layout.contentsMargins()
     assert (m.left(), m.top()) == (sp(16), sp(16))
@@ -121,8 +125,7 @@ def test_narrow_mode_reflows(app):
     _wide(app, window, w=720, h=640)
     assert window._resp == "narrow"
     assert window._cards_layout.direction() == QBoxLayout.Direction.TopToBottom
-    assert (window._settings_bottom.direction()
-            == QBoxLayout.Direction.TopToBottom)
+    assert _theme_cols(window) == 3
     assert window.power_btn.width() == sp(240)
     # Icon rail.
     assert window.sidebar.is_compact
@@ -158,19 +161,17 @@ def test_roundtrip_restores_wide(app):
     _wide(app, window, w=1250, h=760)
     assert window._resp == "wide"
     assert window._cards_layout.direction() == QBoxLayout.Direction.LeftToRight
-    assert (window._settings_bottom.direction()
-            == QBoxLayout.Direction.LeftToRight)
+    assert _theme_cols(window) == 6
     assert window.power_btn.width() == sp(300)
     assert not window.sidebar.is_compact
     assert window.sidebar.width() == sp(216)
     assert window.sidebar._buttons[0]._label.isVisible()
-    # Theme tiles back to three across inside the Appearance card.
+    # Theme tiles back to one row across the Appearance card.
     window._on_page_requested(1)
     _pump(app)
     tiles = window.theme_tiles
-    assert tiles[1].x() > tiles[0].x()
-    assert tiles[2].y() == tiles[0].y()
-    assert tiles[3].y() > tiles[0].y()
+    assert all(b.x() > a.x() for a, b in zip(tiles, tiles[1:]))
+    assert all(t.y() == tiles[0].y() for t in tiles)
     window._on_page_requested(0)
     _pump(app)
     window.close()

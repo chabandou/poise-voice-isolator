@@ -237,7 +237,7 @@ class ThemeTile(QAbstractButton):
         self._logo.render(p, QRectF(body.left() + pad, body.top() + pad,
                                     mark, mark))
 
-        # Name (bottom-left) in the theme's text colour.
+        # Name (bottom-right) in the theme's text colour.
         font = QFont(heading_family())
         font.setWeight(QFont.Weight.Bold)
         # Long names must fit narrow tiles: step the
@@ -253,7 +253,7 @@ class ThemeTile(QAbstractButton):
         p.setPen(self._text)
         p.drawText(QRectF(body.left() + pad, body.top(),
                           body.width() - 2 * pad, body.height() - pad * 0.7),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
                    self._name)
 
         # Selection outline in the current theme's secondary colour.

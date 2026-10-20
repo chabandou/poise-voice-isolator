@@ -51,7 +51,6 @@ from .widgets.rolling_number import RollingNumber
 from .widgets.sidebar import Sidebar
 from .widgets.device_selector import DeviceSelector
 from .widgets.chip import IconChip
-from .widgets.model_cards import ModelCards
 from .widgets.settings_row import SettingsRow
 from .widgets.model_selector import ModelSelector
 from .widgets.stats_bar import StatsBar
@@ -238,13 +237,10 @@ class MainWindow(QMainWindow):
         self._settings_layout.setContentsMargins(
             *self._rm((26, 24, 26, 24), (16, 16, 16, 16), (12, 12, 12, 12)))
         self._settings_layout.setSpacing(sp(self._rv(20, 16, 12)))
-        self._settings_bottom.setDirection(V if narrow else H)
-        self._settings_bottom.setSpacing(sp(self._rv(20, 16, 12)))
-        for card_layout in (self._model_layout, self._appearance_layout):
-            card_layout.setContentsMargins(
-                *self._rm((24, 22, 24, 22), (20, 18, 20, 18),
-                          (16, 16, 16, 16)))
-        self._layout_theme_grid(3)
+        self._appearance_layout.setContentsMargins(
+            *self._rm((24, 22, 24, 22), (20, 18, 20, 18), (16, 16, 16, 16)))
+        # Full width, the tiles fit one row; narrow wraps them into two.
+        self._layout_theme_grid(3 if narrow else 6)
 
         # Logs / About
         for page_layout in (self._logs_layout, self._about_layout):
@@ -393,10 +389,9 @@ class MainWindow(QMainWindow):
             "Output device", "output", "Where the clean audio plays")
         self.output_selector.device_changed.connect(
             lambda id: setattr(self.settings, 'output_device', id))
-        # Settings' model cards stay in step (see _on_model_changed).
         self.model_selector = ModelSelector()
-        self.model_selector.currentTextChanged.connect(
-            self._on_home_model_picked)
+        self.model_selector.setCurrentText(self.settings.model)
+        self.model_selector.currentTextChanged.connect(self._on_model_changed)
         for content in (self.output_selector, self.model_selector):
             card = QFrame()
             card.setObjectName("card")
@@ -509,30 +504,6 @@ class MainWindow(QMainWindow):
         self._aad_row = aad_row
         layout.addWidget(list_card)
 
-        # Bottom: model cards + appearance.
-        bottom = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        bottom.setSpacing(sp(20))
-        self._settings_bottom = bottom
-
-        model_card = QFrame()
-        model_card.setObjectName("card")
-        model_layout = QVBoxLayout(model_card)
-        model_layout.setContentsMargins(sp(24), sp(22), sp(24), sp(22))
-        model_layout.setSpacing(sp(16))
-        self._model_layout = model_layout
-        model_layout.addLayout(self._card_head(
-            "cpu", "Model", "Takes effect the next time you start."))
-        self.model_cards = ModelCards()
-        try:
-            self.model_cards.setCurrentText(self.settings.model)
-        except Exception:
-            pass
-        self.model_cards.currentTextChanged.connect(self._on_model_changed)
-        self.model_selector.setCurrentText(self.model_cards.currentText())
-        model_layout.addWidget(self.model_cards)
-        model_layout.addStretch(1)
-        bottom.addWidget(model_card, stretch=3)
-
         appearance_card = QFrame()
         appearance_card.setObjectName("card")
         appearance_layout = QVBoxLayout(appearance_card)
@@ -554,7 +525,7 @@ class MainWindow(QMainWindow):
             self.theme_group.addButton(tile, index)
             self.theme_tiles.append(tile)
         appearance_layout.addLayout(theme_grid)
-        self._layout_theme_grid(3)
+        self._layout_theme_grid(6)
         try:
             saved = theme_store.theme_ids().index(self.settings.theme)
         except ValueError:
@@ -570,9 +541,7 @@ class MainWindow(QMainWindow):
         appearance_layout.addWidget(self.theme_blurb)
         appearance_layout.addStretch(1)
         self._update_theme_blurb(self.settings.theme)
-        bottom.addWidget(appearance_card, stretch=2)
-
-        layout.addLayout(bottom)
+        layout.addWidget(appearance_card)
         layout.addStretch()
         return page
 
@@ -1009,16 +978,11 @@ class MainWindow(QMainWindow):
             self._about_icon.set_pixmap(QPixmap(icon_path))
 
     def _on_model_changed(self, model: str):
-        """Persist selected denoising engine (and show it on Home)."""
+        """Persist the denoising engine picked on Home."""
         try:
             self.settings.model = model
         except Exception:
             pass
-        self.model_selector.setCurrentText(model)
-
-    def _on_home_model_picked(self, model: str):
-        """Home's dropdown drives Settings' cards, which persist it."""
-        self.model_cards.setCurrentText(model)
 
     def _on_atten_changed(self, value: int):
         """Persist the attenuation limit and apply it to a running worker."""
@@ -1053,7 +1017,7 @@ class MainWindow(QMainWindow):
         self.thresh_slider.setValue(int(defaults[s.KEY_AAD_THRESHOLD]))
         self.tray_switch.setChecked(bool(defaults[s.KEY_SHOW_TRAY_ICON]))
         self.min_tray_switch.setChecked(bool(defaults[s.KEY_MINIMIZE_TO_TRAY]))
-        self.model_cards.setCurrentText(defaults[s.KEY_MODEL])
+        self.model_selector.setCurrentText(defaults[s.KEY_MODEL])
         strength = clamp_db(defaults[s.KEY_ATTEN_LIM_DB])
         self.power_btn.set_strength_db(strength)
         self._on_atten_changed(strength)
@@ -1134,7 +1098,7 @@ class MainWindow(QMainWindow):
         # Input routing is always automatic via VB-Cable: capture from
         # CABLE Output after switching default playback to CABLE Input.
         self.worker.configure(
-            model=self.model_cards.currentText() or self.settings.model,
+            model=self.model_selector.currentText() or self.settings.model,
             onnx_path=self.settings.onnx_model_path,
             input_device=None,
             output_device=self.output_selector.selected_device_id,
@@ -1147,7 +1111,6 @@ class MainWindow(QMainWindow):
     def _set_controls_enabled(self, enabled: bool):
         self.output_selector.set_locked(not enabled)
         self.model_selector.set_locked(not enabled)
-        self.model_cards.setEnabled(enabled)
         # Turning silence skipping on/off would rebuild the detector inside
         # the running processor; the threshold itself stays live.
         self._aad_row.set_locked(not enabled)

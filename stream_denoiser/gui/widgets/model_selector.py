@@ -2,10 +2,9 @@
 Poise Voice Isolator - Model Selector
 
 Home's model card content: icon chip and title over the same boxed
-dropdown as the output device. Lists the engines usable on this machine
-(Settings' model cards also show the unusable ones, with the reason).
-Exposes the QComboBox-like surface ModelCards has, so MainWindow keeps
-the two in step: currentText() / setCurrentText() / currentTextChanged.
+dropdown as the output device. Lists the engines usable on this machine.
+Exposes a QComboBox-like surface: currentText() / setCurrentText() /
+currentTextChanged.
 """
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from PyQt6.QtCore import pyqtSignal
@@ -60,7 +59,7 @@ class ModelSelector(QWidget):
         for model_id, info in MODEL_INFO.items():
             if model_id in usable:
                 self._combo.addItem(info.get("label", model_id), model_id)
-                # The open list shows Settings' card blurb under the name.
+                # The open list shows the engine's blurb under the name.
                 self._combo.setItemData(
                     self._combo.count() - 1,
                     info.get("card_blurb") or info.get("picker_blurb", ""),

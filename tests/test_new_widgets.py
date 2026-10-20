@@ -166,55 +166,6 @@ def test_stats_bar_skip_is_live_and_hidden_without_aad(app):
     bar.close()
 
 
-def test_model_cards_select_and_signal(app):
-    from stream_denoiser.gui.widgets.model_cards import ModelCards
-    cards = ModelCards()
-    cards.show()
-    _pump(app)
-    models = cards.models()
-    assert "deepfilternet3" in models
-    assert cards.currentText() in models
-    seen = []
-    cards.currentTextChanged.connect(seen.append)
-    usable = [m for m in models if cards._cards[m].isEnabled()]
-    other = next((m for m in usable if m != cards.currentText()), None)
-    if other:
-        cards.setCurrentText(other)
-        assert cards.currentText() == other and seen == [other]
-    cards.setCurrentText("not-a-model")          # ignored
-    assert cards.currentText() in models
-    cards.setEnabled(False)
-    assert not any(c.isEnabled() for c in cards._cards.values())
-    cards.close()
-
-
-def test_model_cards_are_rows_that_fit_their_blurbs(app):
-    """One full-width row per engine; a narrow row grows with its wrapped
-    blurb instead of clipping it, and shrinks back when widened."""
-    from stream_denoiser.gui.widgets.model_cards import ModelCards
-    cards = ModelCards()
-    cards.resize(700, 400)
-    cards.show()
-    _pump(app)
-    rows = list(cards._cards.values())
-    assert len({c.x() for c in rows}) == 1                 # stacked
-    assert all(c.width() == rows[0].width() for c in rows)
-    wide = [c.height() for c in rows]
-
-    def fits(card):
-        return card.height() >= card.layout().totalHeightForWidth(card.width())
-
-    assert all(fits(c) for c in rows)
-    cards.resize(240, 600)
-    _pump(app)
-    assert all(fits(c) for c in rows)
-    assert max(c.height() for c in rows) > max(wide)       # wrapped, grew
-    cards.resize(700, 400)
-    _pump(app)
-    assert [c.height() for c in rows] == wide
-    cards.close()
-
-
 def test_settings_row_lights_on_hover_and_focus(app):
     from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QPushButton
@@ -490,7 +441,7 @@ def test_toggle_is_a_rounded_square_outline_with_an_accent_knob(app):
     from PyQt6.QtGui import QColor
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.switch import ToggleSwitch
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     accent = QColor(themes.current()["accent"])
     off = ToggleSwitch(checked=False)
     on = ToggleSwitch(checked=True)
@@ -526,7 +477,7 @@ def test_disabled_toggle_greys_out_and_drops_the_hand_cursor(app):
     from PyQt6.QtGui import QColor
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.switch import ToggleSwitch
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     accent = QColor(themes.current()["accent"])
     sw = ToggleSwitch(checked=True)
     sw.show()
@@ -591,13 +542,13 @@ def _dial(app):
 def test_rescan_arrow_follows_the_secondary_colour(app):
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.widgets.device_selector import DeviceSelector
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     sel = DeviceSelector("Output device", "output")
     assert sel._refresh_icon._color == themes.current()["secondary"]
     themes.set_current("ember")
     sel.refresh_theme()
     assert sel._refresh_icon._color == themes.current()["secondary"]
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
 
 
 def test_about_credits_vb_audio_with_an_embedded_link(app, monkeypatch):
@@ -648,7 +599,7 @@ def test_donate_button_is_filled_with_a_hover_ring(app, monkeypatch):
     from stream_denoiser.gui.widgets.donate_button import (
         DonateButton, RING_GAP, RING_WIDTH)
     monkeypatch.setattr(mw, "DONATE_URL", "https://example.org/donate")
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     window = mw.MainWindow()
     window.show()
     _pump(app)

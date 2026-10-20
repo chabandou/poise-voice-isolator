@@ -95,7 +95,7 @@ class Settings:
         KEY_SHOW_TRAY_ICON: True,
         KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
         KEY_MODEL: "deepfilternet3",
-        KEY_THEME: "abyss",
+        KEY_THEME: "halcyon",
     }
     
     def __init__(self):
@@ -302,7 +302,7 @@ class Settings:
     def theme(self) -> str:
         """Get selected color theme id."""
         from .themes import DEFAULT_THEME, resolve_id
-        # A retired theme lands on its successor (Ultraviolet -> Vigil).
+        # A retired theme lands on its successor (e.g. Abyss -> Halcyon).
         return resolve_id(str(self.get(self.KEY_THEME, DEFAULT_THEME)))
 
     @theme.setter

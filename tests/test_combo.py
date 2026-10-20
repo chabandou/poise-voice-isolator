@@ -37,7 +37,7 @@ def _make_combo(items=ITEMS, current=1):
     from stream_denoiser.gui.styles import get_stylesheet
     from stream_denoiser.gui.widgets.combo import (
         BLURB_ROLE, TITLE_ROLE, AnimatedComboBox)
-    themes.set_current("abyss")
+    themes.set_current("halcyon")
     combo = AnimatedComboBox()
     combo.setObjectName("device-combo")
     for model_id, title, blurb in items:
@@ -46,7 +46,7 @@ def _make_combo(items=ITEMS, current=1):
         if blurb:
             combo.setItemData(combo.count() - 1, blurb, BLURB_ROLE)
     combo.setCurrentIndex(current)
-    combo.setStyleSheet(get_stylesheet(theme="abyss"))
+    combo.setStyleSheet(get_stylesheet(theme="halcyon"))
     combo.resize(420, 46)
     combo.move(100, 100)
     combo.show()
@@ -434,7 +434,7 @@ def test_the_ring_holds_through_open_and_close(app, still):
     from stream_denoiser.gui import themes
     img = combo.grab().toImage()
     edge = img.pixelColor(img.width() // 2, 0)
-    gold = QColor(themes.get_theme("abyss")["secondary"])
+    gold = QColor(themes.get_theme("halcyon")["secondary"])
     assert (abs(edge.red() - gold.red()) < 24
             and abs(edge.green() - gold.green()) < 24
             and abs(edge.blue() - gold.blue()) < 24), edge.name()
@@ -531,7 +531,7 @@ def test_panel_is_a_rounded_card_surface(app, still):
     assert px(geo.left() + 1, geo.top() + 1).alpha() < 255   # round corner
     body = px(geo.right() - 3, geo.center().y())
     from stream_denoiser.gui.widgets.combo import PANEL_FILL
-    assert body.name() == themes.get_theme("abyss")[PANEL_FILL].lower()
+    assert body.name() == themes.get_theme("halcyon")[PANEL_FILL].lower()
     combo.hidePopup()
     combo.close()
 

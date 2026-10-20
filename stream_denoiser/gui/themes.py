@@ -5,7 +5,7 @@ Named, self-matching palettes for the GUI. Every theme carries the full
 token set consumed by styles.get_stylesheet() and the painted widgets,
 so switching themes can never leave a stray color behind.
 
-Themes ship with the app; the selection persists in Settings ("abyss"
+Themes ship with the app; the selection persists in Settings ("halcyon"
 is the default and preserves the original look).
 """
 from typing import Dict, List
@@ -22,8 +22,8 @@ KEYS = (
 )
 
 THEMES: Dict[str, Dict] = {
-    "abyss": {
-        "label": "Abyss",
+    "halcyon": {
+        "label": "Halcyon",
         "blurb": "Signature cyan on deep navy.",
         "bg": "#0a111e", "sidebar": "#080e18",
         "card": "#0f1828", "pill": "#111c30", "groove": "#1d2a3b",
@@ -54,32 +54,21 @@ THEMES: Dict[str, Dict] = {
         "badge_bg": "#10201d", "badge_fg": "#3fb890",
         "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
-    "eclipse": {
-        # Vigil in graphite: the same sky and breathing Home, its candle
-        # gold a moon's deep blue and its lavender a soft silver. Deep
-        # neutral greys, soft text and faint edges, nothing pure white.
-        # (Was Mono.)
-        "label": "Eclipse",
-        "blurb": "Silver and deep blue on graphite under a slow night sky.",
-        "bg": "#0a0a0a", "sidebar": "#070707",
-        "card": "#111111", "pill": "#141414", "groove": "#282828",
-        "text": "#e6e6e6", "muted": "#a3a3a3",
-        "device_title": "#adadad",
-        "nav_active": "#ececec", "nav_muted": "#adadad",
-        "accent": "#c8c8c8", "accent_light": "#ececec",
-        "accent_rgb": "200, 200, 200",
-        "secondary": "#4A83C9", "secondary_rgb": "74, 131, 201",
-        "border_rgb": "220, 220, 220", "border_alpha": 0.14,
-        "divider_rgb": "220, 220, 220", "divider_alpha": 0.20,
-        "badge_bg": "#191919", "badge_fg": "#c8c8c8",
-        "success": "#86d0ae", "warning": "#e2c983", "error": "#e89aa2",
-        "backdrop": "sky", "motion": "breath",
-        "heading_weight": 600,
-        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
-                        "fx:0.62, fy:0.28, stop:0 #151515, stop:0.45 "
-                        "#0e0e0e, stop:0.75 #0a0a0a, stop:1 #0a0a0a)"),
-        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                      "stop:0 #141414, stop:1 #0e0e0e)"),
+    "ember": {
+        "label": "Ember",
+        "blurb": "Warm amber on dark roast.",
+        "bg": "#140f0a", "sidebar": "#100c08",
+        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
+        "text": "#fff8f0", "muted": "#a39a8b",
+        "device_title": "#ab9f8d",
+        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
+        "accent": "#f5a524", "accent_light": "#ffd9ab",
+        "accent_rgb": "245, 165, 36",
+        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
+        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
+        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
+        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
+        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
     },
     "vigil": {
         "label": "Vigil",
@@ -107,21 +96,32 @@ THEMES: Dict[str, Dict] = {
         "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
                       "stop:0 #18143c, stop:1 #100e29)"),
     },
-    "ember": {
-        "label": "Ember",
-        "blurb": "Warm amber on dark roast.",
-        "bg": "#140f0a", "sidebar": "#100c08",
-        "card": "#1a130c", "pill": "#1e1610", "groove": "#2e2318",
-        "text": "#fff8f0", "muted": "#a39a8b",
-        "device_title": "#ab9f8d",
-        "nav_active": "#ffd9ab", "nav_muted": "#a39a8b",
-        "accent": "#f5a524", "accent_light": "#ffd9ab",
-        "accent_rgb": "245, 165, 36",
-        "secondary": "#6FD0C0", "secondary_rgb": "111, 208, 192",
-        "border_rgb": "255, 200, 150", "border_alpha": 0.22,
-        "divider_rgb": "255, 195, 150", "divider_alpha": 0.32,
-        "badge_bg": "#2a1f14", "badge_fg": "#f5a524",
-        "success": "#4ade80", "warning": "#facc15", "error": "#f87171",
+    "eclipse": {
+        # Vigil in graphite: the same sky and breathing Home, its candle
+        # gold a moon's deep blue and its lavender a soft silver. Deep
+        # neutral greys, soft text and faint edges, nothing pure white.
+        # (Was Mono.)
+        "label": "Eclipse",
+        "blurb": "Silver and deep blue on graphite under a slow night sky.",
+        "bg": "#0a0a0a", "sidebar": "#070707",
+        "card": "#111111", "pill": "#141414", "groove": "#282828",
+        "text": "#e6e6e6", "muted": "#a3a3a3",
+        "device_title": "#adadad",
+        "nav_active": "#ececec", "nav_muted": "#adadad",
+        "accent": "#c8c8c8", "accent_light": "#ececec",
+        "accent_rgb": "200, 200, 200",
+        "secondary": "#4A83C9", "secondary_rgb": "74, 131, 201",
+        "border_rgb": "220, 220, 220", "border_alpha": 0.14,
+        "divider_rgb": "220, 220, 220", "divider_alpha": 0.20,
+        "badge_bg": "#191919", "badge_fg": "#c8c8c8",
+        "success": "#86d0ae", "warning": "#e2c983", "error": "#e89aa2",
+        "backdrop": "sky", "motion": "breath",
+        "heading_weight": 600,
+        "window_fill": ("qradialgradient(cx:0.62, cy:0.28, radius:0.95, "
+                        "fx:0.62, fy:0.28, stop:0 #151515, stop:0.45 "
+                        "#0e0e0e, stop:0.75 #0a0a0a, stop:1 #0a0a0a)"),
+        "card_fill": ("qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                      "stop:0 #141414, stop:1 #0e0e0e)"),
     },
     "orchid": {
         "label": "Orchid",
@@ -141,11 +141,11 @@ THEMES: Dict[str, Dict] = {
     },
 }
 
-DEFAULT_THEME = "abyss"
+DEFAULT_THEME = "halcyon"
 
 #: Retired theme ids and the theme that replaced each, so a saved choice
 #: lands on its successor rather than the default.
-RENAMED = {"ultraviolet": "vigil", "mono": "eclipse"}
+RENAMED = {"ultraviolet": "vigil", "mono": "eclipse", "abyss": "halcyon"}
 
 #: Optional per-theme keys and their values when a theme leaves them out.
 #: backdrop: what the dial card shows behind the dial ("lattice" or

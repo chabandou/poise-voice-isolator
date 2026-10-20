@@ -77,10 +77,10 @@ def test_stylesheet_renders_every_theme_cleanly():
         assert "chevron-down.svg" in css
 
 
-def test_abyss_preserves_current_look():
-    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+def test_halcyon_preserves_current_look():
+    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     assert "background-color: #0a111e" in css  # page bg unchanged
-    assert "95, 213, 235" in css  # abyss accent rgb
+    assert "95, 213, 235" in css  # halcyon accent rgb
 
 
 def _rgb(hex_color):
@@ -118,8 +118,8 @@ def test_secondary_is_a_distinct_second_colour():
 
 
 def test_secondary_reaches_the_stylesheet():
-    css = styles.get_stylesheet(scale=1.0, theme="abyss")
-    assert "#E8C468" in css                      # model-card checked border
+    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
+    assert "#E8C468" in css                      # secondary colour
     assert "232, 196, 104" in css                # chip wash
 
 
@@ -129,7 +129,7 @@ def test_verdant_is_registered_with_gold_secondary():
     assert p["label"] == "Verdant"
     assert p["accent"].lower() == "#35e0a8"
     assert p["secondary"].lower() == "#e9c46a"
-    assert themes.DEFAULT_THEME == "abyss"      # default is unchanged
+    assert themes.DEFAULT_THEME == "halcyon"      # default is unchanged
     css = styles.get_stylesheet(scale=1.0, theme="verdant")
     assert not LEFTOVER_TOKEN.search(css)
     assert "53, 224, 168" in css
@@ -150,10 +150,17 @@ def test_ghost_buttons_hover_like_the_dropdown():
     """One hover colour for fields and ghost buttons: the secondary.
     (The dropdown's ring is painted in that colour: test_combo.py.)"""
     import re
-    css = styles.get_stylesheet(scale=1.0, theme="abyss")
+    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     ghost = re.search(r"QPushButton#ghost:hover\s*\{([^}]*)\}", css)
     assert ghost
     assert "#E8C468" in ghost.group(1)
+
+
+def test_halcyon_replaces_abyss():
+    """Abyss was renamed Halcyon; a saved "abyss" opens as Halcyon."""
+    assert "abyss" not in themes.theme_ids()
+    assert themes.resolve_id("abyss") == "halcyon"
+    assert themes.get_theme("halcyon")["label"] == "Halcyon"
 
 
 def test_vigil_replaces_ultraviolet():
@@ -189,9 +196,9 @@ def test_vigil_stylesheet_glows_with_lighter_headings():
     assert "qradialgradient" in css            # the night glow
     assert "qlineargradient" in css            # softly lit cards
     assert _heading_weight(css) == 600
-    abyss = styles.get_stylesheet(scale=1.0, theme="abyss")
-    assert "qradialgradient" not in abyss      # flat, as before
-    assert _heading_weight(abyss) == 700
+    halcyon = styles.get_stylesheet(scale=1.0, theme="halcyon")
+    assert "qradialgradient" not in halcyon      # flat, as before
+    assert _heading_weight(halcyon) == 700
 
 
 def _hls(hex_color):
