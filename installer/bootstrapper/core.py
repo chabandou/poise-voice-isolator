@@ -245,7 +245,9 @@ def existing_install() -> Existing | None:
             continue
         with key:
             version = _read_value(key, "DisplayVersion")
+            # Inno stores the folder with a trailing backslash.
             location = _read_value(key, "InstallLocation")
+            location = os.path.normpath(location) if location else ""
         return Existing(version=version, location=location)
     return None
 

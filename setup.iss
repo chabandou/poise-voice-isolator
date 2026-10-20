@@ -31,7 +31,9 @@ OutputBaseFilename=PoiseCore
 OutputBaseFilename=Poise_Setup
 #endif
 SetupIconFile=stream_denoiser\gui\assets\icon-setup.ico
-Compression=lzma
+; lzma2 at its strongest setting: a few percent smaller than plain lzma
+; for the same payload, at the cost of a slower compile.
+Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 InfoBeforeFile=installer\windows\vbcable-notice.txt

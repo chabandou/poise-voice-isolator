@@ -16,6 +16,7 @@ right but refuses to install anything.
 """
 import os
 import re
+import sys
 
 ROOT = SPECPATH                     # .../installer
 PROJECT = os.path.dirname(ROOT)
@@ -72,6 +73,9 @@ a = Analysis(
         # None of the app's runtime, none of Qt's heavier siblings: the
         # window only needs Widgets/Gui/Core.
         "numpy", "onnxruntime", "sounddevice", "scipy", "pandas", "torch",
+        # The window never goes online (update checks live in the app):
+        # no ssl, and hashlib falls back to its built-in digests.
+        "ssl", "_ssl", "_hashlib",
         "matplotlib", "PIL", "IPython",
         "PyQt6.QtNetwork", "PyQt6.QtQml", "PyQt6.QtQuick",
         "PyQt6.QtMultimedia", "PyQt6.QtWebEngineCore", "PyQt6.QtSql",
@@ -82,6 +86,15 @@ a = Analysis(
     cipher=None,
     noarchive=False,
 )
+
+# Qt files the window never loads (see tools/qt_trim.py), and the
+# OpenSSL DLLs that only the excluded ssl/_hashlib modules used.
+sys.path.insert(0, os.path.join(PROJECT, "tools"))
+from qt_trim import trim as _qt_trim  # noqa: E402
+a.binaries, a.datas = _qt_trim(a.binaries, a.datas)
+_NO_OPENSSL = {"libssl-3.dll", "libcrypto-3.dll"}
+a.binaries = [e for e in a.binaries
+              if os.path.basename(e[0]).lower() not in _NO_OPENSSL]
 
 pyz = PYZ(a.pure, a.zipped_data)
 
