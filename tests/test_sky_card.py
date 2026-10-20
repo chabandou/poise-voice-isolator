@@ -84,8 +84,10 @@ def _fake_view_class():
         def hold(self, reason):
             self.holds.add(reason)
 
-        def release(self, reason):
+        def release(self, reason, on_live=None):
             self.holds.discard(reason)
+            if not self.holds and on_live is not None:
+                on_live()
 
         @property
         def held(self):

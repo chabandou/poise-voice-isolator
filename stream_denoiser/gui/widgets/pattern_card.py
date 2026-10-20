@@ -154,6 +154,7 @@ class PatternCard(QFrame):
                             EASE_BREATHE)
         self._reveal = Blend(self, self._changed, SKY_REVEAL_MS)
         self._revealed = False
+        self._reveal_waiting = False
         self._sky_timer = FrameTimer(self)
         self._sky_timer.setInterval(SKY_FRAME_MS)
         self._sky_timer.timeout.connect(self._sky_tick)
@@ -247,11 +248,17 @@ class PatternCard(QFrame):
     # -- pings ------------------------------------------------------------------
     def set_ping_origin(self, widget) -> None:
         """The (descendant) widget whose centre the pings leave from."""
-        if self._view is not None:
-            self._hand_ring(False)
+        view = self._view
+        if view is not None:
+            self._mirror_dial(False)
+            if self._origin is not None:
+                self._origin.removeEventFilter(self)
         self._origin = widget
-        if self._view is not None:
-            self._hand_ring(True)
+        if view is not None:
+            widget.installEventFilter(self)
+            if not self._holds:
+                self._mirror_dial(True)
+            self._layers_due("dial")
 
     def start_pings(self) -> None:
         """First ping now, then one every PING_PERIOD_MS until stopped."""
@@ -328,7 +335,15 @@ class PatternCard(QFrame):
 
     # -- the night sky's clock -----------------------------------------------------
     def _begin_reveal(self) -> None:
+        if self._view is not None and self._view.held:
+            self._reveal_waiting = True   # the sky surfaces once it shows
+            return
+        self._reveal_waiting = False
         self._reveal.set_target(1.0, self.isVisible() and ambient_ok())
+
+    def _begin_waiting_reveal(self) -> None:
+        if self._reveal_waiting:
+            self._begin_reveal()
 
     def _run_sky(self) -> None:
         """Run the sky's clock while it is shown (faster while it pulses
@@ -558,16 +573,17 @@ class PatternCard(QFrame):
             return
         view.failed.connect(self._view_fallback)
         view.setGeometry(self.rect())
-        view.raise_()              # (its still, when held) over the rest
-        for reason in self._holds:
-            view.hold(reason)
+        view.lower()               # (its still, when held) under the rest
         self._view = view
-        self._hand_ring(True)
+        if self._origin is not None:
+            # Where the ticks go follows the dial (an error line under the
+            # headline moves it), even when no sky frame is coming.
+            self._origin.installEventFilter(self)
         self._show_sky_frame()
-        self._layers_due("text", "dial")
         # Held until the window's show has run its course: Home's cards
         # get their entrance effect after they are shown.
-        view.hold("showing")
+        for reason in self._holds | {"showing"}:
+            self.hold_native(reason)
         view.show()
         QTimer.singleShot(0, self._hold_while_entering)
 
@@ -576,20 +592,13 @@ class PatternCard(QFrame):
         self._view_failed = True
         self._drop_view()
 
-    def _hand_ring(self, to_view: bool) -> None:
-        """The dial's ring drawn by the GPU sky (to_view), and the dial
-        itself (see _layers_due); or both by the dial."""
+    def _mirror_dial(self, on: bool) -> None:
+        """The dial and its ring drawn by the view (on), or by the dial,
+        as a widget again."""
         origin = self._origin
-        if origin is not None and hasattr(origin, "set_ring_sink"):
-            origin.set_ring_sink(self._view.show_ring if to_view else None)
-            origin.set_mirror(self._dial_painted if to_view else None)
-            # Where the ticks go follows the dial (an error line under the
-            # headline moves it), even when no sky frame is coming.
-            if to_view:
-                origin.installEventFilter(self)
-            else:
-                origin.removeEventFilter(self)
-                self._view.take_input(None)
+        if origin is not None and hasattr(origin, "set_mirror"):
+            origin.set_ring_sink(self._view.show_ring if on else None)
+            origin.set_mirror(self._dial_painted if on else None)
 
     def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
         if self._view is not None:
@@ -599,7 +608,7 @@ class PatternCard(QFrame):
                     self._show_sky_frame()
                     self._layers_due("text", "dial")
             elif (kind in _TEXT_EVENTS and watched is not self._view
-                  and not self._mirroring):
+                  and not self._mirroring and not self._holds):
                 self._layers_due("text")   # a label changed, moved or went
         return super().eventFilter(watched, event)
 
@@ -610,18 +619,21 @@ class PatternCard(QFrame):
 
     def _drop_view(self) -> None:
         if self._view is not None:
-            self._hand_ring(False)
+            self._mirror_dial(False)
+            if self._origin is not None:
+                self._origin.removeEventFilter(self)
             self._entering.stop()
             self._view.discard()
             self._view = None
             self._due.clear()
             self._draw.stop()
+            self._begin_waiting_reveal()
             self.update()
 
     # -- what sits on the GPU sky ----------------------------------------------------
     # A native window draws over every widget under it, so the view draws
     # the dial and the headline too: from images of them, taken whenever
-    # they repaint (under the view, where nothing shows).
+    # they change (under the view, where nothing shows).
     def _dial_painted(self) -> None:
         if not self._mirroring:
             self._layers_due("dial")
@@ -646,7 +658,8 @@ class PatternCard(QFrame):
                     and origin.isVisible()):
                 rect = QRectF(QPointF(origin.mapTo(self, QPoint(0, 0))),
                               QSizeF(origin.size()))
-                view.show_layer("dial", origin.mirror_image(), rect)
+                view.show_layer("dial", origin.mirror_image(view.show_ring),
+                                rect)
                 view.take_input(origin, rect)
             else:
                 view.hide_layer("dial")
@@ -701,17 +714,40 @@ class PatternCard(QFrame):
         return image
 
     # -- held as a still (see SkyView.hold) -------------------------------------------
+    # Held, the view shows a still of the sky and the card under the dial
+    # and the headline, which draw themselves again as widgets: at their
+    # own pace, and in what snapshots and effects see.
     def hold_native(self, reason: str) -> None:
-        """Draw the GPU sky as an ordinary widget while `reason` lasts (a
-        snapshot or an effect could not see the native window)."""
+        """Hold the GPU sky still while `reason` lasts (a snapshot or an
+        effect could not see the native window)."""
+        first = not self._holds
         self._holds.add(reason)
-        if self._view is not None:
-            self._view.hold(reason)
+        if self._view is None:
+            return
+        if first:
+            self._mirror_dial(False)
+        self._view.hold(reason)
 
     def release_native(self, reason: str) -> None:
+        if reason not in self._holds:
+            return
         self._holds.discard(reason)
-        if self._view is not None:
-            self._view.release(reason)
+        view = self._view
+        if view is None:
+            return
+        if self._holds:
+            view.release(reason)
+            return
+        # The scene catches up, then shows (see SkyView.release).
+        self._due.update(("sky", "dial", "text"))
+        self._draw.stop()
+        self._draw_layers()
+        view.release(reason, on_live=self._went_live)
+
+    def _went_live(self) -> None:
+        if self._view is not None and not self._holds:
+            self._mirror_dial(True)
+            self._begin_waiting_reveal()
 
     def _entrance_effect(self) -> bool:
         widget = self
@@ -723,13 +759,13 @@ class PatternCard(QFrame):
 
     def _hold_while_entering(self) -> None:
         """An entrance effect (rise_in) on the card or above it fades and
-        moves what it draws; held, the sky moves with it."""
+        moves what it draws: held till it lands, the sky goes with it."""
         if self._view is None:
             return
         if self._entrance_effect():
             self.hold_native("entrance")
             self._entering.start()
-        self._view.release("showing")
+        self.release_native("showing")
 
     def _watch_entrance(self) -> None:
         if not self._entrance_effect() or self._view is None:

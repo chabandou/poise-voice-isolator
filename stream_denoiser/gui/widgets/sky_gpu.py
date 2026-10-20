@@ -29,7 +29,8 @@ from PyQt6 import sip
 from PyQt6.QtCore import (QEvent, QPoint, QRect, QRectF, Qt, QTimer, QUrl,
                           pyqtSignal)
 from PyQt6.QtGui import (QColor, QEnterEvent, QHelpEvent, QImage,
-                         QMouseEvent, QPainter, QVector4D, QWheelEvent)
+                         QMouseEvent, QPainter, QRegion, QVector4D,
+                         QWheelEvent)
 from PyQt6.QtQml import QQmlComponent, QQmlImageProviderBase
 from PyQt6.QtQuick import (QQuickImageProvider, QQuickItem, QQuickView,
                            QSGRendererInterface)
@@ -266,6 +267,7 @@ _SKY_UNIFORMS = (
 # -- what sits on the sky ------------------------------------------------------------
 _LAYER_QML = b"import QtQuick\nImage { cache: false; smooth: false; visible: false }\n"
 TIP_MS = 700   # hovering this long over the dial asks for its tooltip
+_MASKED = QRegion(QRect(-16, -16, 1, 1))   # nothing of the window shows
 
 
 class _Layers(QQuickImageProvider):
@@ -392,9 +394,11 @@ class SkyView(QWidget):
 
     Widgets over the card cannot draw over a native window, so the card
     hands their images in (show_layer) and the dial its pointer, through
-    an item over its image. hold() swaps the window for a still of it
-    painted here, an ordinary widget, while something needs one: an
-    entrance effect on the card, a page slide's snapshot."""
+    an item over its image. hold() masks the window away and paints a
+    still of the sky here, an ordinary widget under the card's (which
+    draw themselves again), while something needs one: an entrance
+    effect on the card, a page slide's snapshot. The window keeps
+    drawing meanwhile, so it is current when it shows again."""
 
     failed = pyqtSignal()
 
@@ -439,11 +443,23 @@ class SkyView(QWidget):
         self._checked = False
         self._holds = set()
         self._still = None
-        self._still_due = False
+        self._masked = False
+        self._awaiting = 0         # released: frames to wait for
+        self._on_live = None
+        self._late = QTimer(self)  # (no frame came: show it anyway)
+        self._late.setSingleShot(True)
+        self._late.setInterval(250)
+        self._late.timeout.connect(self._go_live)
+        self._showing = QTimer(self)
+        self._showing.setSingleShot(True)
+        self._showing.setInterval(0)
+        self._showing.timeout.connect(self._show_box)
         self.quiet = False     # paint nothing (the card is drawing a layer)
         quick.sceneGraphError.connect(self._on_error)
         quick.afterFrameEnd.connect(self._check_api,
                                     Qt.ConnectionType.QueuedConnection)
+        quick.frameSwapped.connect(self._swapped,
+                                   Qt.ConnectionType.QueuedConnection)
         # Follow the card: it and everything it sits in, up to the window.
         widget = parent
         while widget is not None and widget is not self._box.parentWidget():
@@ -521,17 +537,39 @@ class SkyView(QWidget):
 
     def _place(self) -> None:
         """The window over what shows of the card, the card drawn offset
-        in it; hidden while held or out of sight."""
+        in it (masked away while held); hidden out of sight."""
         if self._root is None or sip.isdeleted(self._box):
             return
         rect, shown = self._card_rects()
-        live = (self.isVisible() and not self._holds and not shown.isEmpty())
-        if live:
+        if self.isVisible() and not shown.isEmpty():
             self._box.setGeometry(shown)
             self._root.setX(rect.x() - shown.x())
             self._root.setY(rect.y() - shown.y())
+            self._mask()
+            if self._box.isVisible():
+                self._box.raise_()
+            elif not self._showing.isActive():
+                # Not from inside a show (the window's own, say): a native
+                # window shown there deadlocks with its render thread.
+                self._showing.start()
+        else:
+            self._showing.stop()
+            self._box.hide()
+
+    def _show_box(self) -> None:
+        rect, shown = self._card_rects()
+        if self.isVisible() and not shown.isEmpty():
+            self._box.show()
             self._box.raise_()
-        self._box.setVisible(live)
+
+    def _mask(self) -> None:
+        """Held, or until a frame of what it now shows is up: masked, the
+        window vanishes from the screen yet keeps drawing, current the
+        moment it shows again."""
+        masked = bool(self._holds or self._awaiting)
+        if masked != self._masked:
+            self._masked = masked
+            self._quick.setMask(_MASKED if masked else QRegion())
 
     # -- held as a still ------------------------------------------------------------
     @property
@@ -539,46 +577,80 @@ class SkyView(QWidget):
         return bool(self._holds)
 
     def hold(self, reason: str) -> None:
-        """Show a still of the scene here instead of the window, until
-        every hold is released (it follows the scene meanwhile)."""
-        first = not self._holds
+        """Paint a still of the sky and the card here, under the card's
+        widgets, instead of showing the window, until every hold is
+        released."""
+        first = not self._holds and not self._awaiting
         self._holds.add(reason)
         if first:
             self._grab_still()
-            self._place()
-            self.update()
+            self.repaint()    # on screen before the window goes
+        self._mask()
 
-    def release(self, reason: str) -> None:
+    def release(self, reason: str, on_live=None) -> None:
+        """Let `reason` go; the last one shows the window again once it
+        has drawn a frame of the scene as it is now, then calls on_live()
+        (the card hands it the dial again)."""
         if reason not in self._holds:
             return
         self._holds.discard(reason)
-        if not self._holds:
-            self._place()
-            self._still = None
-            self.update()
+        if self._holds:
+            return
+        self._on_live = on_live
+        if self._box.isVisible() or self._showing.isActive():
+            # Two: one may have been drawn before the scene caught up.
+            self._awaiting = 2
+            self._quick.update()
+            self._late.start()
+        else:
+            self._go_live()
 
-    def _changed(self) -> None:
-        """The scene changed: a held view refreshes its still."""
-        if self._holds and not self._still_due:
-            self._still_due = True
-            QTimer.singleShot(0, self._grab_still)
+    def _swapped(self) -> None:
+        if self._awaiting:
+            self._awaiting -= 1
+            if self._awaiting:
+                self._quick.update()
+            else:
+                self._go_live()
+
+    def _go_live(self) -> None:
+        self._awaiting = 0
+        self._late.stop()
+        if self._holds:
+            return
+        self._mask()
+        self._still = None
+        self.update()
+        on_live, self._on_live = self._on_live, None
+        if on_live is not None:
+            on_live()
 
     def _grab_still(self) -> None:
-        self._still_due = False
-        if not self._holds or self._root is None:
+        """The sky and the card under it, without what sits on it (the
+        card's widgets draw themselves over the still)."""
+        if self._root is None:
             return
-        # The whole card (the window may show only part of it).
-        self._box.setGeometry(QRect(self._box.pos(), self.size()))
-        self._root.setX(0)
-        self._root.setY(0)
+        if self._box.size() != self.size():
+            # The whole card (the window may show only part of it).
+            self._box.setGeometry(QRect(self._box.pos(), self.size()))
+            self._root.setX(0)
+            self._root.setY(0)
+        shown = {name: item.property("visible")
+                 for name, item in self._layers.items()}
+        for item in self._layers.values():
+            item.setProperty("visible", False)
+        self._root.setProperty("tickRing", _OFF)
         still = self._quick.grabWindow()
+        for name, item in self._layers.items():
+            item.setProperty("visible", shown[name])
+        self._root.setProperty("tickRing", self._sent.get("tickRing", _OFF))
+        self._place()
         if not still.isNull():
             still.setDevicePixelRatio(self._quick.devicePixelRatio())
             self._still = still
-            self.update()
 
     def paintEvent(self, event):  # noqa: N802 (Qt override)
-        if self._holds and self._still is not None and not self.quiet:
+        if self._still is not None and not self.quiet:
             p = QPainter(self)
             p.drawImage(0, 0, self._still)
             p.end()
@@ -598,14 +670,12 @@ class SkyView(QWidget):
         item.setProperty("source",
                          QUrl(f"image://layer/{name}/{self._layer_n}"))
         item.setProperty("visible", True)
-        self._changed()
 
     def hide_layer(self, name: str) -> None:
         item = self._layers.get(name)
         if item is not None and item.property("visible"):
             item.setProperty("visible", False)
             self._layer_images.images.pop(name, None)
-            self._changed()
 
     def take_input(self, widget, rect: QRectF = None) -> None:
         """Hand the pointer over `rect` (in the card) on to `widget`, or
@@ -654,7 +724,6 @@ class SkyView(QWidget):
         if self._sent.get(name) != value:
             self._root.setProperty(name, value)
             self._sent[name] = value
-            self._changed()
 
     def show_frame(self, frame, box, base: dict) -> None:
         """Send what changed since the last frame."""
@@ -662,16 +731,13 @@ class SkyView(QWidget):
         values.update(base)
         sent = self._sent
         root = self._root
-        changed = False
         for name, value in values.items():
             if sent.get(name) != value:
                 root.setProperty(name, value)
                 sent[name] = value
-                changed = True
         top = values.get("fillTop")
         if top is not None and sent.get("_clear") != top:
             # Under the first frame: the card's colour, not a flash.
             sent["_clear"] = top
             self._quick.setColor(QColor.fromRgbF(top.x(), top.y(), top.z()))
-        if changed:
-            self._changed()
+    

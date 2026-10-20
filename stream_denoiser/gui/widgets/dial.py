@@ -1214,7 +1214,10 @@ class DialButton(PowerButton):
         p = QPainter(self)
         self._paint_on(p)
 
-    def _paint_on(self, p) -> None:
+    def _paint_on(self, p, sink=None) -> None:
+        """Paint the dial on `p` (its ring handed to `sink` instead, or to
+        set_ring_sink's)."""
+        sink = sink or self._ring_sink
         w, h = self.width(), self.height()
         k = min(w, h) / REF
         col = self._colours(current_theme())
@@ -1226,9 +1229,9 @@ class DialButton(PowerButton):
         p.translate(w / 2, h / 2)
         p.scale(k, k)
         p.translate(-c, -c)
-        if self._ring_sink is not None:
-            self._ring_sink(self._over, self._ring_strokes(col, t, True),
-                            self.ring_breath(t))
+        if sink is not None:
+            sink(self._over, self._ring_strokes(col, t, True),
+                 self.ring_breath(t))
         else:
             self._paint_ring(p, col, t)
         self._paint_core(p, col, t)
@@ -1258,8 +1261,9 @@ class DialButton(PowerButton):
         else:
             super().update(*args)
 
-    def mirror_image(self) -> QImage:
-        """The dial as it paints now, on a clear image."""
+    def mirror_image(self, sink=None) -> QImage:
+        """The dial as it paints now, on a clear image (its ring handed
+        to `sink`, see _paint_on)."""
         dpr = self.devicePixelRatioF()
         image = QImage(max(1, round(self.width() * dpr)),
                        max(1, round(self.height() * dpr)),
@@ -1267,7 +1271,7 @@ class DialButton(PowerButton):
         image.setDevicePixelRatio(dpr)
         image.fill(Qt.GlobalColor.transparent)
         p = QPainter(image)
-        self._paint_on(p)
+        self._paint_on(p, sink)
         return image
 
     def ring_frame(self):
