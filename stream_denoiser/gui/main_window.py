@@ -943,10 +943,14 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, theme_id: str):
         """Switch palette everywhere (persisted), crossfading when live."""
         snapshot = None
+        release = None
         if self.isVisible() and theme_id != theme_store.current_id():
             try:
-                from .animations import motion_ok
+                from .animations import hold_natives, motion_ok
                 if motion_ok():
+                    # The GPU sky as a still: in the snapshot, and under
+                    # it while it fades (see hold_natives).
+                    release = hold_natives([self], "crossfade")
                     snapshot = self.grab()
             except Exception:
                 snapshot = None
@@ -971,7 +975,9 @@ class MainWindow(QMainWindow):
         self.update()
         if snapshot is not None:
             from .animations import crossfade_from
-            crossfade_from(self, snapshot)
+            crossfade_from(self, snapshot, on_done=release)
+        elif release is not None:
+            release()
 
     def _sync_home_pace(self) -> None:
         """A breathing theme (Vigil, Eclipse) dissolves the headline slowly

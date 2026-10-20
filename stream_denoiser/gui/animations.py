@@ -45,6 +45,7 @@ Usage:
 import math
 import os
 import time
+import weakref
 
 from PyQt6 import sip
 from PyQt6.QtCore import (
@@ -358,6 +359,40 @@ def _clock() -> _FrameClock:
     return _frame_clock
 
 
+# -- native views and snapshots ------------------------------------------------
+# A native window (the GPU sky's) is not in a widget's grab() and draws
+# over any overlay: what the transitions below snapshot or cover holds
+# it as a still for as long as they run (hold_native / release_native).
+_natives = weakref.WeakSet()
+
+
+def register_native(widget: QWidget) -> None:
+    """`widget` can hold a native view of its own (see hold_natives)."""
+    _natives.add(widget)
+
+
+def hold_natives(roots, reason: str):
+    """Hold, as stills, the native views in or under `roots` (widgets);
+    returns release(), which lets them go (once)."""
+    held = []
+    for host in list(_natives):
+        if sip.isdeleted(host):
+            continue
+        if any(root is not None and not sip.isdeleted(root)
+               and (root is host or root.isAncestorOf(host))
+               for root in roots):
+            host.hold_native(reason)
+            held.append(host)
+
+    def release() -> None:
+        while held:
+            host = held.pop()
+            if not sip.isdeleted(host):
+                host.release_native(reason)
+
+    return release
+
+
 def _keep(widget: QWidget, anim: QObject) -> QObject:
     """Hold a reference so Qt doesn't GC a running animation.
 
@@ -656,6 +691,9 @@ def _cancel_slide(stack: QStackedWidget) -> None:
         except Exception:
             pass
         _drop_overlay(state.get("overlay"))
+        release = state.get("release")
+        if release is not None:
+            release()
         # Snap the (already current) page back onto the stack geometry so
         # a retargeted slide starts from a clean pose.
         try:
@@ -689,16 +727,22 @@ def slide_stack(stack: QStackedWidget, index: int,
     _cancel_slide(stack)
     old = stack.currentIndex()
     old_page = stack.currentWidget()
+    if not motion_ok():
+        stack.setCurrentIndex(index)
+        return
+    # Native views on either page slide as stills (the snapshot cannot
+    # see them, and they would draw over it).
+    release = hold_natives([old_page, stack.widget(index)], "slide")
     stack.setCurrentIndex(index)
     new_page = stack.currentWidget()
     if new_page is None:
-        return
-    if not motion_ok():
+        release()
         return
     try:
         height = stack.height()
         travel = int(round(height * WS_TRAVEL))
         if height <= 0 or travel <= 0:
+            release()
             return
         # Content travel direction: down the sidebar list == up on screen.
         shift = -travel if index > old else travel
@@ -784,7 +828,7 @@ def slide_stack(stack: QStackedWidget, index: int,
             return
 
         state = {"group": group, "overlay": overlay, "page": new_page,
-                 "target": target}
+                 "target": target, "release": release}
         stack._apple_slide = state  # type: ignore[attr-defined]
 
         def _done() -> None:
@@ -797,6 +841,7 @@ def slide_stack(stack: QStackedWidget, index: int,
                 except Exception:
                     pass
                 _drop_overlay(overlay)
+                release()
             except Exception:
                 pass
 
@@ -811,6 +856,7 @@ def slide_stack(stack: QStackedWidget, index: int,
             _cancel_slide(stack)
         except Exception:
             pass
+        release()
 
 
 # Backwards-compatible alias (old name from the cascade era).
@@ -1209,15 +1255,19 @@ def install_hover_fades(root: QWidget) -> int:
     return wired
 
 
-def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260):
+def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260,
+                   on_done=None):
     """Fade a snapshot of the previous look away to reveal the new one.
 
     `snapshot` is a QPixmap grabbed before the change. The overlay is a
     plain label (safe to fade; see the module's safety rules) and is
-    detached synchronously when done.
+    detached synchronously when done; on_done() runs then (or at once,
+    with no fade).
     """
+    done = on_done or (lambda: None)
     try:
         if not motion_ok() or snapshot is None or snapshot.isNull():
+            done()
             return None
         from PyQt6.QtWidgets import QLabel
         overlay = QLabel(widget)
@@ -1234,10 +1284,12 @@ def crossfade_from(widget: QWidget, snapshot, duration_ms: int = 260):
         anim.setEndValue(0.0)
         anim.setEasingCurve(EASE_OUT)
         anim.finished.connect(lambda: _drop_overlay(overlay))
+        anim.finished.connect(done)
         overlay._anim = anim
         anim.start()
         return overlay
     except Exception:
+        done()
         return None
 
 
