@@ -47,30 +47,28 @@ jobs:
           Start-Sleep 5
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
           Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
-      - name: Install Scream
+      - name: Name the cable as on a real box
+        run: |
+          ./tools/win_endpoints.ps1 -List
+          ./tools/win_endpoints.ps1 -Rename "Speakers (VB-Audio Virtual Cable)=CABLE Input"
+          ./tools/win_endpoints.ps1 -List
+      - name: Second VB-Cable instance as the output device
         timeout-minutes: 5
         run: |
-          $zip = "$env:RUNNER_TEMP\scream.zip"
-          Invoke-WebRequest https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip -OutFile $zip
-          (Get-FileHash $zip -Algorithm SHA256).Hash
-          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\scream"
-          Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" | Select-Object FullName, Length | Format-Table -AutoSize
-          $inf = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter Scream.inf | Where-Object FullName -match 'x64' | Select-Object -First 1
-          $cat = Get-ChildItem $inf.DirectoryName -Filter *.cat | Select-Object -First 1
-          $sig = Get-AuthenticodeSignature $cat.FullName
-          "$($cat.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
-          $cer = "$env:RUNNER_TEMP\scream.cer"
-          [IO.File]::WriteAllBytes($cer, $sig.SignerCertificate.Export('Cert'))
-          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-          $devcon = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter devcon*.exe | Where-Object Name -match 'x64' | Select-Object -First 1
-          if (-not $devcon) { $devcon = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter devcon*.exe | Select-Object -First 1 }
+          Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Select-Object FullName
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\Tools' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Where-Object FullName -match '\x64\' | Select-Object -First 1
           "devcon: $($devcon.FullName)"
-          & $devcon.FullName install $inf.FullName '*Scream'
+          $inf = (Resolve-Path installer/windows/vbcable/vbMmeCable64_win10.inf).Path
+          & $devcon.FullName install $inf VBAudioVACWDM
           "devcon exit: $LASTEXITCODE"
           Start-Sleep 5
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
-          Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
+          ./tools/win_endpoints.ps1 -List
+      - name: Default output
+        continue-on-error: true
+        run: |
+          ./tools/win_endpoints.ps1 -Default "2- VB-Audio"
+          ./tools/win_endpoints.ps1 -List
       - name: Install deps
         run: pip install -r requirements.txt pytest
       - name: List devices
