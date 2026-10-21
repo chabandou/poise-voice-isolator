@@ -115,11 +115,14 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release (tags only)
+        # A draft until build-linux.yml has attached its binary too.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            installer/Poise_Setup.exe
-            installer/PoiseCore.exe
-            installer/PoiseCore.exe.sha256
-          generate_release_notes: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          bash tools/release_upload.sh "$GITHUB_REF_NAME"
+          installer/Poise_Setup.exe
+          installer/PoiseCore.exe
+          installer/PoiseCore.exe.sha256
