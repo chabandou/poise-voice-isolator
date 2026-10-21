@@ -18,9 +18,9 @@ const features = [
 		body: 'Your audio never leaves your computer. No account, no telemetry, and it works offline.',
 	},
 	{
-		title: 'Two models',
+		title: 'Three models',
 		Icon: Cpu,
-		body: 'DeepFilterNet3 removes music and keeps voices. RNNoise is a lighter model for weaker CPUs.',
+		body: 'DeepFilterNet3 removes music and keeps voices. GTCRN and RNNoise are lighter models for weaker CPUs.',
 	},
 	{
 		title: 'Skips silence',
