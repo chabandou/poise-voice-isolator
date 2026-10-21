@@ -56,7 +56,7 @@ jobs:
         timeout-minutes: 5
         run: |
           Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Select-Object FullName
-          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Where-Object FullName -like '*d\*' | Select-Object -First 1
+          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Where-Object FullName -like '*\x64\*' | Select-Object -First 1
           "devcon: $($devcon.FullName)"
           $inf = (Resolve-Path installer/windows/vbcable/vbMmeCable64_win10.inf).Path
           & $devcon.FullName install $inf VBAudioVACWDM
