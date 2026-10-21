@@ -27,6 +27,7 @@ installer/Poise_Setup.exe
 # Inno's silent engine (compiled from setup.iss with /DCORE), embedded into
 # Poise_Setup.exe by installer/PoiseSetup.spec
 installer/PoiseCore.exe
+installer/PoiseCore-update.exe*
 # Leftover native libraries from abandoned experiments (nothing loads them)
 stream_denoiser/native/libpoise_native.so
 stream_denoiser/native/libopenvino*.so

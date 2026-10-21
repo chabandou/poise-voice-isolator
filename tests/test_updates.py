@@ -138,7 +138,7 @@ def test_download_verifies_and_reports_progress(server, tmp_path):
 def test_download_uses_the_checksum_file_without_a_digest(server, tmp_path):
     base, routes, _ = server
     routes["/core"] = PAYLOAD
-    routes["/core.sha256"] = f"{SHA}  PoiseCore.exe".encode()
+    routes["/core.sha256"] = f"{SHA}  PoiseCore-update.exe".encode()
     release = updates.parse_release(
         _release_json(base, digest=False, checksum=True))
     assert release.sha256 == ""
@@ -207,6 +207,19 @@ def test_installer_args_are_silent_and_mark_an_update():
     assert r"/LOG=C:\t\install.log" in args
     assert f"/POISEPID={os.getpid()}" in args
     assert "/POISEPID=42" in updates.installer_args("s", "l", pid=42)
+
+
+def test_releases_publish_the_core_under_the_updaters_name():
+    """A release without CORE_ASSET by this exact name can't be installed
+    from inside Poise: CI must stage it and the draft must wait for it."""
+    root = os.path.join(os.path.dirname(__file__), "..")
+    paths = (os.path.join(root, ".github", "workflows", "build-windows.yml"),
+             os.path.join(root, "tools", "release_upload.sh"))
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        assert updates.CORE_ASSET in text, path
+        assert updates.CHECKSUM_ASSET in text, path
 
 
 def test_setup_script_honours_the_update_contract():

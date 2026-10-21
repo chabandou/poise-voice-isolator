@@ -98,14 +98,18 @@ jobs:
           }
           Get-Item installer/Poise_Setup.exe | Format-Table Name, Length
 
-      - name: Checksum update core
-        # The in-app updater downloads PoiseCore.exe and runs it silently
-        # (stream_denoiser/updates.py); the name is its contract. It
-        # prefers GitHub's asset digest, this file is the fallback.
+      - name: Stage update core
+        # The in-app updater downloads the core and runs it silently
+        # (stream_denoiser/updates.py CORE_ASSET; the name is its
+        # contract). Published as PoiseCore-update.exe so the release
+        # page does not read as a second installer; Poise_Setup.exe
+        # embeds the same file. GitHub's asset digest is preferred,
+        # the .sha256 is the fallback.
         run: |
-          $hash = (Get-FileHash installer/PoiseCore.exe -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path installer/PoiseCore.exe.sha256 -Value "$hash  PoiseCore.exe" -Encoding ascii -NoNewline
-          Get-Content installer/PoiseCore.exe.sha256
+          Copy-Item installer/PoiseCore.exe installer/PoiseCore-update.exe
+          $hash = (Get-FileHash installer/PoiseCore-update.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path installer/PoiseCore-update.exe.sha256 -Value "$hash  PoiseCore-update.exe" -Encoding ascii -NoNewline
+          Get-Content installer/PoiseCore-update.exe.sha256
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -124,5 +128,5 @@ jobs:
         run: >-
           bash tools/release_upload.sh "$GITHUB_REF_NAME"
           installer/Poise_Setup.exe
-          installer/PoiseCore.exe
-          installer/PoiseCore.exe.sha256
+          installer/PoiseCore-update.exe
+          installer/PoiseCore-update.exe.sha256

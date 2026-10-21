@@ -5,10 +5,11 @@ Everything comes from GitHub Releases, the one place Poise is published:
 
     check     GET the repo's latest release (drafts and pre-releases are
               never "latest"), compare its vX.Y.Z tag with __version__.
-    download  Fetch the release's PoiseCore.exe - the silent Inno Setup
-              core, the same script as Poise_Setup.exe - and check its
-              size and SHA-256 (GitHub's asset digest, or a published
-              PoiseCore.exe.sha256).
+    download  Fetch the release's PoiseCore-update.exe - the silent Inno
+              Setup core that Poise_Setup.exe wraps, published under a
+              name that does not read as a second installer - and check
+              its size and SHA-256 (GitHub's asset digest, or a published
+              PoiseCore-update.exe.sha256).
     install   Run it silently with /POISEUPDATE=<signal file>. The core
               elevates (one UAC prompt), writes the signal file to say it
               is running, waits for this Poise to quit (RUNNING_MUTEX),
@@ -44,7 +45,8 @@ LATEST_API = (os.environ.get("POISE_UPDATE_API")
 RELEASES_URL = f"https://github.com/{REPO}/releases/latest"
 
 #: The release asset the updater runs, and its optional checksum file.
-CORE_ASSET = "PoiseCore.exe"
+#: Keep in step with build-windows.yml and tools/release_upload.sh.
+CORE_ASSET = "PoiseCore-update.exe"
 CHECKSUM_ASSET = CORE_ASSET + ".sha256"
 
 #: Created by the GUI while it runs; setup.iss waits for it to go away
@@ -66,10 +68,10 @@ class UpdateError(Exception):
 class Release:
     version: str            # "1.6.0"
     page_url: str           # the release on GitHub
-    asset_url: str = ""     # PoiseCore.exe download, "" if not published
+    asset_url: str = ""     # CORE_ASSET download, "" if not published
     asset_size: int = 0
     sha256: str = ""        # lowercase hex, "" if not known yet
-    checksum_url: str = ""  # PoiseCore.exe.sha256 download, if any
+    checksum_url: str = ""  # CHECKSUM_ASSET download, if any
 
 
 def parse_version(text: str) -> Optional[tuple]:
@@ -153,7 +155,7 @@ def _expected_sha256(release: Release, timeout: float) -> str:
             text = response.read(4096).decode("ascii", "replace")
     except OSError as e:
         raise UpdateError("Couldn't download the checksum") from e
-    # "<hex>" or sha256sum's "<hex>  PoiseCore.exe"
+    # "<hex>" or sha256sum's "<hex>  PoiseCore-update.exe"
     match = re.match(r"\s*([0-9a-fA-F]{64})\b", text)
     if not match:
         raise UpdateError("The release's checksum file is malformed")
