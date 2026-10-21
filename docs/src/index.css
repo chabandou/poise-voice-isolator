@@ -508,7 +508,7 @@ body {
 @keyframes reveal-up {
 	from {
 		opacity: 0;
-		translate: 0 24px;
+		translate: 0 var(--reveal-rise, 24px);
 	}
 	to {
 		opacity: 1;
@@ -1029,10 +1029,14 @@ body {
 		opacity: 0;
 	}
 
+	/* Traced in a light pen and filled with a tint of the accent, both
+	   cooling to the face's own colours once it is drawn: in them alone
+	   the face barely stood out from the card. */
 	[data-revealed] .emblem__face {
 		animation:
-			emblem-stroke calc(620ms * var(--reveal-pace)) var(--manim-ease) backwards,
-			emblem-fill calc(700ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards;
+			emblem-stroke calc(900ms * var(--reveal-pace)) var(--manim-ease) backwards,
+			emblem-fill calc(1000ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards,
+			emblem-face-light calc(2000ms * var(--reveal-pace)) var(--manim-ease) backwards;
 	}
 
 	/* A sweep once the wave is all but written, tick by tick (ticks are
@@ -1064,6 +1068,8 @@ body {
 	}
 
 	[data-reveal="draw"][data-revealed] ~ .emblem-caption {
+		/* A short rise: it settles under the emblem, not up from below. */
+		--reveal-rise: 8px;
 		animation: reveal-up calc(820ms * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-settled) + var(--caption-delay, 0ms)) * var(--reveal-pace)) backwards;
 	}
 
@@ -1105,6 +1111,16 @@ body {
 @keyframes emblem-fill {
 	from { fill-opacity: 0; }
 	to { fill-opacity: 1; }
+}
+
+/* Held lit while the face is traced and filled, then eased back to its
+   own groove stroke and pill fill (the unset end keyframe). */
+@keyframes emblem-face-light {
+	from,
+	50% {
+		stroke: var(--color-accent-light);
+		fill: color-mix(in srgb, var(--color-accent) 16%, var(--color-pill));
+	}
 }
 
 @keyframes emblem-dash {
