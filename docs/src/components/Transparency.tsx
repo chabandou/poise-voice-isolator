@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { CodeSimple, Cpu, WifiSlash } from '../icons';
 import { Emblem, Lattice } from './Brand';
 import { RELEASE } from '../release';
@@ -59,11 +60,16 @@ const Transparency = () => {
 						<div className="aspect-square w-[78%]" {...reveal(0, 'draw')}>
 							<Emblem className="h-full w-full" />
 						</div>
-						<p className="mt-6 font-heading text-[1.9rem] font-bold leading-none text-ink" {...reveal(1250)}>
+						{/* The caption follows once the emblem has drawn (index.css .emblem-caption). */}
+						<p className="emblem-caption mt-6 font-heading text-[1.9rem] font-bold leading-none text-ink">
 							Poise Voice Isolator
 						</p>
-						<p className="mt-3 h-5 font-mono text-[0.85rem] text-secondary">{version ?? ''}</p>
-						<p className="mt-2 text-[0.95rem] text-ink/90">Real-time voice isolation. Runs 100% on-device.</p>
+						<p className="emblem-caption mt-3 h-5 font-mono text-[0.85rem] text-secondary" style={{ '--caption-delay': '90ms' } as CSSProperties}>
+							{version ?? ''}
+						</p>
+						<p className="emblem-caption mt-2 text-[0.95rem] text-ink/90" style={{ '--caption-delay': '180ms' } as CSSProperties}>
+							Real-time voice isolation. Runs 100% on-device.
+						</p>
 					</div>
 				</div>
 			</div>

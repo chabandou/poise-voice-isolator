@@ -972,7 +972,7 @@ body {
    face traced from twelve o'clock and filled, the ticks sweeping round
    clockwise one at a time, each falling in along its spoke, the wave
    written along its length and its axis dashes set down, the needle
-   landing last. ~3.5 s, once. The
+   landing last, then the caption. ~4 s, once. The
    prerendered page and reduced motion show it finished.
    --------------------------------------------------------------------- */
 [data-reveal="draw"],
@@ -984,16 +984,24 @@ body {
 	animation: none;
 }
 
+/* The emblem's timeline, on :root so its caption (siblings) can read it.
+   The ticks overlap a little: each falls for --emblem-tick-ms, the next
+   setting off --emblem-tick-step after it, by when the ease-out has
+   carried it most of the way home, so the sweep reads one tick at a time
+   and each fall still shows. The needle lands as the last tick settles,
+   and the caption follows once it has. */
+:root {
+	--emblem-ticks-from: 1200ms;
+	--emblem-tick-step: 30ms;
+	--emblem-tick-ms: 90ms;
+	--emblem-ticks-end: calc(var(--emblem-ticks-from) + 70 * var(--emblem-tick-step) + var(--emblem-tick-ms));
+	--emblem-settled: calc(var(--emblem-ticks-end) + 400ms);
+}
+
 @media (prefers-reduced-motion: no-preference) {
 	.emblem {
 		/* Manim's default rate function, smooth. */
 		--manim-ease: cubic-bezier(0.45, 0, 0.55, 1);
-		/* The ticks go round one at a time, each starting as the last
-		   settles: this is each one's whole turn, so the sweep takes 71 of
-		   them. The needle lands as the last tick settles. */
-		--tick-ms: 24ms;
-		--ticks-from: 1200ms;
-		--ticks-end: calc(var(--ticks-from) + 71 * var(--tick-ms));
 	}
 
 	/* Unit dashes on unit-length paths: the offset is how much is undrawn. */
@@ -1030,7 +1038,7 @@ body {
 	/* A sweep once the wave is all but written, tick by tick (ticks are
 	   1..71; the needle is 0). */
 	[data-revealed] .emblem__tick {
-		animation: emblem-fall calc(var(--tick-ms) * var(--reveal-pace)) ease-out calc((var(--ticks-from) + (var(--i) - 1) * var(--tick-ms)) * var(--reveal-pace)) backwards;
+		animation: emblem-fall calc(var(--emblem-tick-ms) * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-ticks-from) + (var(--i) - 1) * var(--emblem-tick-step)) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__wave {
@@ -1046,11 +1054,21 @@ body {
 	[data-revealed] .emblem__needle {
 		transform-box: fill-box;
 		transform-origin: center;
-		animation: emblem-needle calc(560ms * var(--reveal-pace)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(var(--ticks-end) * var(--reveal-pace)) backwards;
+		animation: emblem-needle calc(560ms * var(--reveal-pace)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(var(--emblem-ticks-end) * var(--reveal-pace)) backwards;
+	}
+
+	/* The caption under the emblem (Transparency.tsx) waits for it: keyed
+	   to the emblem's own reveal, so it holds however it was scrolled in. */
+	.js [data-reveal="draw"]:not([data-revealed]) ~ .emblem-caption {
+		opacity: 0;
+	}
+
+	[data-reveal="draw"][data-revealed] ~ .emblem-caption {
+		animation: reveal-up calc(820ms * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-settled) + var(--caption-delay, 0ms)) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__mark {
-		animation: emblem-bloom calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(var(--ticks-end) * var(--reveal-pace));
+		animation: emblem-bloom calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(var(--emblem-ticks-end) * var(--reveal-pace));
 	}
 }
 
