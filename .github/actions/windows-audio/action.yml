@@ -61,20 +61,19 @@ runs:
         "trusting $($cert.Subject)"
         $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
         $store.Open('ReadWrite'); $store.Add($cert); $store.Close()
-        # Seen once: the setup returns 0 at once, having installed nothing
-        # (VB-Cable's install still settling?). Run it again then.
-        foreach ($attempt in 1..3) {
-          $t0 = Get-Date
-          $p = Start-Process "$dir/HiFiCableAsioBridgeSetup.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
-          if (-not $p.WaitForExit(180000)) { throw "Hi-Fi Cable setup still running after 180 s" }
-          "Hi-Fi Cable setup ($attempt): exit code $($p.ExitCode) after $([int]((Get-Date) - $t0).TotalSeconds) s"
-          $deadline = (Get-Date).AddSeconds(30)
-          while (-not ($found = Get-PnpDevice -Class AudioEndpoint -FriendlyName 'Hi-Fi Cable Input*' -ErrorAction SilentlyContinue)) {
-            if ((Get-Date) -gt $deadline) { break }
-            Start-Sleep 1
+        # Once only: run again, a VB-Audio setup uninstalls what it finds.
+        $p = Start-Process "$dir/HiFiCableAsioBridgeSetup.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
+        if (-not $p.WaitForExit(180000)) { throw "Hi-Fi Cable setup still running after 180 s" }
+        "Hi-Fi Cable setup exit code: $($p.ExitCode)"
+        # The device is up at once, its endpoints follow later.
+        $deadline = (Get-Date).AddSeconds(90)
+        while ($true) {
+          try { ./tools/win_endpoints.ps1 -Default 'Hi-Fi Cable Input' -List; break }
+          catch {
+            if ((Get-Date) -gt $deadline) {
+              Get-PnpDevice -Class MEDIA | Format-Table Status, Problem, FriendlyName -AutoSize | Out-String
+              throw
+            }
+            Start-Sleep 2
           }
-          if ($found) { break }
-          Get-PnpDevice -Class MEDIA | Format-Table Status, Problem, FriendlyName -AutoSize | Out-String
         }
-        if (-not $found) { throw "no Hi-Fi Cable Input endpoint after the setup" }
-        ./tools/win_endpoints.ps1 -Default 'Hi-Fi Cable Input' -List
