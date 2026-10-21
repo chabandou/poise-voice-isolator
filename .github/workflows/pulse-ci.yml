@@ -11,6 +11,9 @@ on:
       - 'requirements.txt'
       - 'pyproject.toml'
       - 'build-linux.sh'
+      - 'installer/fetch_vbcable.py'
+      - 'tools/win_endpoints.ps1'
+      - '.github/actions/windows-audio/**'
       - '.github/workflows/pulse-ci.yml'
   # No path filter on PRs: these jobs are required checks on master, and a
   # skipped required check blocks the PR forever.
@@ -143,7 +146,8 @@ jobs:
   windows:
     # The GUI (Qt offscreen, see tests/conftest.py), the WASAPI bridge on the
     # committed poise_wasapi.dll and the engines, on the platform they ship
-    # on. The runner has no audio devices: the hardware tests skip.
+    # on. The runner has no audio devices: the hardware tests skip here
+    # and run in windows-audio.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -154,6 +158,29 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run tests
         run: python -m pytest tests -v
+
+  windows-audio:
+    # The hardware tests the windows job skips, on virtual cables: VB-Cable
+    # as on a user's machine, Hi-Fi Cable as the playback device
+    # (.github/actions/windows-audio). A skip here is a failure.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audio devices
+        uses: ./.github/actions/windows-audio
+      - name: Install test deps
+        run: pip install -r requirements.txt pytest
+      - name: Hardware tests
+        shell: bash
+        env:
+          # Moves the default output device's volume: fine on a runner.
+          POISE_VOLUME_TESTS: '1'
+        run: |
+          python -m pytest tests/test_wasapi_integration.py tests/test_volume_mirror.py             tests/test_vbcable_install.py -v -rs | tee "$RUNNER_TEMP/hardware.log"
+          ! grep -q SKIPPED "$RUNNER_TEMP/hardware.log"
 
   native-dll:
     # stream_denoiser/native/poise_wasapi.dll is built by hand and committed.

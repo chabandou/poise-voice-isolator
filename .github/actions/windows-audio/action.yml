@@ -3,7 +3,8 @@ description: >-
   Audio on a GitHub-hosted Windows runner, which has no sound card: the
   audio service, microphone access for desktop apps (WASAPI capture is
   refused without it) and VB-Cable, installed with the vendored setup the
-  way Poise's installer runs it.
+  way Poise's installer runs it, plus a second virtual cable as the
+  default playback device.
 
 runs:
   using: composite
@@ -35,6 +36,28 @@ runs:
           Start-Sleep 1
         }
 
-    - name: Endpoints
+    - name: Hi-Fi Cable, the output device
+      # A second, independent playback device (Poise plays to one, never
+      # to CABLE): VB-Audio's Hi-Fi Cable, free for end users and signed
+      # like VB-Cable. Scream's driver does not load on the runner, and
+      # VB-Cable will not run a second instance.
       shell: pwsh
-      run: ./tools/win_endpoints.ps1 -List
+      env:
+        HIFI_URL: https://download.vb-audio.com/Download_CABLE/HiFiCableAsioBridgeSetup_v1007.zip
+        HIFI_SHA256: 3ecf204bfd8579d36bb918f9856eb1eaddd49c75146f5e8a8f59dcb8375ae89a
+      run: |
+        $dir = New-Item -ItemType Directory "$env:RUNNER_TEMP/hificable" -Force
+        $zip = "$dir/hificable.zip"
+        Invoke-WebRequest $env:HIFI_URL -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if ($hash -ne $env:HIFI_SHA256) { throw "Hi-Fi Cable pack sha256 $hash, expected $env:HIFI_SHA256" }
+        Expand-Archive $zip -DestinationPath $dir
+        $p = Start-Process "$dir/HiFiCableAsioBridgeSetup.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
+        if (-not $p.WaitForExit(180000)) { throw "Hi-Fi Cable setup still running after 180 s" }
+        "Hi-Fi Cable setup exit code: $($p.ExitCode)"
+        $deadline = (Get-Date).AddSeconds(30)
+        while (-not (Get-PnpDevice -Class AudioEndpoint -FriendlyName 'Hi-Fi Cable Input*' -ErrorAction SilentlyContinue)) {
+          if ((Get-Date) -gt $deadline) { throw "no Hi-Fi Cable Input endpoint after the setup" }
+          Start-Sleep 1
+        }
+        ./tools/win_endpoints.ps1 -Default 'Hi-Fi Cable Input' -List

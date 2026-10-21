@@ -1,31 +1,21 @@
 <#
 .SYNOPSIS
-  List, rename and pick the default of Windows audio endpoints (CI helper).
+  List Windows audio endpoints and pick the default output (CI helper).
 
 .DESCRIPTION
-  The hosted Windows runner has no sound card; CI installs VB-Cable and
-  needs the endpoints laid out as on a real box. Uses the endpoint
-  builder's own policy interface (what the Sound control panel calls),
-  so it needs an elevated shell.
+  The hosted Windows runner has no sound card: CI installs virtual cables
+  (.github/actions/windows-audio) and needs to see them and choose which
+  one plays by default, as a user would in the Sound settings. Setting
+  the default uses the endpoint builder's policy interface (what the
+  Sound control panel calls), so it needs an elevated shell.
 
-  -List                       print every render/capture endpoint
-  -Rename <id-or-name>=<new>  set an endpoint's name (its device description,
-                              the part before the parentheses)
-  -Default <name>             make the render endpoint whose full name
-                              contains <name> the default for every role
-  -AddDevice <inf>            one more root device driven by <inf> (as
-                              devcon install), with -HardwareId; then waits
-                              up to -WaitFor seconds for an endpoint whose
-                              name contains -WaitName
+  -List            print every active render/capture endpoint
+  -Default <name>  make the render endpoint whose name contains <name>
+                   the default for every role (exactly one must match)
 #>
 param(
     [switch]$List,
-    [string[]]$Rename = @(),
-    [string]$Default,
-    [string]$AddDevice,
-    [string]$HardwareId,
-    [string]$WaitName,
-    [int]$WaitFor = 60
+    [string]$Default
 )
 $ErrorActionPreference = 'Stop'
 
@@ -81,8 +71,8 @@ namespace PoiseCi {
   [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
   class MMDeviceEnumerator {}
 
-  // Undocumented, stable since Vista: what mmsys.cpl uses to rename
-  // endpoints and to set the default.
+  // Undocumented, stable since Vista: what mmsys.cpl uses to set the
+  // default endpoint.
   [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IPolicyConfig {
@@ -148,65 +138,10 @@ namespace PoiseCi {
       return list;
     }
 
-    public static void Rename(string id, string description) {
-      var pc = (IPolicyConfig)new PolicyConfigClient();
-      var pv = new PropVariant { vt = 31, ptr = Marshal.StringToCoTaskMemUni(description) };
-      var key = DeviceDesc;
-      try { Check(pc.SetPropertyValue(id, 0, ref key, ref pv), "SetPropertyValue"); }
-      finally { Marshal.FreeCoTaskMem(pv.ptr); }
-    }
-
     public static void SetDefault(string id) {
       var pc = (IPolicyConfig)new PolicyConfigClient();
       for (int role = 0; role < 3; role++)
         Check(pc.SetDefaultEndpoint(id, role), "SetDefaultEndpoint");
-    }
-  }
-
-  // devcon install <inf> <hwid>: one more root-enumerated device node,
-  // driven by the INF's driver.
-  public static class RootDevice {
-    [StructLayout(LayoutKind.Sequential)]
-    struct DevInfoData { public int cbSize; public Guid ClassGuid; public int DevInst; public IntPtr Reserved; }
-
-    [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    static extern bool SetupDiGetINFClassW(string inf, out Guid cls, System.Text.StringBuilder name, int size, IntPtr req);
-    [DllImport("setupapi.dll", SetLastError = true)]
-    static extern IntPtr SetupDiCreateDeviceInfoList(ref Guid cls, IntPtr hwnd);
-    [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    static extern bool SetupDiCreateDeviceInfoW(IntPtr set, string name, ref Guid cls, string desc, IntPtr hwnd, int flags, ref DevInfoData data);
-    [DllImport("setupapi.dll", SetLastError = true)]
-    static extern bool SetupDiSetDeviceRegistryPropertyW(IntPtr set, ref DevInfoData data, int prop, byte[] buf, int size);
-    [DllImport("setupapi.dll", SetLastError = true)]
-    static extern bool SetupDiCallClassInstaller(int dif, IntPtr set, ref DevInfoData data);
-    [DllImport("setupapi.dll", SetLastError = true)]
-    static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
-    [DllImport("newdev.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    static extern bool UpdateDriverForPlugAndPlayDevicesW(IntPtr hwnd, string hwid, string inf, int flags, out bool reboot);
-
-    static void Check(bool ok, string what) {
-      if (!ok) throw new Exception(what + " failed: error " + Marshal.GetLastWin32Error());
-    }
-
-    public static void Install(string inf, string hwid) {
-      Guid cls;
-      var name = new System.Text.StringBuilder(64);
-      Check(SetupDiGetINFClassW(inf, out cls, name, name.Capacity, IntPtr.Zero), "SetupDiGetINFClass");
-      IntPtr set = SetupDiCreateDeviceInfoList(ref cls, IntPtr.Zero);
-      if (set == new IntPtr(-1)) Check(false, "SetupDiCreateDeviceInfoList");
-      try {
-        var data = new DevInfoData { cbSize = Marshal.SizeOf(typeof(DevInfoData)) };
-        Check(SetupDiCreateDeviceInfoW(set, name.ToString(), ref cls, null, IntPtr.Zero, 1 /* DICD_GENERATE_ID */, ref data),
-              "SetupDiCreateDeviceInfo");
-        byte[] ids = System.Text.Encoding.Unicode.GetBytes(hwid + "\0\0");
-        Check(SetupDiSetDeviceRegistryPropertyW(set, ref data, 1 /* SPDRP_HARDWAREID */, ids, ids.Length),
-              "SetupDiSetDeviceRegistryProperty");
-        Check(SetupDiCallClassInstaller(0x19 /* DIF_REGISTERDEVICE */, set, ref data), "DIF_REGISTERDEVICE");
-      } finally { SetupDiDestroyDeviceInfoList(set); }
-      bool reboot;
-      Check(UpdateDriverForPlugAndPlayDevicesW(IntPtr.Zero, hwid, inf, 1 /* INSTALLFLAG_FORCE */, out reboot),
-            "UpdateDriverForPlugAndPlayDevices");
-      if (reboot) Console.WriteLine("driver update asks for a reboot");
     }
   }
 }
@@ -222,28 +157,11 @@ function Find-Endpoint([string]$what, [string]$flow) {
     $hit[0]
 }
 
-if ($AddDevice) {
-    [PoiseCi.RootDevice]::Install((Resolve-Path $AddDevice).Path, $HardwareId)
-    "device added: $HardwareId"
-    if ($WaitName) {
-        $deadline = (Get-Date).AddSeconds($WaitFor)
-        while (-not ([PoiseCi.Endpoints]::All() | Where-Object Name -like "*$WaitName*")) {
-            if ((Get-Date) -gt $deadline) { throw "no endpoint named *$WaitName* after $WaitFor s" }
-            Start-Sleep -Milliseconds 500
-        }
-    }
-}
-foreach ($r in $Rename) {
-    $old, $new = $r -split '=', 2
-    $ep = Find-Endpoint $old
-    [PoiseCi.Endpoints]::Rename($ep.Id, $new)
-    "renamed '$($ep.Name)' -> '$new'"
-}
 if ($Default) {
     $ep = Find-Endpoint $Default 'Render'
     [PoiseCi.Endpoints]::SetDefault($ep.Id)
     "default render endpoint: $($ep.Name)"
 }
-if ($List -or (-not $Rename -and -not $Default -and -not $AddDevice)) {
+if ($List -or -not $Default) {
     [PoiseCi.Endpoints]::All() | Format-Table Flow, IsDefault, Name, Description, Id -AutoSize | Out-String -Width 300
 }
