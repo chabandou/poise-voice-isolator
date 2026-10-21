@@ -52,19 +52,11 @@ jobs:
       - name: Second VB-Cable instance as the output device
         timeout-minutes: 5
         run: |
-          Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Select-Object FullName
-          $devcon = Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Where-Object FullName -like '*\x64\*' | Select-Object -First 1
-          "devcon: $($devcon.FullName)"
-          $inf = (Resolve-Path installer/windows/vbcable/vbMmeCable64_win10.inf).Path
-          & $devcon.FullName install $inf VBAudioVACWDM
-          "devcon exit: $LASTEXITCODE"
-          Start-Sleep 5
+          Select-String -Path installer/windows/vbcable/vbMmeCable64_win10.inf -Pattern 'VBAudio' | ForEach-Object Line
+          ./tools/win_endpoints.ps1 -AddDevice installer/windows/vbcable/vbMmeCable64_win10.inf -HardwareId VBAudioVACWDM -WaitName '2- VB-Audio'
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
           ./tools/win_endpoints.ps1 -List
-      - name: Default output
-        continue-on-error: true
-        run: |
-          ./tools/win_endpoints.ps1 -Default "2- VB-Audio"
+          ./tools/win_endpoints.ps1 -Rename 'CABLE Input (2- VB-Audio=Speakers', 'CABLE Output (2- VB-Audio=Line In' -Default '2- VB-Audio'
           ./tools/win_endpoints.ps1 -List
       - name: Install deps
         run: pip install -r requirements.txt pytest
