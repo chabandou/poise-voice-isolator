@@ -52,6 +52,15 @@ runs:
         $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
         if ($hash -ne $env:HIFI_SHA256) { throw "Hi-Fi Cable pack sha256 $hash, expected $env:HIFI_SHA256" }
         Expand-Archive $zip -DestinationPath $dir
+        # Unlike VB-Cable's (Microsoft-signed), this driver is signed by
+        # VB-Audio's own certificate: without it trusted, Windows asks
+        # "install this device software?" where no one can answer and
+        # the setup hangs. VB-Cable's older catalogs carry that signer.
+        $cat = Get-ChildItem installer/windows/vbcable -Filter vbaudio_cable64_win7.cat
+        $cert = (Get-AuthenticodeSignature $cat.FullName).SignerCertificate
+        "trusting $($cert.Subject)"
+        $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+        $store.Open('ReadWrite'); $store.Add($cert); $store.Close()
         $p = Start-Process "$dir/HiFiCableAsioBridgeSetup.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
         if (-not $p.WaitForExit(180000)) { throw "Hi-Fi Cable setup still running after 180 s" }
         "Hi-Fi Cable setup exit code: $($p.ExitCode)"

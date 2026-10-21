@@ -10,7 +10,7 @@ name: Windows frozen build
 
 on:
   push:
-    branches: [master, ci/windows-hardware-ci]  # TEMP: drop the branch before merge
+    branches: [master]
     paths: &paths
       - 'stream_denoiser/**'
       - 'run_poise_gui.py'
