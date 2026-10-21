@@ -37,7 +37,10 @@ from typing import Callable, Optional
 from . import __version__
 
 REPO = "chabandou/poise-voice-isolator"
-LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+#: POISE_UPDATE_API points the check at a stand-in release (end-to-end
+#: tests of an installed build); it answers like GitHub's API.
+LATEST_API = (os.environ.get("POISE_UPDATE_API")
+              or f"https://api.github.com/repos/{REPO}/releases/latest")
 RELEASES_URL = f"https://github.com/{REPO}/releases/latest"
 
 #: The release asset the updater runs, and its optional checksum file.
