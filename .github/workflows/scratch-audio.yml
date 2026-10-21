@@ -49,20 +49,27 @@ jobs:
           Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
       - name: Endpoints after setup
         run: ./tools/win_endpoints.ps1 -List
-      - name: Second VB-Cable instance as the output device
-        timeout-minutes: 5
+      - name: Hi-Fi Cable as the output device
+        timeout-minutes: 6
         run: |
-          Select-String -Path installer/windows/vbcable/vbMmeCable64_win10.inf -Pattern 'HardwareId|DeviceName|NAME1|NAME2' | ForEach-Object Line
-          Get-PnpDevice -Class MEDIA | ForEach-Object { $_.InstanceId; (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_HardwareIds).Data }
-          $hwid = (Get-PnpDeviceProperty -InstanceId 'ROOT\MEDIA\0000' -KeyName DEVPKEY_Device_HardwareIds).Data[0]
-          "hardware id: $hwid"
-          try {
-            ./tools/win_endpoints.ps1 -AddDevice installer/windows/vbcable/vbMmeCable64_win10.inf -HardwareId $hwid -WaitName '2- VB-Audio' -WaitFor 30
-          } catch { "add failed: $_" }
+          $zip = "$env:RUNNER_TEMP\hificable.zip"
+          Invoke-WebRequest https://download.vb-audio.com/Download_CABLE/HiFiCableAsioBridgeSetup_v1007.zip -OutFile $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash
+          $dir = "$env:RUNNER_TEMP\hificable"
+          Expand-Archive $zip -DestinationPath $dir
+          Get-ChildItem -Recurse $dir | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200
+          foreach ($cat in Get-ChildItem -Recurse $dir -Filter *.cat) {
+            $sig = Get-AuthenticodeSignature $cat.FullName
+            "$($cat.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          Get-ChildItem -Recurse $dir -Filter *win10*.inf | ForEach-Object { "== $($_.Name)"; Select-String -Path $_.FullName -Pattern 'HardwareId|NAME' | ForEach-Object Line }
+          $setup = Get-ChildItem -Recurse $dir -Filter *Setup*x64*.exe | Select-Object -First 1
+          if (-not $setup) { $setup = Get-ChildItem -Recurse $dir -Filter *.exe | Select-Object -First 1 }
+          "setup: $($setup.FullName)"
+          $p = Start-Process $setup.FullName -ArgumentList '-i','-h' -PassThru -WorkingDirectory $setup.DirectoryName
+          if (-not $p.WaitForExit(180000)) { "setup still running after 180 s"; Stop-Process $p -Force } else { "setup exit code: $($p.ExitCode)" }
+          Start-Sleep 5
           Get-PnpDevice -Class MEDIA | Format-Table Status, Problem, FriendlyName, InstanceId -AutoSize
-          Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName, InstanceId -AutoSize
-          ./tools/win_endpoints.ps1 -List
-          ./tools/win_endpoints.ps1 -Rename 'CABLE Input (2- VB-Audio=Speakers', 'CABLE Output (2- VB-Audio=Line In' -Default 'Speakers (2- VB-Audio'
           ./tools/win_endpoints.ps1 -List
       - name: Install deps
         run: pip install -r requirements.txt pytest
