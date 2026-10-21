@@ -52,9 +52,15 @@ jobs:
       - name: Second VB-Cable instance as the output device
         timeout-minutes: 5
         run: |
-          Get-Content installer/windows/vbcable/vbMmeCable64_win10.inf -TotalCount 80
-          ./tools/win_endpoints.ps1 -AddDevice installer/windows/vbcable/vbMmeCable64_win10.inf -HardwareId VBAudioVACWDM -WaitName '2- VB-Audio'
-          Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
+          Select-String -Path installer/windows/vbcable/vbMmeCable64_win10.inf -Pattern 'HardwareId|DeviceName|NAME1|NAME2' | ForEach-Object Line
+          Get-PnpDevice -Class MEDIA | ForEach-Object { $_.InstanceId; (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_HardwareIds).Data }
+          $hwid = (Get-PnpDeviceProperty -InstanceId 'ROOT\MEDIA\0000' -KeyName DEVPKEY_Device_HardwareIds).Data[0]
+          "hardware id: $hwid"
+          try {
+            ./tools/win_endpoints.ps1 -AddDevice installer/windows/vbcable/vbMmeCable64_win10.inf -HardwareId $hwid -WaitName '2- VB-Audio' -WaitFor 30
+          } catch { "add failed: $_" }
+          Get-PnpDevice -Class MEDIA | Format-Table Status, Problem, FriendlyName, InstanceId -AutoSize
+          Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName, InstanceId -AutoSize
           ./tools/win_endpoints.ps1 -List
           ./tools/win_endpoints.ps1 -Rename 'CABLE Input (2- VB-Audio=Speakers', 'CABLE Output (2- VB-Audio=Line In' -Default 'Speakers (2- VB-Audio'
           ./tools/win_endpoints.ps1 -List
