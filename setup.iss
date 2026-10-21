@@ -178,6 +178,17 @@ begin
     end;
 end;
 
+{ This Setup is 32-bit: a plain powershell.exe is the SysWOW64 one, whose
+  HKLM\SOFTWARE is the 32-bit view - no MMDevices there, so CABLE always
+  looked missing and the driver setup ran on every install and update. }
+function PowerShellExe(): String;
+begin
+  if IsWin64 then
+    Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe')
+  else
+    Result := 'powershell.exe';
+end;
+
 { Scan the MMDevices registry for a CABLE Input render endpoint.
   Needs no AudioDeviceCmdlets module, so it works on fresh machines.
   Running the VB-Cable setup while already installed offers REMOVAL,
@@ -203,7 +214,7 @@ begin
     'Out-File -FilePath ''' + OutPath + ''' -InputObject $verdict -Encoding ascii;' + #13#10;
   if not SaveStringToFile(PsPath, Script, False) then
     Exit;
-  if not Exec('powershell.exe',
+  if not Exec(PowerShellExe(),
       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + PsPath + '"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Exit;

@@ -228,3 +228,12 @@ def test_colours_come_only_from_the_palette():
         with open(os.path.join(here, name), encoding="utf-8") as fh:
             found = re.findall(r"#[0-9a-fA-F]{6}\b", fh.read())
         assert not found, f"{name} hard-codes {found}"
+
+
+def test_driver_probe_reads_the_64_bit_registry():
+    """setup.iss is 32-bit Inno: its probe must run the native PowerShell,
+    or MMDevices is invisible and the driver setup runs on every install."""
+    with open(SETUP_ISS, encoding="utf-8") as f:
+        script = f.read()
+    assert "{sysnative}\WindowsPowerShell" in script
+    assert "Exec('powershell.exe'" not in script
