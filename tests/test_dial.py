@@ -367,7 +367,7 @@ def test_wheel_step_leaves_a_trail_along_the_ticks_it_passes(app, motion):
     assert stamps == sorted(stamps)                 # in passing order
     assert stamps[-1] - stamps[0] <= d.NUDGE_GLIDE_MS / 1000
     _pump(app, 0.2)
-    now = _time.monotonic()
+    now = _time.perf_counter()
     assert any(btn._trail_glow(i, now) > 0.2 for i in range(before, after))
     btn.grab()                                      # paints the trail
     _pump(app, (d.NUDGE_GLIDE_MS + d.TRAIL_MS) / 1000 + 0.1)
@@ -564,4 +564,54 @@ def test_the_clock_waits_for_the_first_sweep(app, motion):
     btn._sweep_at -= btn._sweep_ms()[0] / 1000.0  # it starts
     btn._run_clock()
     assert btn._clock.isActive()
+    btn.close()
+
+
+def test_the_sweep_starts_when_its_timer_fires_early(app, motion):
+    """Timers can fire a few ms before they are due: the sweep starts
+    then all the same, so its clock runs (else the ring only drew on as
+    other repaints came)."""
+    btn = _make(app)
+    btn._sweep_at = time.perf_counter() + 0.004
+    btn._begin_sweep()                          # fired 4 ms before it was due
+    assert btn._since(btn._sweep_at) >= 0
+    assert btn._clock.isActive()
+    btn.close()
+
+
+def test_home_holds_the_sweep_till_its_entrance(app, motion):
+    """The window puts the first sweep off for Home's entrance: the
+    dial's own timer then does nothing, and sweep_on_in starts it."""
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn.hold_sweep()
+    btn._begin_sweep()                          # the dial's own timer
+    assert btn._since(btn._sweep_at) < -1000    # still held
+    assert not btn._clock.isActive()
+    btn.sweep_on_in(0)
+    btn._begin_sweep()
+    assert btn._sweep_moving() and btn._clock.isActive()
+    started = btn._sweep_at
+    btn.sweep_on_in(500)                        # too late: it has begun
+    assert btn._sweep_at == started
+    assert d.SWEEP_HOLD_MS >= 2000
+    btn.close()
+
+
+def test_a_crest_leads_the_first_sweep(app, motion):
+    """Tactile themes: the ticks just reached are brightest, the crest
+    fades behind them, and it is gone when the sweep ends."""
+    from stream_denoiser.gui.widgets import dial as d
+    btn = _make(app)
+    btn._sweep_at = time.perf_counter() - d.SWEEP_MS * 0.3 / 1000.0
+    crest = [btn._sweep_crest(i) for i in range(d.TICKS)]
+    shown = [btn._sweep_visibility(i) for i in range(d.TICKS)]
+    head = max(i for i in range(d.TICKS) if shown[i] > 0)
+    assert 0 < head < d.TICKS - 1
+    assert crest[0] == 0.0 and crest[head + 1] == 0.0
+    assert max(crest) > 0.9
+    assert crest.index(max(crest)) > head - 4  # at the front
+    btn._sweep_at = time.perf_counter() - d.SWEEP_MS / 1000.0
+    assert not any(btn._sweep_crest(i) for i in range(d.TICKS))
+    assert all(btn._sweep_visibility(i) == 1.0 for i in range(d.TICKS))
     btn.close()

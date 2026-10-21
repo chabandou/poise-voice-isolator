@@ -59,9 +59,10 @@ from PyQt6.QtCore import (
     pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QPainter, QTransform
 from PyQt6.QtWidgets import (
     QAbstractButton,
+    QGraphicsEffect,
     QGraphicsOpacityEffect,
     QStackedWidget,
     QWidget,
@@ -261,7 +262,7 @@ class _FrameClock(QObject):
             self._pace = pace
             for frame_timer in self._running.values():
                 if not sip.isdeleted(frame_timer):
-                    frame_timer._due = time.monotonic()   # re-paced next tick
+                    frame_timer._due = time.perf_counter()   # re-paced next tick
             self._retime()
 
     def interval_of(self, frame_timer) -> int:
@@ -303,7 +304,7 @@ class _FrameClock(QObject):
             self._timer.start()
 
     def _tick(self) -> None:
-        now = time.monotonic()
+        now = time.perf_counter()
         # Due within half a tick counts: a 33 ms loop on a 16 ms clock
         # fires every other tick, not every third.
         slack = self._timer.interval() / 2000.0
@@ -367,7 +368,7 @@ class FrameTimer(QObject):
             self._interval = max(1, int(msec))
         self._active = True
         clock = _clock()
-        self._due = time.monotonic() + clock.interval_of(self) / 1000.0
+        self._due = time.perf_counter() + clock.interval_of(self) / 1000.0
         clock.add(self)
 
     def stop(self) -> None:
@@ -530,12 +531,8 @@ def rise_in(widget: QWidget, delay_ms: int = 0, duration_ms: int = 520,
     if not motion_ok():
         return
     try:
-        cancel_fade(widget)
+        eff = _hidden_low(widget, rise)
         gen = int(getattr(widget, "_apple_fade_gen", 0) or 0)
-        eff = _RollEffect(widget)
-        eff.setOpacity(0.0)
-        eff.set_dy(rise)
-        widget.setGraphicsEffect(eff)
     except Exception:
         return
 
@@ -577,6 +574,28 @@ def rise_in(widget: QWidget, delay_ms: int = 0, duration_ms: int = 520,
         QTimer.singleShot(int(delay_ms), _start)
     else:
         _start()
+
+
+def hold_hidden(widget: QWidget, rise: float = 14.0) -> None:
+    """Keep `widget` out of sight, `rise` px low, until a rise_in brings
+    it in. Drawn (an effect), so the layout never moves; a fully
+    transparent effect draws nothing, so it costs no paint meanwhile."""
+    if not motion_ok():
+        return
+    try:
+        _hidden_low(widget, rise)
+    except Exception:
+        pass
+
+
+def _hidden_low(widget: QWidget, rise: float) -> "_RollEffect":
+    """Cancel `widget`'s entrance and draw it transparent, `rise` px low."""
+    cancel_fade(widget)
+    eff = _RollEffect(widget, still=True)
+    eff.setOpacity(0.0)
+    eff.set_dy(rise)
+    widget.setGraphicsEffect(eff)
+    return eff
 
 
 def flash_colour(label: QWidget, colour: str, duration_ms: int = 1500,
@@ -1298,9 +1317,15 @@ class _RollEffect(QGraphicsOpacityEffect):
     """Opacity plus a vertical offset, drawn (not laid out): TextSwap's
     roll. The bounding rect grows with the offset so nothing clips."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, still: bool = False):
         super().__init__(parent)
         self._dy = 0.0
+        # still: the widget is pictured once and the picture moved (Qt
+        # caches no effect picture for widgets, so each frame would paint
+        # the whole widget again). For entrances: a change made meanwhile
+        # shows when the effect goes.
+        self._still = still
+        self._shot = None              # (pixmap, offset, transform)
 
     def set_dy(self, dy: float) -> None:
         self._dy = float(dy)
@@ -1311,10 +1336,32 @@ class _RollEffect(QGraphicsOpacityEffect):
         pad = abs(self._dy) + 1.0
         return super().boundingRectFor(rect).adjusted(0, -pad, 0, pad)
 
+    def sourceChanged(self, flags):  # noqa: N802 (Qt override)
+        self._shot = None
+        super().sourceChanged(flags)
+
     def draw(self, painter):
+        if not self._still or self.opacity() >= 1.0:
+            painter.save()
+            painter.translate(0, self._dy)
+            super().draw(painter)
+            painter.restore()
+            return
+        if self.opacity() <= 0.0:
+            return
+        transform = painter.worldTransform()
+        if self._shot is None or self._shot[2] != transform:
+            pixmap, offset = self.sourcePixmap(
+                Qt.CoordinateSystem.DeviceCoordinates,
+                QGraphicsEffect.PixmapPadMode.NoPad)
+            self._shot = (pixmap, offset, transform)
+        pixmap, offset, _ = self._shot
+        if pixmap.isNull():
+            return
         painter.save()
-        painter.translate(0, self._dy)
-        super().draw(painter)
+        painter.setWorldTransform(QTransform())
+        painter.setOpacity(self.opacity())
+        painter.drawPixmap(QPointF(offset.x(), offset.y() + self._dy), pixmap)
         painter.restore()
 
 

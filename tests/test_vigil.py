@@ -376,7 +376,7 @@ def test_breath_charge_rides_the_cycle_and_fades_on_stop(app, vigil):
     assert dial._charge(ign) == pytest.approx(1.0)              # the pulse
     assert dial._charge(ign + d.BREATH_MS / 2) == 0.0           # mid-breath
     assert 0 < dial._charge(ign + d.BREATH_MS * 0.9) < 1.0     # gathering
-    dial._phase_at = time.monotonic() - (ign + 50) / 1000
+    dial._phase_at = time.perf_counter() - (ign + 50) / 1000
     charge = dial._charge(dial._ms())
     dial._on_clicked()                                          # Stop
     dial.set_transitioning(True)
@@ -472,7 +472,7 @@ def test_sky_moves_on_its_own_clock_and_breathes_while_live(app, vigil,
     assert card._sky_timer.interval() == pc.SKY_LIVE_FRAME_MS
     assert not card._ping_timer.isActive()       # the lattice stays off
     for ms in (0, 300, 1500, 7800):              # pulse, halos, rest, charge
-        card._ping_at = time.monotonic() - ms / 1000
+        card._ping_at = time.perf_counter() - ms / 1000
         card.grab()
     card.hide()
     assert not card._sky_timer.isActive()        # nothing to see
@@ -484,12 +484,12 @@ def test_stop_fades_the_pulse_in_flight_and_sends_no_more(app, vigil):
     card = _sky_card(app)
     card.set_live(True)
     card.start_pings()
-    now = time.monotonic()
+    now = time.perf_counter()
     assert card._pulse_gain(0, now) == 1.0
     card.stop_pings()
     assert not card.pinging
-    assert 0 < card._pulse_gain(0, time.monotonic() + 0.1) < 1.0
-    assert card._pulse_gain(1, time.monotonic()) == 0.0   # no next pulse
+    assert 0 < card._pulse_gain(0, time.perf_counter() + 0.1) < 1.0
+    assert card._pulse_gain(1, time.perf_counter()) == 0.0   # no next pulse
     card.set_live(False)
     _pump(app, 2.4 + sky.PULSE_FADE_MS / 1000)
     assert card._ping_at is None                 # back to gold: all done

@@ -740,7 +740,7 @@ def test_no_ring_goes_out_after_stop(app, motion):
     from stream_denoiser.gui.widgets import pattern_card as pc
     card = _ping_card(app)
     # Just before the second ring is due; nothing on screen.
-    card._ping_at = time.monotonic() - (pc.PING_PERIOD_MS - 60) / 1000
+    card._ping_at = time.perf_counter() - (pc.PING_PERIOD_MS - 60) / 1000
     assert card._ping_frame() is None
     card.stop_pings()
     assert card._ping_at is None
@@ -767,7 +767,7 @@ def test_stopping_mid_charge_fades_the_dial_glow(app, motion):
     assert dial.phase() == "live"
     # Put the live phase half-way into the first charge.
     t = dial._ignite_end() + d.PING_PERIOD_MS - d.CHARGE_LEAD_MS / 2
-    dial._phase_at = time.monotonic() - t / 1000
+    dial._phase_at = time.perf_counter() - t / 1000
     charge = dial._charge(dial._ms())
     assert charge > 0.1
     dial._on_clicked()                            # Stop pressed...
@@ -848,3 +848,35 @@ def test_status_halo_runs_only_while_isolating(app, motion):
     bar.set_state("ready")
     assert bar._halo_at is None and not bar._halo.isActive()
     bar.close()
+
+
+def test_an_entrance_pictures_its_widget_once(app, monkeypatch):
+    """A rising widget is painted once and its picture moved, not
+    painted again every frame; it is live again once it lands."""
+    monkeypatch.delenv("POISE_NO_ANIM", raising=False)
+    monkeypatch.delenv("POISE_REDUCE_MOTION", raising=False)
+    from PyQt6.QtWidgets import QWidget, QFrame
+    from stream_denoiser.gui import animations
+
+    class Counted(QFrame):
+        paints = 0
+
+        def paintEvent(self, event):  # noqa: N802
+            Counted.paints += 1
+            super().paintEvent(event)
+
+    host = QWidget()
+    host.resize(200, 200)
+    card = Counted(host)
+    card.setGeometry(20, 20, 120, 120)
+    animations.hold_hidden(card, rise=14)
+    host.show()
+    _pump(app, 0.05)
+    assert Counted.paints == 0                 # hidden: not painted at all
+    animations.rise_in(card, duration_ms=300, rise=14)
+    _pump(app, 0.15)
+    assert card.graphicsEffect() is not None   # mid-rise
+    assert Counted.paints <= 2                 # pictured, then moved
+    _pump(app, 0.4)
+    assert card.graphicsEffect() is None       # landed: live again
+    host.close()

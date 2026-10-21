@@ -204,7 +204,7 @@ class StatsBar(QWidget):
             return
         held = self._shown[0] == "processing" and self._shown[1] != (
             STATE_WORDS["processing"])
-        left = STEP_MIN_MS - (time.monotonic() - self._shown_at) * 1000.0
+        left = STEP_MIN_MS - (time.perf_counter() - self._shown_at) * 1000.0
         if held and left > 1:
             self._wait.start(int(left))
             return
@@ -221,7 +221,7 @@ class StatsBar(QWidget):
 
     def _apply(self, state: str, text: str) -> None:
         self._shown = (state, text)
-        self._shown_at = time.monotonic()
+        self._shown_at = time.perf_counter()
         metrics = self._state.fontMetrics()
         shown = metrics.elidedText(text, Qt.TextElideMode.ElideRight,
                                    sp(STATUS_MAX_W))
@@ -247,7 +247,7 @@ class StatsBar(QWidget):
         """While isolating, a halo leaves the dot every HALO_MS."""
         if on and ambient_ok():
             if self._halo_at is None:
-                self._halo_at = time.monotonic()
+                self._halo_at = time.perf_counter()
                 self._halo.start()
         elif self._halo_at is not None:
             self._halo_at = None
@@ -288,7 +288,7 @@ class StatsBar(QWidget):
             QStyle.PrimitiveElement.PE_Widget, opt, p, self)
         if self._halo_at is not None:
             period = HALO_BREATH_MS if breathing() else HALO_MS
-            phase = ((time.monotonic() - self._halo_at) * 1000.0
+            phase = ((time.perf_counter() - self._halo_at) * 1000.0
                      % period) / period
             if phase < 0.7:
                 u = phase / 0.7

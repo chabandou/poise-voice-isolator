@@ -148,3 +148,28 @@ def test_pings_light_the_new_lattices(app, theme, monkeypatch):
         assert card._ping_key is not None
         card.set_live(False, animated=False)
         card.close()
+
+
+@pytest.mark.parametrize("theme_id", ["halcyon", "verdant", "ember", "orchid"])
+def test_the_card_lattice_brings_the_ping_layer_with_it(app, theme, theme_id):
+    """Drawing the card's (masked) lattice draws the bare one the pings
+    show through on the way, so the first ping (as the live sweep closes)
+    has nothing slow left to draw; masked, it is the bare one masked."""
+    from PyQt6.QtCore import Qt
+    theme(theme_id)
+    card, _ = _card(app)
+    w, h = card.width(), card.height()
+    card._layer_key = card._bare_key = None          # nothing drawn yet
+    masked = card._lattice(w, h, True)
+    bare_key = card._bare_key
+    assert bare_key == card._layer_key               # drawn on the way
+    bare = card._lattice(w, h, False)
+    assert card._bare_key is bare_key                # not drawn again
+    assert masked.devicePixelRatio() == bare.devicePixelRatio()
+    assert masked.size() == bare.size() and masked != bare
+    # Masked only takes away: nowhere more opaque than the bare lattice.
+    for x in range(0, bare.width(), 23):
+        for y in range(0, bare.height(), 23):
+            assert masked.pixelColor(x, y).alpha() <= \
+                bare.pixelColor(x, y).alpha()
+    card.close()

@@ -274,7 +274,7 @@ class MotionIcon(PhosphorIcon):
         from ..animations import motion_ok
         if not motion_ok() or self._name not in PARTS:
             return
-        self._played_at = time.monotonic()
+        self._played_at = time.perf_counter()
         self._frames.start()
 
     def turn(self, degrees: float, ms: int = 620,
@@ -313,7 +313,7 @@ class MotionIcon(PhosphorIcon):
         """Milliseconds into the hover motion, or None when at rest."""
         if self._played_at is None:
             return None
-        t = (time.monotonic() - self._played_at) * 1000.0
+        t = (time.perf_counter() - self._played_at) * 1000.0
         return t if t < MOTION_MS.get(self._name, 0) else None
 
     def _frame(self) -> None:

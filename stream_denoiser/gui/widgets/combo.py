@@ -1042,13 +1042,13 @@ class AnimatedComboBox(QComboBox):
         """Shake the padlock and flash the ring: "locked while running"."""
         if not motion_ok():
             return
-        self._jiggle_at = time.monotonic()
+        self._jiggle_at = time.perf_counter()
         self._jiggle_timer.start()
 
     def _jiggle_ms(self):
         if self._jiggle_at is None:
             return None
-        t = (time.monotonic() - self._jiggle_at) * 1000.0
+        t = (time.perf_counter() - self._jiggle_at) * 1000.0
         return t if t < self.JIGGLE_MS else None
 
     def _jiggle_frame(self) -> None:

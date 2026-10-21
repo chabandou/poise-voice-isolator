@@ -79,6 +79,18 @@ VB_AUDIO_URL = "https://vb-audio.com/"
 DONATE_URL = ""
 QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's "no maximum" for widget sizes
 
+# Home's first entrance (ms). The window fades in with Home's content held
+# back; once it has, the card's first paint is drawn while nothing moves
+# (its lattice takes ~180 ms), then the content arrives one piece at a
+# time: the dial's card, its ring sweeping on as it lands, the cards below.
+WINDOW_FADE_MS = 220
+HOME_PREPARE_MS = 240      # after show: draw the card's first paint
+HOME_BEAT_MS = 120         # ...and rest this long after it
+HOME_RISE_MS = 520         # each piece's rise
+HOME_SWEEP_AT_MS = 500     # the ring sweeps on once the card has landed
+HOME_CARDS_AT_MS = 160     # the cards below follow...
+HOME_CARD_STEP_MS = 140    # ...one after the other
+
 
 class MainWindow(QMainWindow):
     """
@@ -907,7 +919,7 @@ class MainWindow(QMainWindow):
                 try:
                     self.setWindowOpacity(0.0)
                     anim = QPropertyAnimation(self, b"windowOpacity", self)
-                    anim.setDuration(220)
+                    anim.setDuration(WINDOW_FADE_MS)
                     anim.setStartValue(0.0)
                     anim.setEndValue(1.0)
                     anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -915,15 +927,45 @@ class MainWindow(QMainWindow):
                     self._window_fade = anim  # keep alive
                 except Exception:
                     pass
-            # Home's cards rise into place one after another (the dial
-            # sweeps its ring on by itself).
-            if self.stack.currentIndex() == 0:
-                from .animations import rise_in
-                for i, card in enumerate([self._stage] + self._home_cards):
-                    rise_in(card, delay_ms=60 + 90 * i, duration_ms=520,
-                            rise=sp(14))
+            if self.stack.currentIndex() == 0 and motion_ok():
+                self._hold_home()
         except Exception:
             pass
+
+    def _home_parts(self):
+        return [self._stage] + self._home_cards
+
+    def _hold_home(self) -> None:
+        """First show: Home's content waits out the launch (see
+        HOME_PREPARE_MS) instead of moving while it runs."""
+        from .animations import hold_hidden
+        for part in self._home_parts():
+            hold_hidden(part, rise=sp(14))
+        self.power_btn.hold_sweep()
+        QTimer.singleShot(HOME_PREPARE_MS, self._prepare_home)
+
+    def _prepare_home(self) -> None:
+        """Draw the card's slow first paint while nothing moves, then
+        bring Home's content in after a beat."""
+        try:
+            self._stage.prepare()
+            # Paint each piece once, unseen: its first frame then costs
+            # no more than the next (glyphs, caches, buffers are warm).
+            for part in self._home_parts():
+                part.grab()
+        except Exception as e:
+            _logger.debug(f"Home card prepare skipped: {e}")
+        # Timed from here: a slow machine's prepare doesn't eat the beat.
+        QTimer.singleShot(HOME_BEAT_MS, self._arrive_home)
+
+    def _arrive_home(self) -> None:
+        from .animations import rise_in
+        rise = sp(14)
+        rise_in(self._stage, duration_ms=HOME_RISE_MS, rise=rise)
+        self.power_btn.sweep_on_in(HOME_SWEEP_AT_MS)
+        for i, card in enumerate(self._home_cards):
+            rise_in(card, delay_ms=HOME_CARDS_AT_MS + HOME_CARD_STEP_MS * i,
+                    duration_ms=HOME_RISE_MS, rise=rise)
 
     # -- worker / tray / state (unchanged behavior) ------------------------------
     def setup_worker(self):

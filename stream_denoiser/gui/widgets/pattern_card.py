@@ -156,7 +156,7 @@ class PatternCard(QFrame):
         # The night sky (sky backdrop only; built on first use).
         self._sky = None
         self._phase = "idle"
-        self._gather_at = time.monotonic()   # the starting draw-in began
+        self._gather_at = time.perf_counter()   # the starting draw-in began
         self._gather = Blend(self, self._changed, SKY_GATHER_MS,
                              EASE_BREATHE)
         self._error = Blend(self, self._changed, SKY_LIVE_FADE_MS,
@@ -200,7 +200,7 @@ class PatternCard(QFrame):
             return
         self._phase = phase
         if phase == "starting":
-            self._gather_at = time.monotonic()
+            self._gather_at = time.perf_counter()
         animated = self.isVisible() and ambient_ok()
         self._gather.set_target(1.0 if phase == "starting" else 0.0, animated)
         self._error.set_target(1.0 if phase == "error" else 0.0, animated)
@@ -231,7 +231,7 @@ class PatternCard(QFrame):
             self._ping_timer.stop()
             if self._ping_at is not None and self._ping_end is None:
                 # Mid-isolation: carry on breathing from now.
-                self._ping_at = time.monotonic()
+                self._ping_at = time.perf_counter()
         else:
             self._sky_timer.stop()
             if self._ping_at is not None and self.isVisible():
@@ -261,7 +261,7 @@ class PatternCard(QFrame):
         """First ping now, then one every PING_PERIOD_MS until stopped."""
         if not ambient_ok():
             return
-        self._ping_at = time.monotonic()
+        self._ping_at = time.perf_counter()
         self._ping_end = None
         if self._sky_on():
             self._run_sky()                    # a breath starts now
@@ -280,13 +280,13 @@ class PatternCard(QFrame):
             # The sky keeps its rhythm while it fades back to gold; only
             # the pulse in flight fades and no new one leaves.
             if fade and ambient_ok():
-                self._ping_end = time.monotonic()
+                self._ping_end = time.perf_counter()
                 self._run_sky()
             else:
                 self._clear_pings()
             return
         if fade and ambient_ok() and self._ping_frame() is not None:
-            self._ping_end = time.monotonic()
+            self._ping_end = time.perf_counter()
             if self.isVisible():
                 self._ping_timer.start()
             return
@@ -343,7 +343,7 @@ class PatternCard(QFrame):
                 or self._live.value > 0.001 or self._phase == "starting"
                 or self._gather.value > 0.001)
         interval = SKY_LIVE_FRAME_MS if busy else SKY_FRAME_MS
-        if meteor_due(time.monotonic() * 1000.0, interval):
+        if meteor_due(time.perf_counter() * 1000.0, interval):
             interval = SKY_METEOR_FRAME_MS
         if self._sky_timer.interval() != interval:
             self._sky_timer.setInterval(interval)
@@ -352,7 +352,7 @@ class PatternCard(QFrame):
 
     def _sky_tick(self) -> None:
         if (self._ping_end is not None and self._live.value <= 0.001
-                and (time.monotonic() - self._ping_end) * 1000.0
+                and (time.perf_counter() - self._ping_end) * 1000.0
                 >= PULSE_FADE_MS):
             self._clear_pings()   # faded back to gold: the breath ends
         self._run_sky()
@@ -391,7 +391,7 @@ class PatternCard(QFrame):
         """(radius in design px, alpha) of the ring on screen, or None."""
         if self._ping_at is None:
             return None
-        now = time.monotonic()
+        now = time.perf_counter()
         t = (now - self._ping_at) * 1000.0
         index = int(t // PING_PERIOD_MS)
         into = t - index * PING_PERIOD_MS
@@ -442,10 +442,7 @@ class PatternCard(QFrame):
             if self._view is None:
                 self._paint_sky(w, h)
             return
-        palette = current_theme()
-        color = _mix(QColor(palette["secondary"]), QColor(palette["accent"]),
-                     self._live.value)
-        image = self._tinted_image(w, h, color)
+        image = self._tinted_image(w, h, self._lattice_colour())
         p = QPainter(self)
         p.setOpacity(patterns.spec(theme_style("lattice"))["opacity"])
         p.drawImage(0, 0, image)
@@ -506,7 +503,7 @@ class PatternCard(QFrame):
             self._sky = NightSky()
         palette = current_theme()
         moving = ambient_ok()
-        now = time.monotonic()
+        now = time.perf_counter()
         cycle = stopped = None
         if moving and self._ping_at is not None:
             cycle = (now - self._ping_at) * 1000.0
@@ -760,6 +757,18 @@ class PatternCard(QFrame):
         p.setOpacity(alpha)
         p.drawImage(QPointF(box.topLeft()), ring)
 
+    def _lattice_colour(self) -> QColor:
+        palette = current_theme()
+        return _mix(QColor(palette["secondary"]), QColor(palette["accent"]),
+                    self._live.value)
+
+    def prepare(self) -> None:
+        """Draw the lattice the next paint needs now (it takes a while
+        the first time): the window does this before Home moves."""
+        w, h = self.width(), self.height()
+        if w >= 40 and h >= 40 and not self._sky_on():
+            self._tinted_image(w, h, self._lattice_colour())
+
     def _tinted_image(self, w: int, h: int, color: QColor) -> QImage:
         """The masked lattice in `color` (recoloured, not redrawn)."""
         layer = self._pattern_image(w, h)
@@ -791,7 +800,9 @@ class PatternCard(QFrame):
         return centre
 
     def _lattice(self, w: int, h: int, masked: bool) -> QImage:
-        """White lattice, through the radial mask or bare (cached)."""
+        """White lattice, through the radial mask or bare (cached). The
+        masked one is the bare one masked, so drawing one draws both: the
+        first ping's layer is ready whenever the card's is."""
         from ..styles import _card_border_width
         k = ui_scale()
         dpr = self.devicePixelRatioF()
@@ -808,6 +819,13 @@ class PatternCard(QFrame):
             return self._layer
         if not masked and key == self._bare_key:
             return self._bare
+        if masked:
+            image = self._lattice(w, h, masked=False).copy()
+            p = QPainter(image)
+            self._mask(p, spec, box, centre, w, h, k)
+            p.end()
+            self._layer_key, self._layer = key, image
+            return image
 
         image = QImage(round(w * dpr), round(h * dpr),
                        QImage.Format.Format_ARGB32_Premultiplied)
@@ -826,44 +844,42 @@ class PatternCard(QFrame):
             self._paint_dome(p, spec, centre, w, h, k)
         else:
             self._paint_tiles(p, kind, spec, box, centre, k)
-
-        if masked:
-            if spec["mask"] == "dial":
-                # Clear round the dial, full strength further out.
-                grad = QRadialGradient(centre, patterns.DOME_MASK_R * k)
-                grad.setColorAt(patterns.DOME_CLEAR, QColor(255, 255, 255, 0))
-                grad.setColorAt(patterns.DOME_FULL,
-                                QColor(255, 255, 255, 255))
-                grad.setSpread(QRadialGradient.Spread.PadSpread)
-                brush = QBrush(grad)
-            else:
-                # Mask: alpha 0 out to 40% of the radius, ramping to 1 at
-                # the rim (and padded beyond). The unit gradient is
-                # stretched to the box, as objectBoundingBox units are in
-                # SVG.
-                grad = QRadialGradient(QPointF(0, 0), 1.0)
-                grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
-                grad.setColorAt(1.0, QColor(255, 255, 255, 255))
-                grad.setSpread(QRadialGradient.Spread.PadSpread)
-                brush = QBrush(grad)
-                brush.setTransform(
-                    QTransform()
-                    .scale(MASK_RADIUS * box.width(),
-                           MASK_RADIUS * box.height())
-                    * QTransform().translate(
-                        box.x() + MASK_CENTER[0] * box.width(),
-                        box.y() + MASK_CENTER[1] * box.height()))
-            p.setClipping(False)
-            p.setCompositionMode(
-                QPainter.CompositionMode.CompositionMode_DestinationIn)
-            p.fillRect(QRectF(0, 0, w, h), brush)
         p.end()
-
-        if masked:
-            self._layer_key, self._layer = key, image
-        else:
-            self._bare_key, self._bare = key, image
+        self._bare_key, self._bare = key, image
         return image
+
+    @staticmethod
+    def _mask(p: QPainter, spec, box: QRectF, centre, w: int, h: int,
+              k: float) -> None:
+        """Fade the lattice out round the dial (or the card's centre)."""
+        if spec["mask"] == "dial":
+            # Clear round the dial, full strength further out.
+            grad = QRadialGradient(centre, patterns.DOME_MASK_R * k)
+            grad.setColorAt(patterns.DOME_CLEAR, QColor(255, 255, 255, 0))
+            grad.setColorAt(patterns.DOME_FULL,
+                            QColor(255, 255, 255, 255))
+            grad.setSpread(QRadialGradient.Spread.PadSpread)
+            brush = QBrush(grad)
+        else:
+            # Mask: alpha 0 out to 40% of the radius, ramping to 1 at
+            # the rim (and padded beyond). The unit gradient is
+            # stretched to the box, as objectBoundingBox units are in
+            # SVG.
+            grad = QRadialGradient(QPointF(0, 0), 1.0)
+            grad.setColorAt(MASK_CLEAR_STOP, QColor(255, 255, 255, 0))
+            grad.setColorAt(1.0, QColor(255, 255, 255, 255))
+            grad.setSpread(QRadialGradient.Spread.PadSpread)
+            brush = QBrush(grad)
+            brush.setTransform(
+                QTransform()
+                .scale(MASK_RADIUS * box.width(),
+                       MASK_RADIUS * box.height())
+                * QTransform().translate(
+                    box.x() + MASK_CENTER[0] * box.width(),
+                    box.y() + MASK_CENTER[1] * box.height()))
+        p.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn)
+        p.fillRect(QRectF(0, 0, w, h), brush)
 
     @staticmethod
     def _pens(spec: dict, k: float, rounded: bool):

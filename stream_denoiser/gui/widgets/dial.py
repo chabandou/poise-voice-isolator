@@ -73,8 +73,8 @@ from .sky import (
     breath_pos, keyframes,
 )
 from ..animations import (
-    Blend, EASE_BREATHE, FrameTimer, ambient_ok, mix_rgba, smoke_spread,
-    smoke_wisps,
+    Blend, EASE_BREATHE, FrameTimer, ambient_ok, cubic_bezier_fn, mix_rgba,
+    smoke_spread, smoke_wisps,
     ease_back as _back, ease_in as _ease_in, ease_in_out as _ease_in_out,
     ease_out as _ease_out, rise_fall as _rise_fall,
 )
@@ -114,6 +114,10 @@ DISC_HIT = 100.0
 # -- motion (ms unless noted) ---------------------------------------------------
 SWEEP_DELAY_MS = 300      # first show: the ring sweeps on from the gentle end
 SWEEP_MS = 900
+SWEEP_FADE_DEG = 10.0     # ...a tick fades in as the edge crosses this
+SWEEP_CREST_DEG = 40.0    # ...and its crest fades over this, behind it
+SWEEP_HOLD_MS = 3000      # ...held for the window's entrance at most this
+SWEEP_EARLY_S = 0.02      # a sweep timer may fire this early
 SWELL_PX = 3.4            # hover lift of the ticks nearest the pointer
 SWELL_DEG = 13.0          # ...and how far it spreads
 OVERSHOOT_MAX = 4.0       # degrees the ring stretches past an end
@@ -252,6 +256,10 @@ def tick_geometry(index: int, count: int = TICKS):
     return angle, inner, R_OUT
 
 
+# The first show's sweep: eases in, then glides a long way to rest.
+_sweep_ease = cubic_bezier_fn(0.3, 0.0, 0.15, 1.0)
+
+
 def _clamp(v: float) -> float:
     return max(0.0, min(1.0, v))
 
@@ -294,11 +302,11 @@ class DialButton(PowerButton):
         self._nudge_timer = QTimer(self)
         self._nudge_timer.setSingleShot(True)
         self._nudge_timer.timeout.connect(self._end_nudge)
-        self._trail = {}                  # tick -> monotonic flash time
+        self._trail = {}                  # tick -> perf_counter flash time
 
         # One clock drives every timed effect; the phase says which.
         self._phase = "idle"
-        self._phase_at = time.monotonic()
+        self._phase_at = time.perf_counter()
         self._ignite_lit = 0              # lit ticks when the sweep began
         self._ignited = False
         self._drain_at = None             # stopping began (outlasts it)
@@ -333,7 +341,7 @@ class DialButton(PowerButton):
         self._ones = Blend(self, self.update, 400, _spring_curve(1.2), ones)
         # Breath: the label mists from one to the next, and so do the
         # readout's digits, each column on its own (per column: digit ->
-        # [alpha from, to, monotonic start]).
+        # [alpha from, to, perf_counter start]).
         self._label_from = self._label_to = 0
         self._label_mist = Blend(self, self.update, MIST_MS, EASE_BREATHE,
                                  1.0)
@@ -389,7 +397,7 @@ class DialButton(PowerButton):
         else:
             self._needle_pos.snap(lit_count(db) - 1)
         if self._dragging or nudge:
-            now = time.monotonic()
+            now = time.perf_counter()
             if lit_count(db) != lit_count(old):
                 self._pluck_at = now
                 self._pluck_big = db % 10 == 0
@@ -426,7 +434,7 @@ class DialButton(PowerButton):
         if not animated:
             self._mists = tuple({d: [1.0, 1.0, 0.0]} for d in digits)
             return
-        now = time.monotonic()
+        now = time.perf_counter()
         self._mists = tuple(self._mist_column(column, digit, now)
                             for column, digit in zip(self._mists, digits))
         if breathing():
@@ -447,7 +455,7 @@ class DialButton(PowerButton):
         return mists
 
     def _misting(self) -> bool:
-        now = time.monotonic()
+        now = time.perf_counter()
         fade = self._mist_ms()
         return any((now - at) * 1000.0 < fade
                    for column in self._mists for _, _, at in column.values())
@@ -526,11 +534,11 @@ class DialButton(PowerButton):
         if self._phase == "live":
             # Leaving live mid-charge: let that glow fade, not cut off.
             self._charge_from = self._charge(self._ms())
-            self._charge_drop_at = time.monotonic()
+            self._charge_drop_at = time.perf_counter()
         elif phase == "live":
             self._charge_from, self._charge_drop_at = 0.0, None
         self._phase = phase
-        self._phase_at = time.monotonic()
+        self._phase_at = time.perf_counter()
         if phase == "stopping":
             self._drain_at = self._phase_at
         elif phase != "idle":
@@ -566,14 +574,14 @@ class DialButton(PowerButton):
         """Milliseconds into the phase (settled when motion is reduced)."""
         if not ambient_ok():
             return 1e9
-        return (time.monotonic() - self._phase_at) * 1000.0
+        return (time.perf_counter() - self._phase_at) * 1000.0
 
     @staticmethod
     def _since(stamp) -> float:
-        """Milliseconds since a monotonic stamp (None: long ago)."""
+        """Milliseconds since a perf_counter stamp (None: long ago)."""
         if stamp is None or not ambient_ok():
             return 1e9
-        return (time.monotonic() - stamp) * 1000.0
+        return (time.perf_counter() - stamp) * 1000.0
 
     def _ignite_end(self) -> float:
         """When the live sweep (breath: the bloom) closes, in ms into the
@@ -637,13 +645,13 @@ class DialButton(PowerButton):
 
     def _tick(self) -> None:
         if any(len(column) > 1 for column in self._mists):
-            now = time.monotonic()   # drop digits that have misted out
+            now = time.perf_counter()   # drop digits that have misted out
             self._mists = tuple(
                 {d: e for d, e in column.items()
                  if e[1] > 0.0 or self._mist_alpha(e, now) > 0.005}
                 for column in self._mists)
         if self._trail:
-            now = time.monotonic()
+            now = time.perf_counter()
             gone = TRAIL_MS / 1000.0
             self._trail = {i: s for i, s in self._trail.items()
                            if now - s < gone}
@@ -672,10 +680,38 @@ class DialButton(PowerButton):
             self._swept = True
             if ambient_ok():
                 delay = self._sweep_ms()[0]
-                self._sweep_at = time.monotonic() + delay / 1000.0
+                self._sweep_at = time.perf_counter() + delay / 1000.0
                 # The clock starts with the sweep.
-                QTimer.singleShot(delay, self._run_clock)
+                QTimer.singleShot(delay, self._begin_sweep)
         self._run_clock()
+
+    def _begin_sweep(self) -> None:
+        """The delay is over: the sweep starts now. (Timers may fire a
+        little before their due time; had the sweep been left due, the
+        clock would not start and the ring would only draw on as other
+        repaints came.) A timer whose sweep was put off since does
+        nothing."""
+        if self._sweep_at is not None:
+            now = time.perf_counter()
+            if self._sweep_at - now < SWEEP_EARLY_S:
+                self._sweep_at = min(self._sweep_at, now)
+        self._run_clock()
+
+    def hold_sweep(self) -> None:
+        """Put the first show's ring sweep off until sweep_on_in (the
+        window times Home's entrance); it starts by itself after
+        SWEEP_HOLD_MS if that never comes."""
+        if self._sweep_at is not None and self._sweeping():
+            self._sweep_at = time.perf_counter() + SWEEP_HOLD_MS / 1000.0
+            QTimer.singleShot(SWEEP_HOLD_MS, self._begin_sweep)
+
+    def sweep_on_in(self, delay_ms: int) -> None:
+        """Start the first show's ring sweep `delay_ms` from now, if it
+        has not started yet."""
+        if (self._sweep_at is not None and self._sweeping()
+                and not self._sweep_moving()):
+            self._sweep_at = time.perf_counter() + delay_ms / 1000.0
+            QTimer.singleShot(int(delay_ms), self._begin_sweep)
 
     def hideEvent(self, event):  # noqa: N802 (Qt override)
         self._clock.stop()   # nothing to see (e.g. hidden to the tray)
@@ -841,7 +877,7 @@ class DialButton(PowerButton):
             self._needle_pos.snap(target)
             return
         self._needle_pos.set_target(target)
-        now = time.monotonic()
+        now = time.perf_counter()
         span = target - start
         lo, hi = sorted((start, target))
         first = max(0, math.floor(lo + 0.5) + 1)   # ticks that change
@@ -1012,7 +1048,7 @@ class DialButton(PowerButton):
         """Breath: the lit ticks' alpha while idle (a slow swell)."""
         if self._phase != "idle" or not ambient_ok():
             return 1.0
-        return keyframes(breath_pos(time.monotonic() * 1000.0,
+        return keyframes(breath_pos(time.perf_counter() * 1000.0,
                                     IDLE_BREATH_MS), TICKS_IDLE)
 
     def _breath_look(self, i: int, lit: int, col: dict, t: float,
@@ -1072,17 +1108,40 @@ class DialButton(PowerButton):
         return (colour, self._idle_breath() if idle is None else idle, 1.0,
                 glow)
 
+    def _sweep_behind(self, i: int) -> float:
+        """First show: how far (degrees) the entrance sweep's edge has
+        passed tick i; negative before it gets there."""
+        u = self._since(self._sweep_at) / self._sweep_ms()[1]
+        if u >= 1.0:
+            return 1e9
+        if u < 0:
+            return -1e9
+        if breathing():
+            edge = -16.0 + 316.0 * _ease_out(u)
+        else:
+            # Over the whole sweep, the crest settling out past the end.
+            edge = (-SWEEP_FADE_DEG + (ARC_SPAN + SWEEP_FADE_DEG
+                    + SWEEP_CREST_DEG) * _sweep_ease(u))
+        return edge + SWEEP_FADE_DEG - ARC_SPAN * i / (TICKS - 1)
+
     def _sweep_visibility(self, i: int) -> float:
         """First show: how much of tick i the entrance sweep has drawn."""
         if self._sweep_at is None:
             return 1.0
-        u = self._since(self._sweep_at) / self._sweep_ms()[1]
-        if u >= 1.0:
-            return 1.0
-        if u < 0:
+        return _clamp(self._sweep_behind(i) / SWEEP_FADE_DEG)
+
+    def _sweep_crest(self, i: int) -> float:
+        """First show (tactile): how bright the crest leading the sweep
+        is on tick i, 0..1. It peaks as the tick is fully drawn and fades
+        over the next few ticks."""
+        if self._sweep_at is None or breathing():
             return 0.0
-        edge = -16.0 + 316.0 * _ease_out(u)
-        return _clamp((edge + 16.0 - ARC_SPAN * i / (TICKS - 1)) / 16.0)
+        a = self._sweep_behind(i)
+        if a <= 0.0 or a >= SWEEP_FADE_DEG + SWEEP_CREST_DEG:
+            return 0.0
+        if a < SWEEP_FADE_DEG:
+            return a / SWEEP_FADE_DEG
+        return 1.0 - _ease_out((a - SWEEP_FADE_DEG) / SWEEP_CREST_DEG)
 
     def _swell_px(self, angle: float, head_angle: float) -> float:
         """Lift of the ticks around the pointer (or the needle while it
@@ -1458,7 +1517,7 @@ class DialButton(PowerButton):
         pos = max(-1.0, min(TICKS - 1.0, self._needle_pos.value))
         lit = max(0, min(TICKS, math.floor(pos + 0.5) + 1))
         head_angle = ARC_START + ARC_SPAN * max(0.0, pos) / (TICKS - 1)
-        now = time.monotonic()
+        now = time.perf_counter()
         breath = breathing()
         idle = self._idle_breath()
         pulse = self._ring_pulse(t, lit) if lift_breath else None
@@ -1490,6 +1549,10 @@ class DialButton(PowerButton):
                 alpha = 1.0
             else:
                 colour, alpha, scale = col["unlit"], 1.0, 1.0
+            crest = self._sweep_crest(i) if sweeping else 0.0
+            if crest > 0.0:   # first show: the crest leading the sweep
+                colour = mix_rgba(colour, col["comet"], 0.85 * crest)
+                scale = max(scale, 1.0 + 0.04 * crest)
             lift = self._swell_px(angle, head_angle) if swelling else 0.0
             if glow > 0.01:           # breath: lit ticks glow softly
                 halo = QColor(colour)
@@ -1893,7 +1956,7 @@ class DialButton(PowerButton):
         gap = 7.0
         minus_x = c - (minus_w + 2 * digit_w + gap + unit_w) / 2
         x = minus_x + minus_w
-        now = time.monotonic()
+        now = time.perf_counter()
         digits = []
         for column in self._mists:
             for digit, entry in sorted(column.items()):
