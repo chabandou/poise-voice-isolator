@@ -1004,19 +1004,16 @@ body {
 		--manim-ease: cubic-bezier(0.45, 0, 0.55, 1);
 	}
 
-	/* Unit dashes on unit-length paths: the offset is how much is undrawn. */
-	.emblem__face,
-	.emblem__wave {
-		stroke-dasharray: 1 2;
-	}
-
-	/* Waiting to be seen: everything undrawn. */
+	/* Waiting to be seen: everything undrawn (the dashes as in
+	   emblem-stroke). */
 	.js [data-reveal="draw"]:not([data-revealed]) .emblem__face {
+		stroke-dasharray: 1 2;
 		stroke-dashoffset: 1;
 		fill-opacity: 0;
 	}
 
 	.js [data-reveal="draw"]:not([data-revealed]) .emblem__wave {
+		stroke-dasharray: 1 2;
 		stroke-dashoffset: 1;
 		stroke-opacity: 0;
 	}
@@ -1029,9 +1026,8 @@ body {
 		opacity: 0;
 	}
 
-	/* Traced in a light pen and filled with a tint of the accent, both
-	   cooling to the face's own colours once it is drawn: in them alone
-	   the face barely stood out from the card. */
+	/* Traced in a light pen that cools to the groove once the face is
+	   drawn: in the groove colour alone the trace barely showed. */
 	[data-revealed] .emblem__face {
 		animation:
 			emblem-stroke calc(900ms * var(--reveal-pace)) var(--manim-ease) backwards,
@@ -1080,8 +1076,13 @@ body {
 
 /* stroke-opacity, not opacity, so the ticks' own 0.78 is left alone;
    it hides the round cap's dot before the pen moves. */
+/* Unit dashes on unit-length paths: the offset is how much is undrawn.
+   Only while drawing: left on, the dash (measured on the browser's
+   approximation of the length) stopped just short of closing the face's
+   circle. */
 @keyframes emblem-stroke {
 	from {
+		stroke-dasharray: 1 2;
 		stroke-dashoffset: 1;
 		stroke-opacity: 0;
 	}
@@ -1089,6 +1090,7 @@ body {
 		stroke-opacity: 1;
 	}
 	to {
+		stroke-dasharray: 1 2;
 		stroke-dashoffset: 0;
 	}
 }
@@ -1113,13 +1115,12 @@ body {
 	to { fill-opacity: 1; }
 }
 
-/* Held lit while the face is traced and filled, then eased back to its
-   own groove stroke and pill fill (the unset end keyframe). */
+/* Held lit while the face is traced, then eased back to its own groove
+   stroke (the unset end keyframe). */
 @keyframes emblem-face-light {
 	from,
 	50% {
 		stroke: var(--color-accent-light);
-		fill: color-mix(in srgb, var(--color-accent) 16%, var(--color-pill));
 	}
 }
 
