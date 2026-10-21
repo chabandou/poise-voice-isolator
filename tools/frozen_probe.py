@@ -5,8 +5,8 @@ swaps the entry script and the name, nothing else), so it freezes what
 Poise.exe freezes and starts the audio process the way Poise.exe does:
 this executable again, through multiprocessing's freeze_support().
 
-Runs a few seconds of processing (CABLE Output to the default output
-device, VB-Cable switching off) and writes probe.json next to the
+Runs a few seconds of processing (CABLE Output to the default WASAPI
+output device, VB-Cable switching off) and writes probe.json next to the
 executable: the worker's events, the backend the audio process ran,
 its final stats and the verdict. Exits 0 when the session ran and
 processed frames without an error, 1 otherwise.
@@ -50,9 +50,16 @@ if __name__ == "__main__":
         result["log"] = ensure_file_logging(
             log_file=os.path.join(here, "probe.log"), level="INFO")
         app = QCoreApplication(sys.argv)
+        # The output the GUI's selector starts on: the WASAPI default
+        # playback device (CI makes it a non-CABLE one).
+        import sounddevice as sd
+        wasapi = next(a for a in sd.query_hostapis()
+                      if "wasapi" in a["name"].lower())
+        output = wasapi["default_output_device"]
+        result["output"] = sd.query_devices(output)["name"]
         worker = AudioWorker()
         worker.configure(model=model, atten_lim_db=-40.0,
-                         vb_cable_enabled=False)
+                         output_device=output, vb_cable_enabled=False)
 
         # The audio process's own events, the backend it ran among them
         # (AudioHost calls whatever the worker holds at that name).
