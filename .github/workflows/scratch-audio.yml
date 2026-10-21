@@ -8,41 +8,66 @@ on:
 jobs:
   audio:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Second render endpoint (Scream)
-        uses: LABSN/sound-ci-helpers@v1
-      - name: Audio service
-        shell: pwsh
+      - name: Audio service and microphone consent
         run: |
-          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Name, Status, StartType
           Set-Service Audiosrv -StartupType Automatic
           Start-Service Audiosrv
-          Get-Service Audiosrv | Format-Table Name, Status
+          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Name, Status
+          foreach ($root in 'HKLM:', 'HKCU:') {
+            $key = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+            New-Item -Path "$key\NonPackaged" -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Value -Value Allow
+            Set-ItemProperty -Path "$key\NonPackaged" -Name Value -Value Allow
+          }
       - name: Stage VB-Cable
         run: python installer/fetch_vbcable.py
-      - name: Trust VB-Audio's publisher certificate
-        shell: pwsh
+      - name: Install VB-Cable
+        timeout-minutes: 5
         run: |
-          Get-ChildItem installer/windows/vbcable | Format-Table Name, Length
-          foreach ($cat in Get-ChildItem installer/windows/vbcable -Filter *.cat) {
+          $dir = "installer/windows/vbcable"
+          Get-ChildItem $dir | Format-Table Name, Length
+          foreach ($cat in Get-ChildItem $dir -Filter *.cat) {
             $sig = Get-AuthenticodeSignature $cat.FullName
             "$($cat.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
           }
-          $sig = Get-AuthenticodeSignature (Get-ChildItem installer/windows/vbcable -Filter *64*.cat | Select-Object -First 1).FullName
-          $cert = $sig.SignerCertificate
-          $path = "$env:RUNNER_TEMP\vbaudio.cer"
-          [IO.File]::WriteAllBytes($path, $cert.Export('Cert'))
-          Import-Certificate -FilePath $path -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
-      - name: Install VB-Cable
-        shell: pwsh
+          $cert = (Get-AuthenticodeSignature (Get-ChildItem $dir -Filter *.cat | Select-Object -First 1).FullName).SignerCertificate
+          $cer = "$env:RUNNER_TEMP\vbaudio.cer"
+          [IO.File]::WriteAllBytes($cer, $cert.Export('Cert'))
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+          $p = Start-Process "$dir/VBCABLE_Setup_x64.exe" -ArgumentList '-i','-h' -Wait -PassThru -WorkingDirectory $dir
+          "setup exit code: $($p.ExitCode)"
+          Start-Sleep 5
+          Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
+          Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
+      - name: Install Scream
         timeout-minutes: 5
         run: |
-          $p = Start-Process installer/windows/vbcable/VBCABLE_Setup_x64.exe -ArgumentList '-i','-h' -Wait -PassThru -WorkingDirectory installer/windows/vbcable
-          "exit code: $($p.ExitCode)"
+          $zip = "$env:RUNNER_TEMP\scream.zip"
+          Invoke-WebRequest https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip -OutFile $zip
+          (Get-FileHash $zip -Algorithm SHA256).Hash
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\scream"
+          Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" | Select-Object FullName, Length | Format-Table -AutoSize
+          $inf = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter Scream.inf | Where-Object FullName -match 'x64' | Select-Object -First 1
+          $cat = Get-ChildItem $inf.DirectoryName -Filter *.cat | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $cat.FullName
+          "$($cat.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          $cer = "$env:RUNNER_TEMP\scream.cer"
+          [IO.File]::WriteAllBytes($cer, $sig.SignerCertificate.Export('Cert'))
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+          Import-Certificate -FilePath $cer -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          $devcon = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter devcon*.exe | Where-Object Name -match 'x64' | Select-Object -First 1
+          if (-not $devcon) { $devcon = Get-ChildItem -Recurse "$env:RUNNER_TEMP\scream" -Filter devcon*.exe | Select-Object -First 1 }
+          "devcon: $($devcon.FullName)"
+          & $devcon.FullName install $inf.FullName '*Scream'
+          "devcon exit: $LASTEXITCODE"
           Start-Sleep 5
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
           Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
