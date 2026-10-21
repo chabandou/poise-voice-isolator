@@ -53,7 +53,7 @@ export const PoiseMark = ({
 					<>
 						<path className="emblem__wave" d={WAVE} pathLength={1} />
 						{DASHES.map((d, index) => (
-							<path key={d} className="emblem__dash" d={d} style={{ '--i': index } as CSSProperties} />
+							<path key={d} className="emblem__dash" d={d} pathLength={1} style={{ '--i': index } as CSSProperties} />
 						))}
 					</>
 				) : (
