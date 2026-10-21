@@ -970,8 +970,9 @@ body {
    The About emblem draws itself on when it scrolls into view, the way
    Manim's Create / Write / LaggedStart do (Brand.tsx Emblem): the dial
    face traced from twelve o'clock and filled, the ticks sweeping round
-   clockwise, each falling in along its spoke, the wave written along its length and
-   its axis dashes set down, the needle landing last. ~1.8 s, once. The
+   clockwise one at a time, each falling in along its spoke, the wave
+   written along its length and its axis dashes set down, the needle
+   landing last. ~3.5 s, once. The
    prerendered page and reduced motion show it finished.
    --------------------------------------------------------------------- */
 [data-reveal="draw"],
@@ -987,6 +988,12 @@ body {
 	.emblem {
 		/* Manim's default rate function, smooth. */
 		--manim-ease: cubic-bezier(0.45, 0, 0.55, 1);
+		/* The ticks go round one at a time, each starting as the last
+		   settles: this is each one's whole turn, so the sweep takes 71 of
+		   them. The needle lands as the last tick settles. */
+		--tick-ms: 24ms;
+		--ticks-from: 1200ms;
+		--ticks-end: calc(var(--ticks-from) + 71 * var(--tick-ms));
 	}
 
 	/* Unit dashes on unit-length paths: the offset is how much is undrawn. */
@@ -1020,10 +1027,10 @@ body {
 			emblem-fill calc(700ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards;
 	}
 
-	/* A slow sweep, once the wave is all but written: the needle lands after
-	   the last tick. */
+	/* A sweep once the wave is all but written, tick by tick (ticks are
+	   1..71; the needle is 0). */
 	[data-revealed] .emblem__tick {
-		animation: emblem-fall calc(460ms * var(--reveal-pace)) cubic-bezier(0.34, 1.3, 0.64, 1) calc((1200ms + var(--i) * 14ms) * var(--reveal-pace)) backwards;
+		animation: emblem-fall calc(var(--tick-ms) * var(--reveal-pace)) ease-out calc((var(--ticks-from) + (var(--i) - 1) * var(--tick-ms)) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__wave {
@@ -1039,11 +1046,11 @@ body {
 	[data-revealed] .emblem__needle {
 		transform-box: fill-box;
 		transform-origin: center;
-		animation: emblem-needle calc(560ms * var(--reveal-pace)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(2250ms * var(--reveal-pace)) backwards;
+		animation: emblem-needle calc(560ms * var(--reveal-pace)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(var(--ticks-end) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__mark {
-		animation: emblem-bloom calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(2250ms * var(--reveal-pace));
+		animation: emblem-bloom calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(var(--ticks-end) * var(--reveal-pace));
 	}
 }
 
