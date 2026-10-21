@@ -173,20 +173,30 @@ def _blank(n: int) -> QImage:
 class SealPen:
     """assets/seal: the pen's points in writing order, each with the time
     the pen reaches it (ms, before PACE), the lettering's coverage and
-    the atlas of letter-group shapes."""
+    the atlas of letter-group shapes. The images are kept as coverage
+    alone (Alpha8), the lettering cropped to its box."""
 
     def __init__(self, folder: str = SEAL_DIR):
         with open(os.path.join(folder, "pen.json"), encoding="utf-8") as f:
             data = json.load(f)
-        self.text_space = float(data["textSpace"])
+        self.text_space = ts = float(data["textSpace"])
         self.text_scale = float(data["textScale"])
         self.duration = float(data["duration"])
         b = data["bounds"]
         self.left, self.right = float(b["left"]), float(b["right"])
-        self.text = QImage(os.path.join(folder, "text.png"))
-        self.atlas = QImage(os.path.join(folder, "parts.png"))
-        if self.text.isNull() or self.atlas.isNull():
+        # The lettering's box (text units), with room for the pen's stamps.
+        x0, y0 = max(0.0, self.left - 8), max(0.0, float(b["top"]) - 8)
+        x1, y1 = min(ts, self.right + 8), min(ts, float(b["bottom"]) + 8)
+        self.box = QRectF(x0, y0, x1 - x0, y1 - y0)
+        text = QImage(os.path.join(folder, "text.png"))
+        atlas = QImage(os.path.join(folder, "parts.png"))
+        if text.isNull() or atlas.isNull():
             raise OSError("seal images missing")
+        k = text.width() / ts
+        self.text = text.copy(round(x0 * k), round(y0 * k),
+                              round((x1 - x0) * k), round((y1 - y0) * k)
+                              ).convertToFormat(QImage.Format.Format_Alpha8)
+        self.atlas = atlas.convertToFormat(QImage.Format.Format_Alpha8)
         self.parts = [(QRectF(p["x"], p["y"], p["w"], p["h"]),
                        QRectF(p["ox"], p["oy"], p["w"], p["h"]))
                       for p in data["parts"]]
@@ -216,31 +226,48 @@ def load_pen():
         return None
 
 
+def _canvas(w: int, h: int) -> QImage:
+    img = QImage(max(1, w), max(1, h), QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    return img
+
+
 class _Ink:
     """The lettering as the pen has uncovered it, at one pixel size: a
     reveal mask of round stamps (and each letter group's own shape once
-    the pen leaves it) over the gilded fill, drawn up to a time."""
+    the pen leaves it) over the gilded fill, drawn up to a time. Its
+    images cover only the lettering's box."""
 
     def __init__(self, pen: SealPen, n: int, colour: QColor):
         self.pen = pen
-        self.n = n
+        self.n = n                         # pixels across the text space
         self.k = n / pen.text_space
+        box = pen.box
+        self.w = math.ceil(box.width() * self.k)
+        self.h = math.ceil(box.height() * self.k)
         self.colour = QColor(colour)
         self.fill = self._paint_fill()
-        self.rev = _blank(n)
-        self.ink = _blank(n)
-        self.fx = _blank(n)
+        self.rev = _canvas(self.w, self.h)
+        self.ink = _canvas(self.w, self.h)
+        self.fx = _canvas(self.w, self.h)
         self.tau = -math.inf
         self.stamped = 0
         self.settled = 0
 
+    def _space(self, p: QPainter) -> None:
+        """Paint in text units."""
+        p.scale(self.k, self.k)
+        p.translate(-self.pen.box.x(), -self.pen.box.y())
+
     def _paint_fill(self) -> QImage:
-        img = _blank(self.n)
+        img = _canvas(self.w, self.h)
         p = QPainter(img)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.drawImage(QRectF(0, 0, self.n, self.n), self.pen.text)
+        self._space(p)
+        p.drawImage(self.pen.box, self.pen.text)
+        p.resetTransform()
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(QRectF(0, 0, self.n, self.n), self.colour)
+        p.fillRect(QRectF(0, 0, self.w, self.h), self.colour)
         p.end()
         return img
 
@@ -270,7 +297,7 @@ class _Ink:
         p = QPainter(self.rev)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        p.scale(self.k, self.k)
+        self._space(p)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(255, 255, 255))
         for x, y, r, _t, _i in pen.points[self.stamped:end]:
@@ -294,7 +321,7 @@ class _Ink:
         fx.fill(Qt.GlobalColor.transparent)
         p = QPainter(fx)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.scale(self.k, self.k)
+        self._space(p)
         p.setPen(Qt.PenStyle.NoPen)
         if writing:
             p.setBrush(QColor(255, 255, 255))
@@ -310,7 +337,7 @@ class _Ink:
             grad.setColorAt(0.0, QColor(255, 250, 230, 0))
             grad.setColorAt(0.5, QColor(255, 250, 230, 178))
             grad.setColorAt(1.0, QColor(255, 250, 230, 0))
-            p.fillRect(QRectF(x - 55, 0, 110, pen.text_space), QBrush(grad))
+            p.fillRect(QRectF(x - 55, pen.box.y(), 110, pen.box.height()), QBrush(grad))
         p.setCompositionMode(
             QPainter.CompositionMode.CompositionMode_DestinationIn)
         p.resetTransform()
@@ -401,6 +428,40 @@ def _stroke_clip(points, lead_r: float, start_r: float) -> QPainterPath:
     return clip.united(caps)
 
 
+@lru_cache(maxsize=None)
+def _outline(width: float, inset: float = 0.0, round_join: bool = False) -> QPainterPath:
+    """A square's stroke as a filled outline, built once: filling it each
+    frame costs a fraction of stroking it (the glow's wide strokes most
+    of all)."""
+    r = HALF - inset
+    square = QPainterPath()
+    square.addRect(QRectF(-r, -r, 2 * r, 2 * r))
+    stroker = QPainterPathStroker()
+    stroker.setWidth(width)
+    stroker.setJoinStyle(Qt.PenJoinStyle.RoundJoin if round_join
+                         else Qt.PenJoinStyle.MiterJoin)
+    return stroker.createStroke(square)
+
+
+@lru_cache(maxsize=1)
+def _star() -> QPainterPath:
+    """The two squares' union: the eight-pointed star."""
+    path = QPainterPath()
+    path.setFillRule(Qt.FillRule.WindingFill)
+    corner = HALF * math.sqrt(2)
+    for base in (0.0, math.pi / 4):
+        path.addPolygon(QPolygonF([
+            QPointF(corner * math.cos(base + math.pi / 4 + n * math.pi / 2),
+                    corner * math.sin(base + math.pi / 4 + n * math.pi / 2))
+            for n in range(4)]))
+        path.closeSubpath()
+    return path
+
+
+# The lock's glow round a square: wider, fainter bands (extra width, alpha).
+GLOW_BANDS = ((4.0, 0.22), (9.0, 0.10), (16.0, 0.05))
+
+
 # -- the widget -------------------------------------------------------------
 class Emblem(QWidget):
     """Icon + tick ring, with the seal behind a click (theme-aware)."""
@@ -416,6 +477,8 @@ class Emblem(QWidget):
         self._fallback = None       # or a raster icon
         self._icons = None          # (pixel size, full, wave, dashes, glow)
         self._ink = None
+        self._squares = None        # (key, lines, glow) see _square_images
+        self._ring_cache = None     # (key, image) see _ring_image
         self._mode = "rest"         # rest | seal | restore
         self._t = 0.0               # ms into the sequence, before PACE
         self._playing = False
@@ -745,7 +808,9 @@ class Emblem(QWidget):
         self._disc(p, r, rim)
 
         last_tick = z["tick_from"] + 70 * z["tick_step"] + z["tick_ms"]
-        if t < last_tick:
+        if t <= 0 and hover < 0.002:
+            p.drawImage(QRectF(-REF / 2, -REF / 2, REF, REF), self._ring_image())
+        elif t < last_tick:
             for i in range(1, TICKS):
                 j = TICKS - 1 - i
                 start = z["tick_from"] + j * z["tick_step"]
@@ -756,7 +821,7 @@ class Emblem(QWidget):
                 w = self._hover_weight(i) if at_rest else 0.0
                 self._tick_line(p, i, 20 * e + 3.5 * w, 1 - e, w)
         un = _seg(t, *z["needle"])
-        if un < 1:
+        if 0 < un < 1 or (un == 0 and hover >= 0.002):
             out = (-2 * _smooth(un / 0.3) if un < 0.3
                    else -2 + 18 * _ease_in((un - 0.3) / 0.7))
             self._tick_line(p, 0, out, 1 - _ease_in(un), 0.0)
@@ -813,6 +878,24 @@ class Emblem(QWidget):
         a = -math.pi / 2 + 2 * math.pi * i / TICKS
         d = abs(_ang_diff(a, self._ang_s))
         return self._hover * math.exp(-((d / 0.27) ** 2))
+
+    def _ring_image(self) -> QImage:
+        """The resting ring (ticks and needle), drawn once per size and
+        theme: the plain emblem then paints one image, not 72 strokes."""
+        n = max(16, round(REF * self._k * self._dpr))
+        key = (n, self._c["accent"].rgba(), self._c["secondary"].rgba())
+        if self._ring_cache is not None and self._ring_cache[0] == key:
+            return self._ring_cache[1]
+        img = _blank(n)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.scale(n / REF, n / REF)
+        p.translate(REF / 2, REF / 2)
+        for i in range(TICKS):
+            self._tick_line(p, i, 0.0, 1.0, 0.0)
+        p.end()
+        self._ring_cache = (key, img)
+        return img
 
     def _tick_line(self, p, i, out, alpha, glow) -> None:
         if alpha <= 0.002:
@@ -951,47 +1034,61 @@ class Emblem(QWidget):
     def _square(self, p, theta, sc, alpha, glow) -> None:
         if alpha <= 0.002:
             return
+        lines, glows, ext = self._square_images()
+        rect = QRectF(-ext, -ext, 2 * ext, 2 * ext)
         p.save()
         p.rotate(math.degrees(theta))
         p.scale(sc, sc)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        side = QRectF(-HALF, -HALF, 2 * HALF, 2 * HALF)
+        p.setOpacity(_clamp(alpha, 0, 1))
+        p.drawImage(rect, lines)
         g = _clamp(glow, 0, 1.4)
         if g > 0.01:
-            # A soft glow round the whole square: wider, fainter strokes.
-            for extra, a in ((4.0, 0.22), (9.0, 0.10), (16.0, 0.05)):
-                c = QColor(self._c["light"])
-                c.setAlphaF(_clamp(a * g * alpha, 0, 1))
-                pen = QPen(c, 2.4 + extra)
-                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-                p.setPen(pen)
-                p.drawRect(side)
-        main = mix_rgba(self._c["accent"], self._c["light"], _clamp(g * 0.7, 0, 1))
-        main.setAlphaF(_clamp(alpha, 0, 1))
-        pen = QPen(main, 2.4)
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-        p.setPen(pen)
-        p.drawRect(side)
-        inner = QColor(self._c["accent"])
-        inner.setAlphaF(_clamp(alpha * 0.45, 0, 1))
-        p.setPen(QPen(inner, 0.8))
-        p.drawRect(side.adjusted(5, 5, -5, -5))
+            # The glow round the whole square, and the line brightening.
+            p.setOpacity(_clamp(g * alpha, 0, 1))
+            p.drawImage(rect, glows)
         p.restore()
+
+    def _square_images(self):
+        """A square's lines and its glow at full strength, drawn once per
+        size and theme: each frame only turns and fades them (rotating an
+        image costs a fraction of antialiasing the outlines again)."""
+        ext = HALF + 12.0
+        n = max(16, round(2 * ext * self._k * self._dpr))
+        key = (n, self._c["accent"].rgba(), self._c["light"].rgba())
+        if self._squares is not None and self._squares[0] == key:
+            return self._squares[1], self._squares[2], ext
+        images = []
+        for glowing in (False, True):
+            img = _blank(n)
+            p = QPainter(img)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.scale(n / (2 * ext), n / (2 * ext))
+            p.translate(ext, ext)
+            p.setPen(Qt.PenStyle.NoPen)
+            if glowing:
+                for extra, a in GLOW_BANDS:
+                    c = QColor(self._c["light"])
+                    c.setAlphaF(a)
+                    p.fillPath(_outline(2.4 + extra, round_join=True), c)
+                core = QColor(self._c["light"])
+                core.setAlphaF(0.7)
+                p.fillPath(_outline(2.4), core)
+            else:
+                p.fillPath(_outline(2.4), self._c["accent"])
+                inner = QColor(self._c["accent"])
+                inner.setAlphaF(0.45)
+                p.fillPath(_outline(0.8, inset=5.0), inner)
+            p.end()
+            images.append(img)
+        self._squares = (key, images[0], images[1])
+        return images[0], images[1], ext
 
     def _star_fill(self, p, a) -> None:
         """Once both squares are in, the star they make takes a faint
         tint, so it reads as one seal rather than two frames."""
         if a <= 0.01:
             return
-        path = QPainterPath()
-        path.setFillRule(Qt.FillRule.WindingFill)
-        corner = HALF * math.sqrt(2)
-        for base in (0.0, math.pi / 4):
-            path.addPolygon(QPolygonF([
-                QPointF(corner * math.cos(base + math.pi / 4 + n * math.pi / 2),
-                        corner * math.sin(base + math.pi / 4 + n * math.pi / 2))
-                for n in range(4)]))
-            path.closeSubpath()
+        path = _star()
         tint = mix_rgba(self._c["pill"], self._c["accent"], 0.09)
         tint.setAlphaF(_clamp(a, 0, 1))
         p.setPen(Qt.PenStyle.NoPen)
@@ -1006,7 +1103,10 @@ class Emblem(QWidget):
         n = max(8, round(2 * half * self._k * self._dpr))
         ink = self._ink_for(n, self._c["secondary"])
         ink.advance(tau)
-        rect = QRectF(-half, -half, 2 * half, 2 * half)
+        s, box = pen.text_scale, pen.box
+        rect = QRectF((box.x() - pen.text_space / 2) * s,
+                      (box.y() - pen.text_space / 2) * s,
+                      ink.w / ink.k * s, ink.h / ink.k * s)
         p.setOpacity(_clamp(alpha, 0, 1))
         p.drawImage(rect, ink.ink)
         fx = ink.effects(tau)

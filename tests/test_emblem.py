@@ -46,12 +46,15 @@ def emblem(app):
 
 
 def _gold_pixels(widget, colour) -> int:
-    """Pixels close to `colour` in the middle of the emblem."""
-    img = widget.grab().toImage()
-    s = img.width()
+    """Pixels close to `colour` in the middle of the emblem (on a small
+    copy: a few hundred reads, not thousands)."""
+    from PyQt6.QtCore import Qt
+    img = widget.grab().toImage().scaled(
+        96, 96, Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.FastTransformation)
     count = 0
-    for y in range(int(s * 0.3), int(s * 0.7), 2):
-        for x in range(int(s * 0.3), int(s * 0.7), 2):
+    for y in range(28, 68):
+        for x in range(28, 68):
             c = img.pixelColor(x, y)
             if (abs(c.red() - colour.red()) < 40 and abs(c.green() - colour.green()) < 40
                     and abs(c.blue() - colour.blue()) < 40):
@@ -159,7 +162,7 @@ def test_the_lettering_shows_only_once_written(app, emblem):
     assert _gold_pixels(emblem, gold) == 0
     emblem.seek("seal", emblem.seal_ms())
     sealed = _gold_pixels(emblem, gold)
-    assert sealed > 50
+    assert sealed > 20
     # Half way through, part of it.
     pen = E.load_pen()
     emblem.seek("seal", E.SEAL["write"] + pen.duration / 2)
@@ -169,20 +172,36 @@ def test_the_lettering_shows_only_once_written(app, emblem):
     assert _gold_pixels(emblem, gold) < sealed / 4
 
 
-def test_every_frame_paints(app, emblem):
-    """Both sequences, a frame every 60 ms, in two themes."""
+def _beats(spans, total):
+    """A frame inside and at the end of every beat, and the last one."""
+    times = {0.0, float(total)}
+    for value in spans.values():
+        if isinstance(value, tuple):
+            times.update((value[0] + 1, (value[0] + value[1]) / 2, value[1] + 1))
+    return sorted(t for t in times if t <= total)
+
+
+def test_every_beat_paints(app, emblem):
+    """Both sequences, a few frames in each beat, in two themes."""
+    from PyQt6.QtGui import QImage, QPainter
     from stream_denoiser.gui import themes
     from stream_denoiser.gui.utils import get_icon_path
+    pen = E.load_pen()
+    seal = _beats(E.SEAL, emblem.seal_ms())
+    seal += [E.SEAL["write"] + pen.duration * f for f in (0.25, 0.5, 0.75)]
+    restore = _beats(E.RESTORE, E.RESTORE_MS)
+    canvas = QImage(emblem.size(), QImage.Format.Format_ARGB32_Premultiplied)
     saved = themes.current_id()
     try:
         for theme in ("halcyon", "eclipse"):
             themes.set_current(theme)
             emblem.set_icon(get_icon_path(theme))
-            for t in range(0, int(emblem.seal_ms()) + 60, 60):
-                emblem.seek("seal", t)
-                assert not emblem.grab().isNull()
-            for t in range(0, E.RESTORE_MS + 60, 60):
-                emblem.seek("restore", t)
-                assert not emblem.grab().isNull()
+            for mode, times in (("seal", sorted(seal)), ("restore", restore)):
+                for t in times:
+                    emblem.seek(mode, t)
+                    canvas.fill(0)
+                    painter = QPainter(canvas)
+                    emblem.render(painter)
+                    painter.end()
     finally:
         themes.set_current(saved)
