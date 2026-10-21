@@ -516,6 +516,25 @@ body {
 	}
 }
 
+/* The large headings keep the blur coming into focus: one element per
+   section, so the repaint stays small. */
+:is(h1 > [data-reveal="up"], h2[data-reveal="up"])[data-revealed] {
+	animation-name: reveal-up-focus;
+}
+
+@keyframes reveal-up-focus {
+	from {
+		opacity: 0;
+		translate: 0 24px;
+		filter: blur(6px);
+	}
+	to {
+		opacity: 1;
+		translate: 0 0;
+		filter: blur(0);
+	}
+}
+
 @keyframes reveal-fade {
 	from { opacity: 0; }
 	to { opacity: 1; }
