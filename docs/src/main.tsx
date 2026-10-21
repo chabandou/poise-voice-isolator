@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot, hydrateRoot } from 'react-dom/client'
-// Self-hosted fonts (bundled; no third-party requests). Inter and JetBrains
-// Mono are variable fonts; headings use Rajdhani Bold, and SemiBold where
-// a theme's headings are lighter (Vigil, Eclipse), as in the app.
+// Self-hosted fonts (bundled; no third-party requests). Inter is a
+// variable font; headings use Rajdhani Bold, and SemiBold where a theme's
+// headings are lighter (Vigil, Eclipse), as in the app. Mono labels use the
+// system's monospace font (index.css --font-mono), so no download.
 import '@fontsource-variable/inter'
-import '@fontsource-variable/jetbrains-mono'
 import '@fontsource/rajdhani/600.css'
 import '@fontsource/rajdhani/700.css'
 import 'lenis/dist/lenis.css'

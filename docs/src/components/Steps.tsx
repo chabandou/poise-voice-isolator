@@ -1,4 +1,4 @@
-import { DownloadSimple, Power, SlidersHorizontal } from '@phosphor-icons/react';
+import { DownloadSimple, Power, SlidersHorizontal } from '../icons';
 import { reveal } from '../reveal';
 
 const steps = [

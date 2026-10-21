@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getLenis } from '../smoothScroll';
-import { AndroidLogo, ArrowRight, ArrowUpRight, LinuxLogo, WindowsLogo, X, type Icon } from '@phosphor-icons/react';
+import { AndroidLogo, ArrowRight, ArrowUpRight, LinuxLogo, WindowsLogo, X, type Icon } from '../icons';
 import { RELEASE, RELEASES_URL, REPO_URL } from '../release';
 import { reveal } from '../reveal';
 
@@ -202,7 +202,7 @@ const FinalCTA = () => {
 								)}
 								<span className="mt-6 inline-flex items-center gap-1.5 text-[0.95rem] font-semibold text-accent">
 									Install steps
-									<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" size={16} weight="bold" />
+									<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" size={16} />
 								</span>
 							</button>
 						))}
@@ -295,7 +295,7 @@ const FinalCTA = () => {
 									target="_blank"
 								>
 									{link.label}
-									<ArrowUpRight size={16} weight="bold" />
+									<ArrowUpRight size={16} />
 								</a>
 							))}
 						</div>

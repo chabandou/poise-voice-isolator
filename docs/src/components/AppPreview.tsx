@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { FileText, GearSix, Info, Minus, Square, Waveform, X } from '@phosphor-icons/react';
+import { FileText, GearSix, Info, Minus, Square, Waveform, X } from '../icons';
 import { PoiseMark } from './Brand';
 import Dial from './Dial';
 import HomeBackdrop, { type DialAnchor } from './HomeBackdrop';
@@ -96,6 +96,10 @@ const AppWindow = () => {
 			return;
 		}
 		const timer = window.setInterval(() => {
+			// Nobody is watching the status bar while the preview is off screen.
+			if (settleRef.current?.closest('[data-offscreen]')) {
+				return;
+			}
 			setStats({
 				load: 0.36 + Math.random() * 0.12,
 				frame: 3.8 + Math.random() * 1.1,
@@ -242,33 +246,59 @@ const ThemePicker = () => {
 	);
 };
 
-const AppPreview = () => (
-	<section className="px-6 py-24 md:px-12 md:py-32" id="app">
-		<div className="mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-16">
-			<div>
-				<div className="kicker mb-5" {...reveal(0)}>
-					<span className="kicker__dot" />
-					the app
-				</div>
-				<h2 className="font-heading text-[2.9rem] font-bold leading-[0.98] text-ink md:text-[3.6rem]" {...reveal(90)}>
-					One dial.<br />
-					<span className="text-accent">Six colorways.</span>
-				</h2>
-				<p className="mt-5 max-w-md text-[1.05rem] leading-[1.7] text-muted" {...reveal(180)}>
-					Press the dial to start isolating, drag the ring to choose how strongly music and noise are removed. Make it yours, you're in control. 
-				</p>
-				<div className="mt-9">
-					<ThemePicker />
-				</div>
-			</div>
+// Off screen the preview's endless animations (the float, the dial's
+// breathing, the backdrop's pings and sky) hold still: data-offscreen
+// pauses them in index.css. Set straight on the DOM, so no re-render.
+const usePauseOffscreen = () => {
+	const ref = useRef<HTMLElement>(null);
 
-			<div className="[perspective:1400px]">
-				<div {...reveal(160, 'tilt')}>
-					<AppWindow />
+	useEffect(() => {
+		const section = ref.current;
+		if (!section || !('IntersectionObserver' in window)) {
+			return;
+		}
+		const observer = new IntersectionObserver(
+			([entry]) => section.toggleAttribute('data-offscreen', !entry.isIntersecting),
+			{ rootMargin: '100px 0px' },
+		);
+		observer.observe(section);
+		return () => observer.disconnect();
+	}, []);
+
+	return ref;
+};
+
+const AppPreview = () => {
+	const sectionRef = usePauseOffscreen();
+
+	return (
+		<section ref={sectionRef} className="px-6 py-24 md:px-12 md:py-32" id="app">
+			<div className="mx-auto grid max-w-6xl items-center gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:gap-16">
+				<div>
+					<div className="kicker mb-5" {...reveal(0)}>
+						<span className="kicker__dot" />
+						the app
+					</div>
+					<h2 className="font-heading text-[2.9rem] font-bold leading-[0.98] text-ink md:text-[3.6rem]" {...reveal(90)}>
+						One dial.<br />
+						<span className="text-accent">Six colorways.</span>
+					</h2>
+					<p className="mt-5 max-w-md text-[1.05rem] leading-[1.7] text-muted" {...reveal(180)}>
+						Press the dial to start isolating, drag the ring to choose how strongly music and noise are removed. Make it yours, you're in control. 
+					</p>
+					<div className="mt-9">
+						<ThemePicker />
+					</div>
+				</div>
+
+				<div className="[perspective:1400px]">
+					<div {...reveal(160, 'tilt')}>
+						<AppWindow />
+					</div>
 				</div>
 			</div>
-		</div>
-	</section>
-);
+		</section>
+	);
+};
 
 export default AppPreview;

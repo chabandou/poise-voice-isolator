@@ -1,4 +1,4 @@
-import { CodeSimple, Cpu, WifiSlash } from '@phosphor-icons/react';
+import { CodeSimple, Cpu, WifiSlash } from '../icons';
 import { Emblem, Lattice } from './Brand';
 import { RELEASE } from '../release';
 import { reveal } from '../reveal';

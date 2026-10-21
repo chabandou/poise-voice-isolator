@@ -21,11 +21,35 @@ export const useSmoothScroll = () => {
 		const instance = new Lenis({
 			// "A bit": a little quicker to settle than Lenis' default 0.1.
 			lerp: 0.12,
-			autoRaf: true,
 		});
 		lenis = instance;
 
+		// Driven only while it glides: autoRaf would run a frame loop for as
+		// long as the page is open, scrolling or not. Every glide starts in
+		// scrollTo (the wheel's included, and it flags itself smooth at once),
+		// so that wakes the loop, and the loop sleeps once the glide settles.
+		let frame = 0;
+		let waking = false;
+		const tick = (time: number) => {
+			if (waking) {
+				// One frame's step, not the whole time asleep.
+				instance.time = time - 1000 / 60;
+				waking = false;
+			}
+			instance.raf(time);
+			frame = instance.isScrolling === 'smooth' ? requestAnimationFrame(tick) : 0;
+		};
+		const scrollTo = instance.scrollTo.bind(instance);
+		instance.scrollTo = (...args: Parameters<Lenis['scrollTo']>) => {
+			scrollTo(...args);
+			if (!frame && instance.isScrolling === 'smooth') {
+				waking = true;
+				frame = requestAnimationFrame(tick);
+			}
+		};
+
 		return () => {
+			cancelAnimationFrame(frame);
 			instance.destroy();
 			lenis = null;
 		};

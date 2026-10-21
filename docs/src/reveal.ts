@@ -19,6 +19,14 @@ export const reveal = (delay = 0, variant: RevealVariant = 'up', style?: CSSProp
 	style: { ...style, '--reveal-delay': `${delay}ms` } as CSSProperties,
 });
 
+/** For what is on screen at load (the hero): prerendered already revealed,
+ * so the entrance plays from the first paint instead of waiting for the
+ * script to download and hydrate. */
+export const revealOnLoad = (delay = 0, variant: RevealVariant = 'up', style?: CSSProperties) => ({
+	...reveal(delay, variant, style),
+	'data-revealed': '',
+});
+
 export const useReveal = () => {
 	useEffect(() => {
 		const elements = [...document.querySelectorAll<HTMLElement>('[data-reveal]:not([data-revealed])')];

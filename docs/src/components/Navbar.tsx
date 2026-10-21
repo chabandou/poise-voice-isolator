@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
-import { DownloadSimple, List, X } from '@phosphor-icons/react';
+import { DownloadSimpleBold, List, X } from '../icons';
 import CtaButton from './CtaButton';
 import { PoiseMark } from './Brand';
 import { getLenis } from '../smoothScroll';
@@ -140,8 +140,19 @@ const Navbar = () => {
       }
     };
 
+    // Scroll events can outnumber frames; check once per frame at most.
+    let pending = 0;
+    const onScroll = () => {
+      if (!pending) {
+        pending = window.requestAnimationFrame(() => {
+          pending = 0;
+          updateActiveSection();
+        });
+      }
+    };
+
     updateActiveSection();
-    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', updateActiveSection);
     window.addEventListener('wheel', cancelNavScroll, { passive: true });
     window.addEventListener('touchstart', cancelNavScroll, { passive: true });
@@ -149,7 +160,8 @@ const Navbar = () => {
 
     return () => {
       window.cancelAnimationFrame(scrollFrameRef.current);
-      window.removeEventListener('scroll', updateActiveSection);
+      window.cancelAnimationFrame(pending);
+      window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', updateActiveSection);
       window.removeEventListener('wheel', cancelNavScroll);
       window.removeEventListener('touchstart', cancelNavScroll);
@@ -205,7 +217,7 @@ const Navbar = () => {
     }`;
 
   return (
-    <header className="header-enter fixed top-0 z-50 w-full border-b border-white/6 bg-bg/75 backdrop-blur-2xl">
+    <header className="header-enter fixed top-0 z-50 w-full border-b border-white/6 bg-bg/80 backdrop-blur-md">
       <nav className="mx-auto flex w-full max-w-360 items-center justify-between px-6 py-4 md:px-12 md:py-5">
         <a
           className="flex items-center gap-2.5"
@@ -243,7 +255,7 @@ const Navbar = () => {
           <CtaButton
             className="px-5 py-2.5 text-[0.9rem]"
             href="#downloads"
-            icon={<DownloadSimple size={18} weight="bold" />}
+            icon={<DownloadSimpleBold size={18} />}
             onClick={(event) => handleNavClick(event, '#downloads', 'downloads')}
           >
             Download
@@ -284,7 +296,7 @@ const Navbar = () => {
             <CtaButton
               className="mt-3 px-5 py-3 text-[0.95rem]"
               href="#downloads"
-              icon={<DownloadSimple size={18} weight="bold" />}
+              icon={<DownloadSimpleBold size={18} />}
               onClick={(event) => {
                 handleNavClick(event, '#downloads', 'downloads');
                 setIsOpen(false);

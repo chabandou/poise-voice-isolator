@@ -1,4 +1,4 @@
-import { Cpu, Lightning, LockSimple, MoonStars, SpeakerHigh, Tray } from '@phosphor-icons/react';
+import { Cpu, Lightning, LockSimple, MoonStars, SpeakerHigh, Tray } from '../icons';
 import { reveal } from '../reveal';
 
 const features = [

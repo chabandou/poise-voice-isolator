@@ -37,7 +37,9 @@
 
 	--font-heading: "Rajdhani", "Segoe UI", sans-serif;
 	--font-body: "Inter Variable", "Inter", "Segoe UI", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+	/* The system's own monospace: only a few small labels use it, not
+	   worth a 40 kB font download above the fold. */
+	--font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 [data-theme="verdant"] {
@@ -501,16 +503,16 @@ body {
 	animation-duration: calc(1300ms * var(--reveal-pace));
 }
 
+/* Opacity and translate only: both run on the compositor. An animated blur
+   here repainted every element it touched, several at once per section. */
 @keyframes reveal-up {
 	from {
 		opacity: 0;
 		translate: 0 24px;
-		filter: blur(6px);
 	}
 	to {
 		opacity: 1;
 		translate: 0 0;
-		filter: blur(0);
 	}
 }
 
@@ -849,19 +851,42 @@ body {
 	45% { translate: 0 -3px; }
 }
 
+/* Off screen the preview holds still (AppPreview.tsx usePauseOffscreen):
+   its endless animations would otherwise tick on unseen. */
+[data-offscreen] *,
+[data-offscreen] *::before {
+	animation-play-state: paused !important;
+}
+
 .app-tilt {
 	--rx: 0;
 	--ry: 0;
 	--mx: 50%;
 	--my: 50%;
 	--sheen: 0;
+	position: relative;
 	transform: perspective(1400px) rotateX(calc(var(--rx) * 1deg)) rotateY(calc(var(--ry) * 1deg));
 }
 
 .app-tilt .app-window {
-	box-shadow:
-		calc(var(--ry) * -5px) calc(40px + var(--rx) * 5px) 120px -40px rgb(0 0 0 / 0.8),
-		0 0 0 1px rgb(255 255 255 / 0.02);
+	box-shadow: 0 0 0 1px rgb(255 255 255 / 0.02);
+}
+
+/* The window's drop shadow, on a layer of its own that the lean slides
+   rather than repaints: a 120 px shadow redrawn on every pointer move was
+   the costliest paint on the page. Inset 16 px (spread -24 px, so the same
+   shape as -40 px on the window) keeps the box it leaves unpainted under
+   the window as it slides, up to 13 px. */
+.app-tilt::before {
+	content: "";
+	position: absolute;
+	inset: 16px;
+	z-index: -1;
+	border-radius: 18px;
+	box-shadow: 0 0 120px -24px rgb(0 0 0 / 0.8);
+	translate: calc(var(--ry) * -5px) calc(40px + var(--rx) * 5px);
+	will-change: translate;
+	pointer-events: none;
 }
 
 .app-sheen {
@@ -897,8 +922,11 @@ body {
 	position: absolute;
 	inset: 0;
 	border-radius: 28px;
-	background: var(--color-accent);
-	filter: blur(56px);
+	/* The rect's own blur as a shadow (blur radius 112 px = a 56 px
+	   filter blur): drawn once and scaled on the compositor, where a
+	   filter is blurred again every frame of the pulse. Its middle, which
+	   the shadow leaves empty, is hidden behind the window anyway. */
+	box-shadow: 0 0 112px var(--color-accent);
 	opacity: 0.22;
 }
 
