@@ -14,6 +14,7 @@ nothing here reads Inno's own log format.
 from __future__ import annotations
 
 import codecs
+import ntpath
 import os
 import sys
 from dataclasses import dataclass
@@ -253,11 +254,12 @@ def existing_install() -> Existing | None:
 
 
 def same_exe(path: str, target_dir: str) -> bool:
-    """`path` is the Poise.exe of an install in `target_dir`."""
+    """`path` is the Poise.exe of an install in `target_dir`. Windows
+    path rules (ntpath) on every platform: these are Windows paths."""
     if not path or not target_dir:
         return False
-    norm = lambda p: os.path.normcase(os.path.normpath(p))  # noqa: E731
-    return norm(path) == norm(os.path.join(target_dir, APP_EXE))
+    norm = lambda p: ntpath.normcase(ntpath.normpath(p))  # noqa: E731
+    return norm(path) == norm(ntpath.join(target_dir, APP_EXE))
 
 
 def running_poise(target_dir: str) -> list[int]:

@@ -235,5 +235,5 @@ def test_driver_probe_reads_the_64_bit_registry():
     or MMDevices is invisible and the driver setup runs on every install."""
     with open(SETUP_ISS, encoding="utf-8") as f:
         script = f.read()
-    assert "{sysnative}\WindowsPowerShell" in script
+    assert r"{sysnative}\WindowsPowerShell" in script
     assert "Exec('powershell.exe'" not in script
