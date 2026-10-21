@@ -141,14 +141,30 @@ def _stub_install(monkeypatch, tmp_path):
     return proc, launched
 
 
+def _ready(app, controller):
+    _available(controller)
+    controller.install()
+    assert _pump(app, lambda: controller.state == upd.READY)
+
+
+def test_download_waits_for_the_restart_click(
+        app, controller, monkeypatch, tmp_path):
+    proc, launched = _stub_install(monkeypatch, tmp_path)
+    _ready(app, controller)
+    app.processEvents()
+    assert launched == []              # no UAC prompt the user didn't ask for
+    controller.install()
+    assert controller.state == upd.WAITING and len(launched) == 1
+
+
 def test_install_hands_over_once_the_installer_signals(
         app, controller, monkeypatch, tmp_path):
     proc, launched = _stub_install(monkeypatch, tmp_path)
     quits = []
     controller.quit_requested.connect(lambda: quits.append(1))
-    _available(controller)
+    _ready(app, controller)
     controller.install()
-    assert _pump(app, lambda: controller.state == upd.WAITING)
+    assert controller.state == upd.WAITING
     path, signal = launched[0]
     assert path.endswith("PoiseCore-99.0.0.exe")
     app.processEvents()
@@ -160,16 +176,47 @@ def test_install_hands_over_once_the_installer_signals(
 
 def test_declined_prompt_leaves_poise_running(
         app, controller, monkeypatch, tmp_path):
-    proc, _ = _stub_install(monkeypatch, tmp_path)
+    proc, launched = _stub_install(monkeypatch, tmp_path)
     quits = []
     controller.quit_requested.connect(lambda: quits.append(1))
-    _available(controller)
+    _ready(app, controller)
     controller.install()
-    assert _pump(app, lambda: controller.state == upd.WAITING)
     proc.returncode = 1223             # ERROR_CANCELLED
-    assert _pump(app, lambda: controller.state == upd.AVAILABLE)
+    assert _pump(app, lambda: controller.state == upd.READY)
     assert controller.message == "The update was cancelled."
     assert quits == []
+    # Trying again reuses the download.
+    proc.returncode = None
+    controller.install()
+    assert controller.state == upd.WAITING
+    assert launched[1][0] == launched[0][0]
+
+
+def test_a_late_check_leaves_the_install_alone(
+        app, controller, monkeypatch, tmp_path):
+    """A background check already out when Update was clicked must not
+    put the Update button back (a second click = a second download)."""
+    _stub_install(monkeypatch, tmp_path)
+    _ready(app, controller)
+    controller._checked.emit(None, "", False)       # "you're current"
+    controller._checked.emit(NEW, "", False)
+    app.processEvents()
+    assert controller.state == upd.READY and controller.release == NEW
+
+
+def test_the_install_log_outlives_the_download_dir(
+        app, controller, monkeypatch, tmp_path):
+    proc, _ = _stub_install(monkeypatch, tmp_path)
+    logs = []
+    monkeypatch.setattr(updates, "launch_installer",
+                        lambda path, signal, log: logs.append(log) or proc)
+    _ready(app, controller)
+    controller.install()
+    assert logs == [upd.INSTALL_LOG]
+    # Not inside the folder every start clears.
+    import tempfile
+    cleared = os.path.join(tempfile.gettempdir(), "Poise-update")
+    assert os.path.dirname(upd.INSTALL_LOG) != cleared
 
 
 def test_failed_download_offers_the_release_page(
@@ -237,8 +284,15 @@ def test_about_line_follows_the_controller(app, window, monkeypatch):
     assert window.LINK_CANCEL in label.text()
     assert window.update_btn.isHidden()
 
+    u._set(upd.READY)
+    assert "ready to install" in label.text()
+    assert not window.update_btn.isHidden()
+    assert window.update_btn.text() == "Restart to update"
+
     u._set(upd.WAITING)
-    assert label.text().startswith("Installing")
+    assert label.text().startswith("Allow the Windows prompt")
+    assert "taskbar" in label.text()
+    assert window.update_btn.isHidden()
 
     u.release = None
     u._set(upd.CURRENT)
@@ -314,6 +368,28 @@ def test_first_start_after_an_update(app, settings, monkeypatch, tmp_path):
         assert notes == ["Poise is up to date"]
         assert not settings.contains(settings.KEY_UPDATE_FROM)
         assert not settings.contains(settings.KEY_UPDATE_RESUME)
+    finally:
+        win.close()
+
+
+@needs_updates
+def test_first_start_after_a_failed_update_says_so(
+        app, settings, monkeypatch, tmp_path):
+    """setup.iss starts the old Poise again when the install fails."""
+    from stream_denoiser import __version__
+    monkeypatch.setattr(upd, "DOWNLOAD_DIR", str(tmp_path / "dl"))
+    settings.set(settings.KEY_UPDATE_FROM, __version__)
+    settings.set(settings.KEY_UPDATE_RESUME, False)
+    from stream_denoiser.gui.main_window import MainWindow
+    notes = []
+    from stream_denoiser.gui import system_tray
+    monkeypatch.setattr(system_tray.SystemTray, "notify",
+                        lambda self, title, msg, is_error=False:
+                        notes.append((title, is_error)))
+    win = MainWindow()
+    try:
+        assert notes == [("The update didn't install", True)]
+        assert not settings.contains(settings.KEY_UPDATE_FROM)
     finally:
         win.close()
 

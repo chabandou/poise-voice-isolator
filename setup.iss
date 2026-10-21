@@ -78,20 +78,24 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-; An in-app update runs silently, so the entry above is skipped: start
-; the new Poise here instead, as the user rather than elevated.
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: IsPoiseUpdate
+; An in-app update starts Poise again from DeinitializeSetup instead,
+; whether the install worked or not.
 
 [Code]
 const
   { Held by a running Poise (stream_denoiser/updates.py RUNNING_MUTEX). }
   RunningMutex = 'PoiseVoiceIsolatorRunning';
   { How long an update waits for Poise to quit (it stops isolating and
-    restores the default playback device first). }
+    restores the default playback device first), then for Windows to
+    release the mutex once it has been closed by force. }
   QuitWaitMs = 30000;
+  KillWaitMs = 5000;
 
 var
   VbcableNeedsReboot: Boolean;
+  { An update made Poise quit: it must be started again on the way out,
+    on success (the new version) and on failure (whatever is there). }
+  RelaunchPoise: Boolean;
 
 { In-app updates pass /POISEUPDATE=<file>: the file Poise watches to
   learn that this (elevated) setup is running and it should quit. }
@@ -105,25 +109,62 @@ begin
   Result := UpdateSignalPath() <> '';
 end;
 
-function InitializeSetup(): Boolean;
+{ Wait up to TimeoutMs for every Poise to be gone. }
+function WaitForPoiseToQuit(TimeoutMs: Integer): Boolean;
 var
   Waited: Integer;
+begin
+  Waited := 0;
+  while CheckForMutexes(RunningMutex) and (Waited < TimeoutMs) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  Result := not CheckForMutexes(RunningMutex);
+  if Result then
+    Log(Format('Poise: quit after %d ms', [Waited]));
+end;
+
+{ The Poise that asked for this update (its /POISEPID), with its audio
+  process. Only ever that process: other users' Poise stay untouched. }
+procedure ClosePoiseByForce();
+var
+  Pid: String;
+  ResultCode: Integer;
+begin
+  Pid := ExpandConstant('{param:POISEPID|}');
+  if (Pid = '') or (StrToIntDef(Pid, 0) <= 0) then
+  begin
+    Log('Poise: no /POISEPID to close');
+    Exit;
+  end;
+  Log('Poise: still running, closing pid ' + Pid);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /PID ' + Pid, '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log(Format('Poise: taskkill exited with code %d', [ResultCode]));
+end;
+
+function InitializeSetup(): Boolean;
 begin
   Result := True;
   if IsPoiseUpdate() then
   begin
     if not SaveStringToFile(UpdateSignalPath(), 'started', False) then
       Log('Poise: could not write the update signal file');
-    Waited := 0;
-    while CheckForMutexes(RunningMutex) and (Waited < QuitWaitMs) do
+    { Poise quits as soon as it sees the signal. One that hangs on the
+      way out is closed by force: installing over a running Poise would
+      leave a half-replaced _internal that does not start. }
+    if not WaitForPoiseToQuit(QuitWaitMs) then
     begin
-      Sleep(250);
-      Waited := Waited + 250;
+      ClosePoiseByForce();
+      if not WaitForPoiseToQuit(KillWaitMs) then
+      begin
+        Log('Poise: still running, update abandoned');
+        Result := False;
+        Exit;
+      end;
     end;
-    if CheckForMutexes(RunningMutex) then
-      Log('Poise: still running, leaving it to /CLOSEAPPLICATIONS')
-    else
-      Log(Format('Poise: quit after %d ms', [Waited]));
+    RelaunchPoise := True;
     Exit;
   end;
   { A manual install over a running Poise: it hides in the tray when its
@@ -242,4 +283,32 @@ end;
 function NeedRestart(): Boolean;
 begin
   Result := VbcableNeedsReboot;
+end;
+
+{ Runs however Setup ends. After an update, start Poise again as the
+  user (not elevated): the new version, or the old one if the install
+  failed - Poise then sees its version did not change and says so. }
+procedure DeinitializeSetup();
+var
+  Exe: String;
+  ResultCode: Integer;
+begin
+  if not RelaunchPoise then
+    Exit;
+  try
+    Exe := ExpandConstant('{app}\{#MyAppExeName}');
+  except
+    Log('Poise: install folder unknown, cannot start Poise again');
+    Exit;
+  end;
+  if not FileExists(Exe) then
+  begin
+    Log('Poise: ' + Exe + ' is missing, cannot start Poise again');
+    Exit;
+  end;
+  if ExecAsOriginalUser(Exe, '', ExtractFileDir(Exe), SW_SHOWNORMAL,
+      ewNoWait, ResultCode) then
+    Log('Poise: started again after the update')
+  else
+    Log(Format('Poise: could not start again (%d)', [ResultCode]));
 end;

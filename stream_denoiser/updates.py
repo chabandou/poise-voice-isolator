@@ -226,15 +226,18 @@ def can_self_update() -> bool:
     return install_dir() is not None
 
 
-def installer_args(signal_path: str, log_path: str) -> list:
+def installer_args(signal_path: str, log_path: str,
+                   pid: Optional[int] = None) -> list:
     """Arguments for a silent update run of the Inno core."""
     return [
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
         "/CLOSEAPPLICATIONS",
         f"/LOG={log_path}",
         # Read by setup.iss: mark the run as an update (it waits for
-        # Poise to quit, then starts it again) and say where to signal.
+        # Poise to quit, then starts it again) and say where to signal;
+        # the pid is closed by force if it has not quit within 30 s.
         f"/POISEUPDATE={signal_path}",
+        f"/POISEPID={os.getpid() if pid is None else pid}",
     ]
 
 

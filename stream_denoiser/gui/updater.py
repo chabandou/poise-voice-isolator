@@ -6,9 +6,13 @@ when the user asks, download -> silent install -> quit. Network work runs
 on a plain thread; results come back through queued signals.
 
     idle -> checking -> current | available | error
-    available -> downloading -> waiting (UAC) -> quit_requested
-                     |               |
-                     +---- error <---+  (failed, or the prompt declined)
+    available -> downloading -> ready -> waiting (UAC) -> quit_requested
+                     |             ^          |
+                     +-> error     +----------+  (the prompt declined)
+
+Ready waits for a click ("Restart to update") before the installer
+starts: Windows only brings the UAC prompt to the front for the window
+the user is in, and an update should not interrupt them unasked.
 """
 import os
 import shutil
@@ -34,6 +38,7 @@ CHECKING = "checking"
 CURRENT = "current"
 AVAILABLE = "available"
 DOWNLOADING = "downloading"
+READY = "ready"                  # downloaded and verified, not started
 WAITING = "waiting"
 ERROR = "error"
 
@@ -43,6 +48,9 @@ CHECK_EVERY_S = 24 * 60 * 60
 POLL_MS = 250                    # installer handshake
 
 DOWNLOAD_DIR = os.path.join(tempfile.gettempdir(), "Poise-update")
+#: The last update's Inno log. Outside DOWNLOAD_DIR, which every start
+#: clears: a failed update must leave its log for the next Poise.
+INSTALL_LOG = os.path.join(tempfile.gettempdir(), "Poise-update.log")
 
 
 class UpdateController(QObject):
@@ -65,6 +73,7 @@ class UpdateController(QObject):
         self._cancel = False
         self._proc = None
         self._signal_path = ""
+        self._core_path = ""             # the verified download, once READY
 
         self._checked.connect(self._on_checked)
         self._progress.connect(self._on_progress)
@@ -96,7 +105,7 @@ class UpdateController(QObject):
         self._tick.start()
 
     def check(self, manual: bool = True) -> None:
-        if self._busy or self.state in (DOWNLOADING, WAITING):
+        if self._busy or self._installing:
             return
         self._busy = True
         if manual:
@@ -104,8 +113,17 @@ class UpdateController(QObject):
         threading.Thread(target=self._check_worker, args=(manual,),
                          name="poise-update-check", daemon=True).start()
 
+    @property
+    def _installing(self) -> bool:
+        """Past the point where a check may change what is offered."""
+        return self.state in (DOWNLOADING, READY, WAITING)
+
     def install(self) -> None:
-        """Download the release and hand over to its installer."""
+        """Download the release; once it is READY, hand over to its
+        installer (the user's second click)."""
+        if self.state == READY:
+            self._launch(self._core_path)
+            return
         if self.release is None or self.state not in (AVAILABLE, ERROR):
             return
         if not self.can_install or not self.release.asset_url:
@@ -146,6 +164,10 @@ class UpdateController(QObject):
 
     def _on_checked(self, release, error: str, manual: bool) -> None:
         self._busy = False
+        if self._installing:
+            # A background check that was already out when the user
+            # clicked Update: what is being installed stays as it is.
+            return
         if error:
             _logger.info(f"Update check: {error}")
             # A quiet background failure leaves the page as it was.
@@ -200,15 +222,16 @@ class UpdateController(QObject):
             self.message = "" if self._cancel else error
             self._set(AVAILABLE if self._cancel else ERROR)
             return
-        self._launch(path)
+        self._core_path = path
+        self.message = ""
+        self._set(READY)
 
     # -- handing over to the installer -----------------------------------------
     def _launch(self, core_path: str) -> None:
         self._signal_path = os.path.join(DOWNLOAD_DIR, "started")
-        log_path = os.path.join(DOWNLOAD_DIR, "install.log")
         try:
             self._proc = updates.launch_installer(
-                core_path, self._signal_path, log_path)
+                core_path, self._signal_path, INSTALL_LOG)
         except OSError as e:
             _logger.error(f"Could not start the installer: {e}")
             self.message = "Couldn't start the installer"
@@ -231,8 +254,9 @@ class UpdateController(QObject):
             self._poll.stop()
             _logger.info(f"Installer exited early "
                          f"(code {self._proc.returncode})")
+            # The download is kept: trying again needs no second one.
             self.message = "The update was cancelled."
-            self._set(AVAILABLE)
+            self._set(READY)
 
     def _set(self, state: str) -> None:
         self.state = state

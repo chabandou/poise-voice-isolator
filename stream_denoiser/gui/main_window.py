@@ -983,7 +983,12 @@ class MainWindow(QMainWindow):
                              f"Updated from {came_from} to {__version__}.")
         else:
             _logger.warning(f"Restarted after an update, still on "
-                            f"{__version__}: the install did not apply")
+                            f"{__version__}: the install did not apply "
+                            f"(see {upd.INSTALL_LOG})")
+            self.tray.notify("The update didn't install",
+                             f"Poise is still on {__version__}. Try again "
+                             f"from About, or get it from GitHub.",
+                             is_error=True)
         if resume:
             QTimer.singleShot(0, self._start_processing)
 
@@ -1054,8 +1059,16 @@ class MainWindow(QMainWindow):
             pct = f" {u.progress}%" if u.progress >= 0 else ""
             text = (f"Downloading {version}\u2026{pct}" + sep
                     + link(self.LINK_CANCEL, "Cancel"))
+        elif u.state == upd.READY:
+            lead = f"{u.message} " if u.message else ""
+            text = (f"{lead}Poise {version} is ready to install" + sep
+                    + link(u.page_url, "What's new \u2197"))
+            offer = True
         elif u.state == upd.WAITING:
-            text = "Installing\u2026 allow the Windows prompt to continue"
+            # The prompt can open behind other windows (then it flashes
+            # in the taskbar) if the user switched away right away.
+            text = ("Allow the Windows prompt to install " + version
+                    + sep + "if you can't see it, check the taskbar")
         elif u.state == upd.ERROR:
             text = u.message + sep + (
                 page if u.release is not None
@@ -1068,11 +1081,15 @@ class MainWindow(QMainWindow):
                 fade_in(self.update_btn, duration_ms=240)
         elif not offer:
             self.update_btn.hide()
+        ready = u.state == upd.READY
+        self.update_btn.setText("Restart to update" if ready else "Update")
+        then = ("Poise starts again on the new version"
+                + (" and keeps isolating." if self.worker.is_running
+                   else "."))
         self.update_btn.setToolTip(
-            "Downloads it, then Windows asks to allow the install. Poise "
-            "starts again on the new version"
-            + (" and keeps isolating." if self.worker.is_running else ".")
-            if offer else "")
+            "" if not offer
+            else f"Windows asks to allow the install. {then}" if ready
+            else "Downloads it; you choose when to install.")
 
     def _quit_for_update(self):
         """The installer is running and waits for Poise: quit (stopping

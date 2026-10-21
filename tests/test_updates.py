@@ -205,13 +205,18 @@ def test_installer_args_are_silent_and_mark_an_update():
     assert "/CLOSEAPPLICATIONS" in args and "/NORESTART" in args
     assert r"/POISEUPDATE=C:\t\started" in args
     assert r"/LOG=C:\t\install.log" in args
+    assert f"/POISEPID={os.getpid()}" in args
+    assert "/POISEPID=42" in updates.installer_args("s", "l", pid=42)
 
 
 def test_setup_script_honours_the_update_contract():
-    """setup.iss must read the switch and mutex this module uses."""
+    """setup.iss must read the switches and mutex this module uses."""
     path = os.path.join(os.path.dirname(__file__), "..", "setup.iss")
     with open(path, encoding="utf-8") as f:
         script = f.read()
     assert "{param:POISEUPDATE|}" in script
+    assert "{param:POISEPID|}" in script      # a Poise that won't quit
     assert f"'{updates.RUNNING_MUTEX}'" in script
-    assert "Check: IsPoiseUpdate" in script   # relaunch after an update
+    # Poise starts again however the update ends, as the user.
+    assert "procedure DeinitializeSetup" in script
+    assert "ExecAsOriginalUser" in script
