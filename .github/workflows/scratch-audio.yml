@@ -56,7 +56,7 @@ jobs:
           ./tools/win_endpoints.ps1 -AddDevice installer/windows/vbcable/vbMmeCable64_win10.inf -HardwareId VBAudioVACWDM -WaitName '2- VB-Audio'
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
           ./tools/win_endpoints.ps1 -List
-          ./tools/win_endpoints.ps1 -Rename 'CABLE Input (2- VB-Audio=Speakers', 'CABLE Output (2- VB-Audio=Line In' -Default '2- VB-Audio'
+          ./tools/win_endpoints.ps1 -Rename 'CABLE Input (2- VB-Audio=Speakers', 'CABLE Output (2- VB-Audio=Line In' -Default 'Speakers (2- VB-Audio'
           ./tools/win_endpoints.ps1 -List
       - name: Install deps
         run: pip install -r requirements.txt pytest
