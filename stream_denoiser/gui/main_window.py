@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import (
-    QIcon, QCloseEvent, QPixmap, QDesktopServices, QColor, QFont,
+    QIcon, QCloseEvent, QDesktopServices, QColor, QFont,
     QTextCharFormat, QTextCursor, QSurface,
 )
 
@@ -765,7 +765,7 @@ class MainWindow(QMainWindow):
         self._about_icon = Emblem()
         icon_path = get_icon_path()
         if icon_path:
-            self._about_icon.set_pixmap(QPixmap(icon_path))
+            self._about_icon.set_icon(icon_path)
         layout.addWidget(
             self._about_icon, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -1230,7 +1230,7 @@ class MainWindow(QMainWindow):
         if self.tray is not None:
             self.tray.setIcon(app_icon)
         if hasattr(self, "_about_icon"):
-            self._about_icon.set_pixmap(QPixmap(icon_path))
+            self._about_icon.set_icon(icon_path)
 
     def _on_model_changed(self, model: str):
         """Persist the denoising engine picked on Home."""

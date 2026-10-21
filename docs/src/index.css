@@ -1039,7 +1039,7 @@ body {
 		fill-opacity: 0;
 	}
 
-	.js [data-reveal="draw"]:not([data-revealed]) .emblem__wave {
+	.js [data-reveal="draw"]:not([data-revealed]) :is(.emblem__wave, .emblem__dash) {
 		stroke-dasharray: 1 2;
 		stroke-dashoffset: 1;
 		stroke-opacity: 0;
@@ -1049,7 +1049,7 @@ body {
 		stroke-opacity: 0;
 	}
 
-	.js [data-reveal="draw"]:not([data-revealed]) :is(.emblem__needle, .emblem__dash) {
+	.js [data-reveal="draw"]:not([data-revealed]) .emblem__needle {
 		opacity: 0;
 	}
 
@@ -1072,10 +1072,10 @@ body {
 		animation: emblem-stroke calc(1050ms * var(--reveal-pace)) var(--manim-ease) calc((var(--emblem-lead) + 380ms) * var(--reveal-pace)) backwards;
 	}
 
+	/* The axis dashes as the wave finishes, written one at a time, left
+	   to right, each finished before the next sets off. */
 	[data-revealed] .emblem__dash {
-		transform-box: fill-box;
-		transform-origin: center;
-		animation: emblem-dash calc(320ms * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-lead) + 1250ms + var(--i) * 60ms) * var(--reveal-pace)) backwards;
+		animation: emblem-dash calc(140ms * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-lead) + 1300ms + var(--i) * 150ms) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__needle {
@@ -1151,14 +1151,20 @@ body {
 	}
 }
 
+/* emblem-stroke for a short dash: the round cap's dot is hidden only
+   until the pen moves, so it writes on with no fade. */
 @keyframes emblem-dash {
 	from {
-		opacity: 0;
-		scale: 0 1;
+		stroke-dasharray: 1 2;
+		stroke-dashoffset: 1;
+		stroke-opacity: 0;
+	}
+	1% {
+		stroke-opacity: 1;
 	}
 	to {
-		opacity: 1;
-		scale: 1 1;
+		stroke-dasharray: 1 2;
+		stroke-dashoffset: 0;
 	}
 }
 

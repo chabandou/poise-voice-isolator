@@ -1,0 +1,364 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bake the emblem seal's pen</title>
+<!--
+Served by tools/bake_seal_pen.py, which receives what this page posts.
+The tracing is docs/src/colophon.ts's pen, applied to the About emblem's
+easter egg (widgets/emblem.py): تَمَّ بِحَمْدِ اللَّهِ stacked on three lines
+and written from the bottom up. Qt cannot read the site's woff2 font, so
+the browser shapes and rasterises the letters once and the app replays
+the result.
+-->
+<style>
+	@font-face { font-family: "Aref Ruqaa"; font-weight: 700; src: url("/font.woff2") format("woff2"); }
+	body { font: 15px system-ui, sans-serif; background: #0a111e; color: #e8eef6; margin: 24px; }
+</style>
+<p id="status">Tracing…</p>
+<script>
+'use strict';
+
+// Text space: 600 units square (the middle 2·300·TK units of the emblem).
+const TS = 600, RS = 1, TK = 0.29, FILL_SCALE = 2;
+const FAMILY = 'Aref Ruqaa';
+// Writing order: bottom up.
+const LINES = [
+	{ text: 'تَمَّ', cy: 468, maxW: 260, maxH: 172 },
+	{ text: 'بِحَمْدِ', cy: 304, maxW: 440, maxH: 172 },
+	{ text: 'اللَّهِ', cy: 140, maxW: 300, maxH: 172 },
+];
+const WRITE_MS = 3600;
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const canvas2d = (w = 1, h = 1) => {
+	const c = document.createElement('canvas');
+	c.width = w; c.height = h;
+	return [c, c.getContext('2d')];
+};
+
+function layoutTiers(spec) {
+	const [, c] = canvas2d();
+	c.font = `700 100px "${FAMILY}"`;
+	c.direction = 'rtl';
+	c.textAlign = 'center';
+	return spec.map((t) => {
+		const m = c.measureText(t.text);
+		const L = m.actualBoundingBoxLeft, R = m.actualBoundingBoxRight, A = m.actualBoundingBoxAscent, D = m.actualBoundingBoxDescent;
+		const k = Math.min(t.maxW / (L + R), t.maxH / (A + D));
+		return {
+			text: t.text, cy: t.cy,
+			font: `700 ${100 * k}px "${FAMILY}"`,
+			x: TS / 2 - ((R - L) / 2) * k,
+			y: t.cy + ((A - D) / 2) * k,
+			top: t.cy - ((A + D) / 2) * k,
+			bot: t.cy + ((A + D) / 2) * k,
+			left: TS / 2 - ((L + R) / 2) * k,
+			right: TS / 2 + ((L + R) / 2) * k,
+		};
+	});
+}
+
+function drawTiers(c, ls, style) {
+	c.direction = 'rtl';
+	c.textAlign = 'center';
+	c.textBaseline = 'alphabetic';
+	c.fillStyle = style;
+	for (const l of ls) {
+		c.font = l.font;
+		c.fillText(l.text, l.x, l.y);
+	}
+}
+
+// colophon.ts analyse(), line by line: centre lines (Zhang–Suen) with a
+// distance transform for the stroke width, walked right to left, each
+// letter group followed by its dots and vowel marks. Returns the pen's
+// paths and each component's own (dilated) shape, which settles in when
+// the pen leaves it.
+function analyse(ls) {
+	const W = Math.round(TS * RS), H = W, N = W * H;
+	const [, c] = canvas2d(W, H);
+	c.setTransform(RS, 0, 0, RS, 0, 0);
+	drawTiers(c, ls, '#000');
+	const alpha = c.getImageData(0, 0, W, H).data;
+	const mask = new Uint8Array(N);
+	for (let i = 0; i < N; i++) mask[i] = alpha[i * 4 + 3] > 110 ? 1 : 0;
+
+	const lab = new Int32Array(N).fill(-1);
+	const comps = [];
+	for (let i = 0; i < N; i++) {
+		if (!mask[i] || lab[i] >= 0) continue;
+		const cp = { id: comps.length, area: 0, x0: W, x1: 0, y0: H, y1: 0, px: [] };
+		const q = [i];
+		lab[i] = cp.id;
+		while (q.length) {
+			const p = q.pop();
+			const x = p % W, y = Math.floor(p / W);
+			cp.area++;
+			cp.px.push(p);
+			if (x < cp.x0) cp.x0 = x;
+			if (x > cp.x1) cp.x1 = x;
+			if (y < cp.y0) cp.y0 = y;
+			if (y > cp.y1) cp.y1 = y;
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+				const n = p + dy * W + dx;
+				if (n >= 0 && n < N && mask[n] && lab[n] < 0) { lab[n] = cp.id; q.push(n); }
+			}
+		}
+		comps.push(cp);
+	}
+
+	const dt = new Float32Array(N);
+	for (let i = 0; i < N; i++) dt[i] = mask[i] ? 1e9 : 0;
+	for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+		const i = y * W + x;
+		if (mask[i]) dt[i] = Math.min(dt[i], dt[i - 1] + 1, dt[i - W] + 1, dt[i - W - 1] + 1.4142, dt[i - W + 1] + 1.4142);
+	}
+	for (let y = H - 2; y > 0; y--) for (let x = W - 2; x > 0; x--) {
+		const i = y * W + x;
+		if (mask[i]) dt[i] = Math.min(dt[i], dt[i + 1] + 1, dt[i + W] + 1, dt[i + W + 1] + 1.4142, dt[i + W - 1] + 1.4142);
+	}
+
+	const sk = mask.slice();
+	const del = [];
+	for (let changed = true; changed;) {
+		changed = false;
+		for (let pass = 0; pass < 2; pass++) {
+			del.length = 0;
+			for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+				const i = y * W + x;
+				if (!sk[i]) continue;
+				const p2 = sk[i - W], p3 = sk[i - W + 1], p4 = sk[i + 1], p5 = sk[i + W + 1];
+				const p6 = sk[i + W], p7 = sk[i + W - 1], p8 = sk[i - 1], p9 = sk[i - W - 1];
+				const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+				if (B < 2 || B > 6) continue;
+				const ring = [p2, p3, p4, p5, p6, p7, p8, p9, p2];
+				let A = 0;
+				for (let k = 0; k < 8; k++) if (!ring[k] && ring[k + 1]) A++;
+				if (A !== 1) continue;
+				if (pass === 0 ? (p2 && p4 && p6) || (p4 && p6 && p8) : (p2 && p4 && p8) || (p2 && p6 && p8)) continue;
+				del.push(i);
+			}
+			for (const i of del) sk[i] = 0;
+			if (del.length) changed = true;
+		}
+	}
+
+	const NB = [-W - 1, -W, -W + 1, -1, 1, W - 1, W, W + 1];
+	const nbrs = (i, keep) => NB.map((o) => i + o).filter((n) => sk[n] && keep(n));
+
+	for (let round = 0; round < 2; round++) for (let i = 0; i < N; i++) {
+		if (!sk[i] || nbrs(i, () => true).length !== 1) continue;
+		const path = [i];
+		let prev = -1, cur = i;
+		for (;;) {
+			const next = nbrs(cur, (n) => n !== prev && !path.includes(n));
+			if (next.length !== 1) break;
+			if (nbrs(next[0], () => true).length >= 3) {
+				if (path.length < Math.max(4, dt[next[0]] * 0.9)) path.forEach((p) => (sk[p] = 0));
+				break;
+			}
+			prev = cur;
+			cur = next[0];
+			path.push(cur);
+			if (path.length > 40) break;
+		}
+	}
+
+	const seen = new Uint8Array(N);
+	const toPt = (i) => ({ x: (i % W) / RS, y: Math.floor(i / W) / RS, r: (dt[i] / RS) * 1.28 + 0.9, s: 0, vf: 1, t: 0 });
+	const angle = (a, b) => Math.atan2(Math.floor(b / W) - Math.floor(a / W), (b % W) - (a % W));
+
+	const walk = (from, cid) => {
+		const line = [from];
+		const forks = [];
+		seen[from] = 1;
+		let cur = from;
+		let dir = null;
+		for (;;) {
+			const cand = nbrs(cur, (n) => !seen[n] && lab[n] === cid);
+			if (!cand.length) break;
+			if (cand.length > 1) forks.push(cur);
+			let best = cand[0];
+			if (dir !== null) {
+				let bd = 9;
+				for (const n of cand) {
+					const d = Math.abs(Math.atan2(Math.sin(angle(cur, n) - dir), Math.cos(angle(cur, n) - dir)));
+					if (d < bd) { bd = d; best = n; }
+				}
+			}
+			const nd = angle(cur, best);
+			dir = dir === null ? nd : Math.atan2(Math.sin(dir) * 0.6 + Math.sin(nd) * 0.4, Math.cos(dir) * 0.6 + Math.cos(nd) * 0.4);
+			seen[best] = 1;
+			line.push(best);
+			for (const n of cand) if (n !== best && (Math.abs(n - best) === 1 || Math.abs(n - best) === W)) seen[n] = 1;
+			cur = best;
+		}
+		return { line, forks };
+	};
+
+	const tierOf = (cp) => {
+		const cy = (cp.y0 + cp.y1) / 2 / RS;
+		let best = 0, bd = Infinity;
+		ls.forEach((l, ti) => {
+			const out = cy < l.top ? l.top - cy : cy > l.bot ? cy - l.bot : 0;
+			const d = out * 1000 + Math.abs(cy - l.cy);
+			if (d < bd) { bd = d; best = ti; }
+		});
+		return best;
+	};
+	for (const cp of comps) cp.tier = tierOf(cp);
+	const tierMax = ls.map((_, ti) => Math.max(1, ...comps.filter((cp) => cp.tier === ti).map((cp) => cp.area)));
+	const isMark = (cp) => cp.area < tierMax[cp.tier] * 0.16 && cp.y1 - cp.y0 < (ls[cp.tier].bot - ls[cp.tier].top) * RS * 0.3;
+
+	const traced = comps.map((cp) => {
+		const skel = cp.px.filter((i) => sk[i]);
+		const paths = [];
+		if (!skel.length) {
+			let best = cp.px[0];
+			for (const i of cp.px) if (dt[i] > dt[best]) best = i;
+			paths.push([toPt(best)]);
+		} else {
+			const ends = skel.filter((i) => nbrs(i, (n) => lab[n] === cp.id).length === 1);
+			const rightmost = (arr) => arr.reduce((b, i) => ((i % W) > (b % W) ? i : b));
+			const stack = [rightmost(ends.length ? ends : skel)];
+			let first = true;
+			while (stack.length || skel.some((i) => !seen[i])) {
+				const from = stack.length ? stack.pop() : rightmost(skel.filter((i) => !seen[i]));
+				if (!first && seen[from] && !nbrs(from, (n) => !seen[n] && lab[n] === cp.id).length) continue;
+				first = false;
+				const { line, forks } = walk(from, cp.id);
+				if (line.length > 10 || paths.length === 0) paths.push(line.map(toPt));
+				stack.push(...forks);
+			}
+		}
+		return { part: cp.id, paths, tier: cp.tier, small: isMark(cp), x0: cp.x0, x1: cp.x1, cx: (cp.x0 + cp.x1) / 2 };
+	});
+
+	const order = [];
+	ls.forEach((_, ti) => {
+		const mine = traced.filter((t) => t.tier === ti);
+		const mains = mine.filter((t) => !t.small).sort((a, b) => b.x1 - a.x1);
+		if (!mains.length) { order.push(...mine.sort((a, b) => b.cx - a.cx)); return; }
+		const extras = new Map(mains.map((m) => [m, []]));
+		for (const s of mine.filter((t) => t.small)) {
+			let host = mains[0], bd = Infinity;
+			for (const m of mains) {
+				const d = s.cx >= m.x0 && s.cx <= m.x1 ? Math.abs(s.cx - m.cx) * 0.2 : Math.min(Math.abs(s.cx - m.x0), Math.abs(s.cx - m.x1)) + 50;
+				if (d < bd) { bd = d; host = m; }
+			}
+			extras.get(host).push(s);
+		}
+		order.push(...mains.flatMap((m) => [m, ...extras.get(m).sort((a, b) => b.cx - a.cx)]));
+	});
+
+	const items = [];
+	for (const t of order) t.paths.forEach((p, pi) => {
+		let s = 0;
+		p.forEach((q, k) => { if (k) s += Math.hypot(q.x - p[k - 1].x, q.y - p[k - 1].y); q.s = s; });
+		p.forEach((q, k) => {
+			const a = p[Math.max(0, k - 5)], b = p[Math.min(p.length - 1, k + 5)];
+			const c0 = p[Math.max(0, k - 10)], c1 = p[Math.min(p.length - 1, k + 10)];
+			let d = Math.atan2(c1.y - b.y, c1.x - b.x) - Math.atan2(a.y - c0.y, a.x - c0.x);
+			d = Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
+			q.vf = clamp(1 / (1 + d * 1.6), 0.35, 1) * (0.45 + 0.55 * clamp(q.s / 14, 0, 1));
+		});
+		items.push({ part: t.part, pts: p, newPart: pi === 0, last: pi === t.paths.length - 1 });
+	});
+
+	// Each component's shape, dilated by a pixel, packed into one atlas.
+	const parts = comps.map((cp) => {
+		const bx0 = Math.max(0, cp.x0 - 1), by0 = Math.max(0, cp.y0 - 1);
+		const bw = Math.min(W - 1, cp.x1 + 1) - bx0 + 1, bh = Math.min(H - 1, cp.y1 + 1) - by0 + 1;
+		return { cp, ox: bx0, oy: by0, w: bw, h: bh };
+	});
+	const AW = W;
+	let sx = 0, sy = 0, rowH = 0;
+	for (const p of [...parts].sort((a, b) => b.h - a.h)) {
+		if (sx + p.w > AW) { sx = 0; sy += rowH + 1; rowH = 0; }
+		p.x = sx; p.y = sy;
+		sx += p.w + 1;
+		rowH = Math.max(rowH, p.h);
+	}
+	const AH = sy + rowH;
+	const [atlas, ac] = canvas2d(AW, AH);
+	const img = ac.createImageData(AW, AH);
+	for (const p of parts) for (const i of p.cp.px) for (const o of [0, ...NB]) {
+		const j = i + o;
+		const x = (j % W) - p.ox, y = Math.floor(j / W) - p.oy;
+		if (x < 0 || x >= p.w || y < 0 || y >= p.h) continue;
+		const k = ((p.y + y) * AW + p.x + x) * 4;
+		img.data[k] = img.data[k + 1] = img.data[k + 2] = 255;
+		img.data[k + 3] = 255;
+	}
+	ac.putImageData(img, 0, 0);
+
+	return { items, parts: parts.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h, ox: p.ox / RS, oy: p.oy / RS })), atlas };
+}
+
+// colophon.ts's pace, fitted to WRITE_MS: each point gets the time the
+// pen reaches it, so the app can draw any frame from the clock alone.
+function timePen(items, target) {
+	let cost = 0, pauses = 0;
+	items.forEach((it, i) => {
+		if (i) pauses += it.newPart ? 130 : 50;
+		for (let k = 1; k < it.pts.length; k++) cost += (it.pts[k].s - it.pts[k - 1].s) / it.pts[k - 1].vf;
+	});
+	const speed = clamp(cost / ((target - pauses) / 1000), 200, 2000);
+	let t = 0;
+	items.forEach((it, i) => {
+		if (i) t += it.newPart ? 130 : 50;
+		it.t0 = t;
+		it.pts[0].t = t;
+		for (let k = 1; k < it.pts.length; k++) {
+			t += ((it.pts[k].s - it.pts[k - 1].s) / it.pts[k - 1].vf / speed) * 1000;
+			it.pts[k].t = t;
+		}
+		it.t1 = t;
+	});
+	return t;
+}
+
+const r1 = (v) => Math.round(v * 10) / 10;
+const r2 = (v) => Math.round(v * 100) / 100;
+
+async function bake() {
+	await document.fonts.load(`700 100px "${FAMILY}"`, LINES.map((l) => l.text).join(' '));
+	if (!document.fonts.check(`700 100px "${FAMILY}"`, LINES[0].text)) throw new Error('Aref Ruqaa did not load');
+	const lays = layoutTiers(LINES);
+	const { items, parts, atlas } = analyse(lays);
+	const total = timePen(items, WRITE_MS);
+
+	const [text, tc] = canvas2d(TS * FILL_SCALE, TS * FILL_SCALE);
+	tc.setTransform(FILL_SCALE, 0, 0, FILL_SCALE, 0, 0);
+	drawTiers(tc, lays, '#fff');
+
+	const pen = {
+		about: 'Baked by tools/bake_seal_pen.py from tools/seal_pen.html; read by gui/widgets/emblem.py.',
+		textSpace: TS,
+		textScale: TK,
+		fillScale: FILL_SCALE,
+		lines: LINES.map((l) => l.text),
+		duration: r1(total),
+		bounds: {
+			left: r1(Math.min(...lays.map((l) => l.left))),
+			right: r1(Math.max(...lays.map((l) => l.right))),
+			top: r1(Math.min(...lays.map((l) => l.top))),
+			bottom: r1(Math.max(...lays.map((l) => l.bot))),
+		},
+		parts,
+		items: items.map((it) => ({
+			part: it.part, newPart: it.newPart, last: it.last, t0: r1(it.t0), t1: r1(it.t1),
+			pts: it.pts.map((q) => [r1(q.x), r1(q.y), r2(q.r), r1(q.t)]),
+		})),
+	};
+	const res = await fetch('/result', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ pen, text: text.toDataURL('image/png'), parts: atlas.toDataURL('image/png') }),
+	});
+	if (!res.ok) throw new Error(await res.text());
+	document.getElementById('status').textContent =
+		`Baked ${items.length} strokes, ${pen.items.reduce((n, it) => n + it.pts.length, 0)} pen points and ${parts.length} parts over ${(total / 1000).toFixed(2)} s. You can close this tab.`;
+}
+
+bake().catch((e) => { document.getElementById('status').textContent = `Failed: ${e.message}`; console.error(e); });
+</script>
