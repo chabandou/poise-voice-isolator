@@ -29,6 +29,9 @@ from ...logging_config import get_logger
 
 _logger = get_logger(__name__)
 
+# The GUI has no console, so each PowerShell call would flash one up.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 # MMCSS task the audio loop thread joins (as pro audio apps do).
 MMCSS_TASK = "Pro Audio"
 
@@ -103,7 +106,8 @@ class VBCableSwitcher:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
@@ -120,7 +124,8 @@ class VBCableSwitcher:
                 ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
-                timeout=POWERSHELL_CHECK_TIMEOUT_SEC
+                timeout=POWERSHELL_CHECK_TIMEOUT_SEC,
+                creationflags=_NO_WINDOW,
             )
             return True
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -183,7 +188,8 @@ class VBCableSwitcher:
                     capture_output=True,
                     text=True,
                     timeout=POWERSHELL_PROVIDER_INSTALL_TIMEOUT_SEC,
-                    stdin=subprocess.DEVNULL
+                    stdin=subprocess.DEVNULL,
+                    creationflags=_NO_WINDOW,
                 )
             except subprocess.TimeoutExpired:
                 _logger.warning("Package provider bootstrap timed out, continuing anyway")
@@ -198,7 +204,8 @@ class VBCableSwitcher:
                 capture_output=True,
                 text=True,
                 timeout=POWERSHELL_MODULE_INSTALL_TIMEOUT_SEC,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW,
             )
             if result.returncode != 0:
                 _logger.warning(f"Could not install AudioDeviceCmdlets: {result.stderr}")
@@ -292,7 +299,8 @@ class VBCableSwitcher:
                 capture_output=True,
                 text=True,
                 timeout=POWERSHELL_DEFAULT_TIMEOUT_SEC,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW,
             )
             
             if result.returncode == 0:
