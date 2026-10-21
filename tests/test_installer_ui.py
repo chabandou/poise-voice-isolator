@@ -133,6 +133,52 @@ def test_start_install_builds_the_plan_and_shows_progress(app, tmp_path):
         w.deleteLater()
 
 
+def _running(monkeypatch, pids):
+    """A Poise with `pids[0]` running from the target until pids empties."""
+    monkeypatch.setattr(window.core, "running_poise", lambda target: list(pids))
+
+
+def test_a_running_poise_is_asked_to_quit_first(app, tmp_path, monkeypatch):
+    fake = FakeInstaller()
+    pids = [4242]
+    _running(monkeypatch, pids)
+    asked = []
+    monkeypatch.setattr(window.engine, "ask_poise_to_quit",
+                        lambda: asked.append(1) or True)
+    w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))
+    try:
+        w.start_install()
+        assert asked == [1]
+        assert fake.plan is None            # not over a running Poise
+        assert w.progress.detail.text() == "Closing Poise..."
+        QTest.qWait(400)
+        assert fake.plan is None
+        pids.clear()                        # it quit
+        QTest.qWait(400)
+        assert fake.plan is not None
+    finally:
+        w.deleteLater()
+
+
+def test_a_poise_that_will_not_quit_is_left_to_the_user(
+        app, tmp_path, monkeypatch):
+    fake = FakeInstaller()
+    _running(monkeypatch, [4242])
+    # Older Poise: no channel to ask through.
+    monkeypatch.setattr(window.engine, "ask_poise_to_quit", lambda: False)
+    w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))
+    try:
+        w.start_install()
+        QTest.qWait(400)
+        assert fake.plan is None
+        assert w.stack.currentWidget() is w.welcome
+        assert "tray icon" in w.welcome.note.text()
+        assert w.welcome.install_button.isEnabled()
+        assert w.close_button.isEnabled()
+    finally:
+        w.deleteLater()
+
+
 def test_success_lands_on_the_finish_page(app, tmp_path):
     fake = FakeInstaller()
     w = window.SetupWindow(fake, target_dir=str(tmp_path / "Poise"))

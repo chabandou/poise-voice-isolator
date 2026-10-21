@@ -176,6 +176,27 @@ class MockInstaller(QObject):
             QTimer.singleShot(delay, action)
 
 
+#: Poise's single-instance channel (stream_denoiser/gui/__init__.py).
+POISE_SERVER = "poise.voiceisolator.singleinstance"
+
+
+def ask_poise_to_quit() -> bool:
+    """Ask a running Poise to quit the way its tray menu does (stopping
+    isolation puts the default playback device back). True if the
+    request was delivered; Poise before 1.5.1 ignores it."""
+    from PyQt6.QtCore import QByteArray
+    from PyQt6.QtNetwork import QLocalSocket
+    socket = QLocalSocket()
+    socket.connectToServer(POISE_SERVER)
+    if not socket.waitForConnected(1000):
+        return False
+    socket.write(QByteArray(b"quit"))
+    socket.flush()
+    sent = socket.waitForBytesWritten(1000)
+    socket.disconnectFromServer()
+    return sent
+
+
 def launch_app(target_dir: str) -> bool:
     """Start the installed Poise, detached from this process."""
     exe = os.path.join(target_dir, core.APP_EXE)

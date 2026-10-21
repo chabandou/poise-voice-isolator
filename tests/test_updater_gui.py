@@ -402,3 +402,33 @@ def test_download_dir_is_cleared_on_start(app, settings, monkeypatch,
     monkeypatch.setattr(upd, "DOWNLOAD_DIR", str(folder))
     upd.UpdateController(settings)
     assert not os.path.exists(folder)
+
+
+def test_setup_can_ask_poise_to_quit(app):
+    """Poise Setup sends "quit" before installing over a running copy."""
+    from stream_denoiser import gui
+
+    class Socket:
+        def __init__(self, data):
+            self.data = data
+
+        def readAll(self):
+            return self.data
+
+        def disconnectFromServer(self):
+            pass
+
+    class Window:
+        def __init__(self):
+            self.calls = []
+
+        def bring_to_front(self):
+            self.calls.append("front")
+
+        def _quit_app(self):
+            self.calls.append("quit")
+
+    win = Window()
+    gui._handle_client_message(Socket(b"activate"), win)
+    gui._handle_client_message(Socket(b"quit"), win)
+    assert _pump(app, lambda: win.calls == ["front", "quit"])
