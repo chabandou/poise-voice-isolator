@@ -173,10 +173,10 @@ const Dial = ({ live, strengthDb, onToggle, onStrengthChange, breath = false, cl
 					);
 				})}
 
-				<circle className="fill-pill stroke-groove" cx="150" cy="150" r={DISC_R} strokeWidth="2" />
+				<circle className="dial__disc" cx="150" cy="150" r={DISC_R} strokeWidth="2" />
 
 				<g className={live ? 'stroke-accent' : 'stroke-secondary'} fill="none" strokeLinecap="round" strokeWidth="5.5" style={{ transition: 'stroke 260ms ease' }}>
-					<line x1="150" x2="150" y1="111.75" y2="131.75" />
+					<line className="dial__stem" x1="150" x2="150" y1="111.75" y2="131.75" />
 					<path d="M137.144 122.429 A20 20 0 1 0 162.856 122.429" />
 				</g>
 
@@ -196,6 +196,10 @@ const Dial = ({ live, strengthDb, onToggle, onStrengthChange, breath = false, cl
 				<text className="fill-muted font-body" fontSize="12" textAnchor="middle" x="248" y="278">
 					strong
 				</text>
+
+				{/* Where a press toggles (as in handlePointerUp): hovering it warms
+				    the disc's rim and lifts the power stem, as in the app. */}
+				<circle className="dial__hit" cx="150" cy="150" fill="transparent" r={DISC_R + 12} />
 			</svg>
 		</div>
 	);

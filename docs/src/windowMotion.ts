@@ -1,13 +1,12 @@
 import { useEffect, useRef } from 'react';
 
 // The app preview's response to the pointer: the window leans a little
-// toward it (a few degrees at most, eased rather than snapping), a soft
-// sheen follows it across the glass and the shadow shifts the other way.
+// toward it (a few degrees at most, eased rather than snapping) and the
+// shadow shifts the other way.
 // It holds still while a button is down (dragging the dial's ring must not
 // move the ring under the pointer) and for a beat after, and it is off for
 // touch and under reduced motion. The values go to CSS variables on the
-// tilting element (index.css .app-tilt): --rx / --ry in degrees, --mx /
-// --my the pointer in % of the window, --sheen 0..1.
+// tilting element (index.css .app-tilt): --rx / --ry in degrees.
 
 const MAX_RY = 2.6; // degrees, left-right
 const MAX_RX = 2; // degrees, up-down
@@ -25,7 +24,7 @@ export const useWindowMotion = <T extends HTMLElement>() => {
 		const fine = window.matchMedia('(hover: hover) and (pointer: fine)');
 		const still = window.matchMedia('(prefers-reduced-motion: reduce)');
 
-		const now = { rx: 0, ry: 0, mx: 50, my: 50, sheen: 0 };
+		const now = { rx: 0, ry: 0 };
 		const goal = { ...now };
 		let pressed = false;
 		let heldUntil = 0;
@@ -36,9 +35,6 @@ export const useWindowMotion = <T extends HTMLElement>() => {
 			const style = element.style;
 			style.setProperty('--rx', now.rx.toFixed(3));
 			style.setProperty('--ry', now.ry.toFixed(3));
-			style.setProperty('--mx', `${now.mx.toFixed(1)}%`);
-			style.setProperty('--my', `${now.my.toFixed(1)}%`);
-			style.setProperty('--sheen', now.sheen.toFixed(3));
 		};
 
 		const tick = (time: number) => {
@@ -46,9 +42,9 @@ export const useWindowMotion = <T extends HTMLElement>() => {
 			last = time;
 			const f = 1 - Math.pow(1 - EASE, dt / 16.7);
 			let moving = false;
-			for (const key of ['rx', 'ry', 'mx', 'my', 'sheen'] as const) {
+			for (const key of ['rx', 'ry'] as const) {
 				const delta = goal[key] - now[key];
-				if (Math.abs(delta) > (key === 'mx' || key === 'my' ? 0.05 : 0.001)) {
+				if (Math.abs(delta) > 0.001) {
 					now[key] += delta * f;
 					moving = true;
 				} else {
@@ -79,16 +75,12 @@ export const useWindowMotion = <T extends HTMLElement>() => {
 			const ny = Math.max(-1, Math.min(1, ((event.clientY - rect.top) / rect.height) * 2 - 1));
 			goal.ry = nx * MAX_RY;
 			goal.rx = -ny * MAX_RX;
-			goal.mx = 50 + nx * 50;
-			goal.my = 50 + ny * 50;
-			goal.sheen = 1;
 			run();
 		};
 
 		const onLeave = () => {
 			pressed = false;
 			goal.rx = goal.ry = 0;
-			goal.sheen = 0;
 			run();
 		};
 

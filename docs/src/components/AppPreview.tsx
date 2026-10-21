@@ -192,9 +192,6 @@ const AppWindow = () => {
 							)}
 							<span className="ml-auto hidden text-muted sm:inline">source <span className="text-ink">vb-cable</span></span>
 						</div>
-
-						{/* The sheen that follows the pointer across the glass. */}
-						<div aria-hidden="true" className="app-sheen" />
 					</div>
 				</div>
 			</div>

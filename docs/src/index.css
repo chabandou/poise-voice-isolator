@@ -403,6 +403,36 @@ body {
 	transform: scale(0.97);
 }
 
+/* Over the disc (widgets/dial.py, the disc's "hot" blend): the rim warms
+   to the secondary at rest or the accent while isolating, the face
+   lightens a touch and the power stem lifts. The app eases it over
+   220 ms; a little longer and softer here. */
+.dial__disc {
+	/* Its colours here, not as utilities, which would outrank the hover. */
+	fill: var(--color-pill);
+	stroke: var(--color-groove);
+	transition:
+		stroke 360ms var(--reveal-ease),
+		fill 360ms var(--reveal-ease);
+}
+
+.dial__stem {
+	transition: translate 420ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.dial:has(.dial__hit:hover) .dial__disc {
+	stroke: color-mix(in srgb, var(--color-secondary) 45%, transparent);
+	fill: color-mix(in oklab, var(--color-pill), white 3%);
+}
+
+.dial--live:has(.dial__hit:hover) .dial__disc {
+	stroke: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.dial:has(.dial__hit:hover) .dial__stem {
+	translate: 0 -1.5px;
+}
+
 .dial__tick {
 	transition: stroke 260ms ease, stroke-width 160ms ease;
 }
@@ -853,8 +883,8 @@ body {
 
 /* ---------------------------------------------------------------------
    App preview window motion (see src/windowMotion.ts): a slow idle
-   float on the breathing cycle, a slight lean toward the pointer with a
-   sheen on the glass and a shadow shifting the other way, and while
+   float on the breathing cycle, a slight lean toward the pointer with
+   the shadow shifting the other way, and while
    isolating a glow behind the window that swells with each pulse.
    --------------------------------------------------------------------- */
 .app-stage {
@@ -880,9 +910,6 @@ body {
 .app-tilt {
 	--rx: 0;
 	--ry: 0;
-	--mx: 50%;
-	--my: 50%;
-	--sheen: 0;
 	position: relative;
 	transform: perspective(1400px) rotateX(calc(var(--rx) * 1deg)) rotateY(calc(var(--ry) * 1deg));
 }
@@ -906,20 +933,6 @@ body {
 	translate: calc(var(--ry) * -5px) calc(40px + var(--rx) * 5px);
 	will-change: translate;
 	pointer-events: none;
-}
-
-.app-sheen {
-	position: absolute;
-	inset: 0;
-	pointer-events: none;
-	border-radius: inherit;
-	opacity: var(--sheen);
-	background: radial-gradient(
-		circle 260px at var(--mx) var(--my),
-		color-mix(in srgb, var(--color-accent-light) 12%, transparent),
-		transparent 70%
-	);
-	mix-blend-mode: screen;
 }
 
 .app-glow {
