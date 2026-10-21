@@ -113,7 +113,7 @@ DISC_HIT = 100.0
 
 # -- motion (ms unless noted) ---------------------------------------------------
 SWEEP_DELAY_MS = 300      # first show: the ring sweeps on from the gentle end
-SWEEP_MS = 900
+SWEEP_MS = 1150
 SWEEP_FADE_DEG = 10.0     # ...a tick fades in as the edge crosses this
 SWEEP_CREST_DEG = 40.0    # ...and its crest fades over this, behind it
 SWEEP_HOLD_MS = 3000      # ...held for the window's entrance at most this
