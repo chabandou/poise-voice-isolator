@@ -1,0 +1,56 @@
+name: scratch audio probe
+
+on:
+  push:
+    branches: [ci/windows-hardware-ci]
+    paths: ['.github/workflows/scratch-audio.yml']
+
+jobs:
+  audio:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Second render endpoint (Scream)
+        uses: LABSN/sound-ci-helpers@v1
+      - name: Audio service
+        shell: pwsh
+        run: |
+          Get-Service Audiosrv, AudioEndpointBuilder | Format-Table Name, Status, StartType
+          Set-Service Audiosrv -StartupType Automatic
+          Start-Service Audiosrv
+          Get-Service Audiosrv | Format-Table Name, Status
+      - name: Stage VB-Cable
+        run: python installer/fetch_vbcable.py
+      - name: Trust VB-Audio's publisher certificate
+        shell: pwsh
+        run: |
+          Get-ChildItem installer/windows/vbcable | Format-Table Name, Length
+          foreach ($cat in Get-ChildItem installer/windows/vbcable -Filter *.cat) {
+            $sig = Get-AuthenticodeSignature $cat.FullName
+            "$($cat.Name): $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          $sig = Get-AuthenticodeSignature (Get-ChildItem installer/windows/vbcable -Filter *64*.cat | Select-Object -First 1).FullName
+          $cert = $sig.SignerCertificate
+          $path = "$env:RUNNER_TEMP\vbaudio.cer"
+          [IO.File]::WriteAllBytes($path, $cert.Export('Cert'))
+          Import-Certificate -FilePath $path -CertStoreLocation Cert:\LocalMachine\TrustedPublisher
+      - name: Install VB-Cable
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $p = Start-Process installer/windows/vbcable/VBCABLE_Setup_x64.exe -ArgumentList '-i','-h' -Wait -PassThru -WorkingDirectory installer/windows/vbcable
+          "exit code: $($p.ExitCode)"
+          Start-Sleep 5
+          Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
+          Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
+      - name: Install deps
+        run: pip install -r requirements.txt pytest
+      - name: List devices
+        run: python -c "import sounddevice as sd; print(sd.query_devices()); print(sd.query_hostapis())"
+      - name: Hardware tests
+        env:
+          POISE_VOLUME_TESTS: '1'
+        run: python -m pytest tests/test_wasapi_integration.py tests/test_volume_mirror.py tests/test_vbcable_install.py -v -rs
