@@ -47,11 +47,8 @@ jobs:
           Start-Sleep 5
           Get-PnpDevice -Class MEDIA | Format-Table Status, FriendlyName, InstanceId -AutoSize
           Get-PnpDevice -Class AudioEndpoint | Format-Table Status, FriendlyName -AutoSize
-      - name: Name the cable as on a real box
-        run: |
-          ./tools/win_endpoints.ps1 -List
-          ./tools/win_endpoints.ps1 -Rename "Speakers (VB-Audio Virtual Cable)=CABLE Input"
-          ./tools/win_endpoints.ps1 -List
+      - name: Endpoints after setup
+        run: ./tools/win_endpoints.ps1 -List
       - name: Second VB-Cable instance as the output device
         timeout-minutes: 5
         run: |

@@ -170,3 +170,42 @@ jobs:
         run: |
           python3 tools/check_dll_exports.py \
             "$RUNNER_TEMP/poise_wasapi.dll" stream_denoiser/native/poise_wasapi.dll
+      - name: Upload the fresh build
+        uses: actions/upload-artifact@v4
+        with:
+          name: poise_wasapi-mingw
+          path: ${{ runner.temp }}/poise_wasapi.dll
+          if-no-files-found: error
+
+  native-dll-bridge:
+    # The bridge tests on the DLL native-dll just built, in place of the
+    # committed one (the windows job tests that): the sources pass their
+    # own tests, not only export the same names.
+    needs: native-dll
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: poise_wasapi-mingw
+          path: ${{ runner.temp }}/fresh
+      - name: Swap in the fresh build
+        shell: pwsh
+        run: |
+          Copy-Item "$env:RUNNER_TEMP/fresh/poise_wasapi.dll" stream_denoiser/native/poise_wasapi.dll -Force
+          git diff --stat
+      - name: Install test deps
+        shell: bash
+        run: |
+          grep -v -i pyqt6 requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
+          pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest
+      - name: Bridge tests on the fresh build
+        # -rs and a failure on any skip: a DLL that does not load skips
+        # the whole module.
+        shell: bash
+        run: |
+          python -m pytest tests/test_wasapi_bridge.py -v -rs | tee "$RUNNER_TEMP/bridge.log"
+          ! grep -q SKIPPED "$RUNNER_TEMP/bridge.log"
