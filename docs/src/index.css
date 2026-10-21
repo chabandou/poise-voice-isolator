@@ -1014,9 +1014,11 @@ body {
    setting off --emblem-tick-step after it, by when the ease-out has
    carried it most of the way home, so the sweep reads one tick at a time
    and each fall still shows. The needle lands as the last tick settles,
-   and the caption follows once it has. */
+   and the caption follows once it has. Everything waits --emblem-lead
+   after it comes into view, so the drawing starts once it is looked at. */
 :root {
-	--emblem-ticks-from: 1200ms;
+	--emblem-lead: 450ms;
+	--emblem-ticks-from: calc(var(--emblem-lead) + 1200ms);
 	--emblem-tick-step: 25ms;
 	--emblem-tick-ms: 75ms;
 	--emblem-ticks-end: calc(var(--emblem-ticks-from) + 70 * var(--emblem-tick-step) + var(--emblem-tick-ms));
@@ -1055,9 +1057,9 @@ body {
 	   drawn: in the groove colour alone the trace barely showed. */
 	[data-revealed] .emblem__face {
 		animation:
-			emblem-stroke calc(900ms * var(--reveal-pace)) var(--manim-ease) backwards,
-			emblem-fill calc(1000ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards,
-			emblem-face-light calc(2000ms * var(--reveal-pace)) var(--manim-ease) backwards;
+			emblem-stroke calc(900ms * var(--reveal-pace)) var(--manim-ease) calc(var(--emblem-lead) * var(--reveal-pace)) backwards,
+			emblem-fill calc(1000ms * var(--reveal-pace)) var(--manim-ease) calc((var(--emblem-lead) + 380ms) * var(--reveal-pace)) backwards,
+			emblem-face-light calc(2000ms * var(--reveal-pace)) var(--manim-ease) calc(var(--emblem-lead) * var(--reveal-pace)) backwards;
 	}
 
 	/* A sweep once the wave is all but written, tick by tick (ticks are
@@ -1067,13 +1069,13 @@ body {
 	}
 
 	[data-revealed] .emblem__wave {
-		animation: emblem-stroke calc(1050ms * var(--reveal-pace)) var(--manim-ease) calc(380ms * var(--reveal-pace)) backwards;
+		animation: emblem-stroke calc(1050ms * var(--reveal-pace)) var(--manim-ease) calc((var(--emblem-lead) + 380ms) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__dash {
 		transform-box: fill-box;
 		transform-origin: center;
-		animation: emblem-dash calc(320ms * var(--reveal-pace)) var(--reveal-ease) calc((1250ms + var(--i) * 60ms) * var(--reveal-pace)) backwards;
+		animation: emblem-dash calc(320ms * var(--reveal-pace)) var(--reveal-ease) calc((var(--emblem-lead) + 1250ms + var(--i) * 60ms) * var(--reveal-pace)) backwards;
 	}
 
 	[data-revealed] .emblem__needle {
