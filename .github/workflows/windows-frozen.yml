@@ -1,0 +1,121 @@
+name: Windows frozen build
+
+# The PyInstaller build and the installer, checked whenever what goes
+# into them changes (build-windows.yml only builds them on tags):
+#   probe      the app's spec with tools/frozen_probe.py as its entry runs
+#              an AudioWorker session frozen, on VB-Cable, under both
+#              Windows backends;
+#   installer  Poise.exe in the silent Inno core: install, in-app update
+#              against a stand-in release, uninstall.
+
+on:
+  push:
+    branches: [master]
+    paths: &paths
+      - 'stream_denoiser/**'
+      - 'run_poise_gui.py'
+      - 'poise_windows.spec'
+      - 'setup.iss'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - 'installer/**'
+      - 'tools/frozen_probe.py'
+      - 'tools/make_probe_spec.py'
+      - 'tools/installer_smoke.py'
+      - 'tools/qt_trim.py'
+      - 'tools/win_version.py'
+      - 'tools/win_endpoints.ps1'
+      - '.github/actions/windows-audio/**'
+      - '.github/workflows/windows-frozen.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audio devices
+        uses: ./.github/actions/windows-audio
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build the probe with the app's spec
+        run: |
+          python tools/make_probe_spec.py build/probe/PoiseProbe.spec
+          pyinstaller build/probe/PoiseProbe.spec --noconfirm --distpath build/probe/dist --workpath build/probe/work
+      - name: Run it (native path, then PortAudio)
+        run: |
+          $dir = "build/probe/dist/PoiseProbe"
+          $failed = @()
+          foreach ($backend in 'wasapi', 'portaudio') {
+            "== POISE_BACKEND=$backend"
+            Remove-Item "$dir/probe.json", "$dir/probe.log" -ErrorAction SilentlyContinue
+            $env:POISE_BACKEND = $backend
+            $p = Start-Process "$dir/PoiseProbe.exe" -Wait -PassThru
+            Get-Content "$dir/probe.json" -ErrorAction SilentlyContinue
+            "-- probe.log"
+            Get-Content "$dir/probe.log" -Tail 40 -ErrorAction SilentlyContinue
+            if ($p.ExitCode -ne 0) { $failed += $backend }
+          }
+          if ($failed) { throw "probe failed under: $($failed -join ', ')" }
+
+  installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audio service
+        # No VB-Cable here: setup.iss installs it, as on a clean machine.
+        run: |
+          Set-Service Audiosrv -StartupType Automatic
+          Start-Service Audiosrv
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pyinstaller
+          choco install innosetup -y --no-progress
+      - name: Stage VB-Cable
+        run: python installer/fetch_vbcable.py
+      - name: Build Poise.exe
+        run: pyinstaller poise_windows.spec --noconfirm
+      - name: Compile the core, and one for a next version
+        id: cores
+        # The next version is the same build with its version file
+        # bumped: that is what the app and the updater read.
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          $parts = $version.Split('.')
+          $next = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc /Q /DCORE "/DMyAppVersion=$version" setup.iss
+          if ($LASTEXITCODE) { throw "ISCC failed" }
+          Move-Item installer/PoiseCore.exe "$env:RUNNER_TEMP/PoiseCore-$version.exe"
+          $toml = "dist/Poise/_internal/pyproject.toml"
+          $text = Get-Content $toml -Raw
+          if ($text -notmatch "(?m)^version = `"$([regex]::Escape($version))`"") { throw "no version line in $toml" }
+          Set-Content $toml ($text -replace "(?m)^version = `".*`"", "version = `"$next`"") -NoNewline
+          & $iscc /Q /DCORE "/DMyAppVersion=$next" setup.iss
+          if ($LASTEXITCODE) { throw "ISCC failed" }
+          Move-Item installer/PoiseCore.exe "$env:RUNNER_TEMP/PoiseCore-$next.exe"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "next=$next" >> $env:GITHUB_OUTPUT
+      - name: Install, update, uninstall
+        timeout-minutes: 20
+        run: >-
+          python tools/installer_smoke.py
+          --core "$env:RUNNER_TEMP/PoiseCore-${{ steps.cores.outputs.version }}.exe"
+          --version ${{ steps.cores.outputs.version }}
+          --next-core "$env:RUNNER_TEMP/PoiseCore-${{ steps.cores.outputs.next }}.exe"
+          --next-version ${{ steps.cores.outputs.next }}
+          --dir "$env:RUNNER_TEMP\PoiseInstall"

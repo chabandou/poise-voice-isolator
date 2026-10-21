@@ -11,6 +11,9 @@ on:
       - 'requirements.txt'
       - 'pyproject.toml'
       - 'build-linux.sh'
+      - 'installer/fetch_vbcable.py'
+      - 'tools/win_endpoints.ps1'
+      - '.github/actions/windows-audio/**'
       - '.github/workflows/pulse-ci.yml'
   # No path filter on PRs: these jobs are required checks on master, and a
   # skipped required check blocks the PR forever.
@@ -143,7 +146,8 @@ jobs:
   windows:
     # The GUI (Qt offscreen, see tests/conftest.py), the WASAPI bridge on the
     # committed poise_wasapi.dll and the engines, on the platform they ship
-    # on. The runner has no audio devices: the hardware tests skip.
+    # on. The runner has no audio devices: the hardware tests skip here
+    # and run in windows-audio.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -154,6 +158,29 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run tests
         run: python -m pytest tests -v
+
+  windows-audio:
+    # The hardware tests the windows job skips, on virtual cables: VB-Cable
+    # as on a user's machine, Hi-Fi Cable as the playback device
+    # (.github/actions/windows-audio). A skip here is a failure.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audio devices
+        uses: ./.github/actions/windows-audio
+      - name: Install test deps
+        run: pip install -r requirements.txt pytest
+      - name: Hardware tests
+        shell: bash
+        env:
+          # Moves the default output device's volume: fine on a runner.
+          POISE_VOLUME_TESTS: '1'
+        run: |
+          python -m pytest tests/test_wasapi_integration.py tests/test_volume_mirror.py             tests/test_vbcable_install.py -v -rs | tee "$RUNNER_TEMP/hardware.log"
+          ! grep -q SKIPPED "$RUNNER_TEMP/hardware.log"
 
   native-dll:
     # stream_denoiser/native/poise_wasapi.dll is built by hand and committed.
@@ -170,3 +197,42 @@ jobs:
         run: |
           python3 tools/check_dll_exports.py \
             "$RUNNER_TEMP/poise_wasapi.dll" stream_denoiser/native/poise_wasapi.dll
+      - name: Upload the fresh build
+        uses: actions/upload-artifact@v4
+        with:
+          name: poise_wasapi-mingw
+          path: ${{ runner.temp }}/poise_wasapi.dll
+          if-no-files-found: error
+
+  native-dll-bridge:
+    # The bridge tests on the DLL native-dll just built, in place of the
+    # committed one (the windows job tests that): the sources pass their
+    # own tests, not only export the same names.
+    needs: native-dll
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: poise_wasapi-mingw
+          path: ${{ runner.temp }}/fresh
+      - name: Swap in the fresh build
+        shell: pwsh
+        run: |
+          Copy-Item "$env:RUNNER_TEMP/fresh/poise_wasapi.dll" stream_denoiser/native/poise_wasapi.dll -Force
+          git diff --stat
+      - name: Install test deps
+        shell: bash
+        run: |
+          grep -v -i pyqt6 requirements.txt > "$RUNNER_TEMP/requirements-ci.txt"
+          pip install -r "$RUNNER_TEMP/requirements-ci.txt" pytest
+      - name: Bridge tests on the fresh build
+        # -rs and a failure on any skip: a DLL that does not load skips
+        # the whole module.
+        shell: bash
+        run: |
+          python -m pytest tests/test_wasapi_bridge.py -v -rs | tee "$RUNNER_TEMP/bridge.log"
+          ! grep -q SKIPPED "$RUNNER_TEMP/bridge.log"

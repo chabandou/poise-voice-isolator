@@ -1,0 +1,79 @@
+name: Windows audio devices
+description: >-
+  Audio on a GitHub-hosted Windows runner, which has no sound card: the
+  audio service, microphone access for desktop apps (WASAPI capture is
+  refused without it) and VB-Cable, installed with the vendored setup the
+  way Poise's installer runs it, plus a second virtual cable as the
+  default playback device.
+
+runs:
+  using: composite
+  steps:
+    - name: Audio service and microphone access
+      shell: pwsh
+      run: |
+        Set-Service Audiosrv -StartupType Automatic
+        Start-Service Audiosrv
+        foreach ($root in 'HKLM:', 'HKCU:') {
+          $key = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+          New-Item -Path "$key\NonPackaged" -Force | Out-Null
+          Set-ItemProperty -Path $key -Name Value -Value Allow
+          Set-ItemProperty -Path "$key\NonPackaged" -Name Value -Value Allow
+        }
+
+    - name: VB-Cable
+      shell: pwsh
+      run: |
+        python installer/fetch_vbcable.py
+        if ($LASTEXITCODE) { throw "fetch_vbcable.py failed" }
+        $dir = "installer/windows/vbcable"
+        $p = Start-Process "$dir/VBCABLE_Setup_x64.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
+        if (-not $p.WaitForExit(180000)) { throw "VB-Cable setup still running after 180 s" }
+        "VB-Cable setup exit code: $($p.ExitCode)"
+        $deadline = (Get-Date).AddSeconds(30)
+        while (-not (Get-PnpDevice -Class AudioEndpoint -FriendlyName 'CABLE Output*' -ErrorAction SilentlyContinue)) {
+          if ((Get-Date) -gt $deadline) { throw "no CABLE Output endpoint after the setup" }
+          Start-Sleep 1
+        }
+
+    - name: Hi-Fi Cable, the output device
+      # A second, independent playback device (Poise plays to one, never
+      # to CABLE): VB-Audio's Hi-Fi Cable, free for end users and signed
+      # like VB-Cable. Scream's driver does not load on the runner, and
+      # VB-Cable will not run a second instance.
+      shell: pwsh
+      env:
+        HIFI_URL: https://download.vb-audio.com/Download_CABLE/HiFiCableAsioBridgeSetup_v1007.zip
+        HIFI_SHA256: 3ecf204bfd8579d36bb918f9856eb1eaddd49c75146f5e8a8f59dcb8375ae89a
+      run: |
+        $dir = New-Item -ItemType Directory "$env:RUNNER_TEMP/hificable" -Force
+        $zip = "$dir/hificable.zip"
+        Invoke-WebRequest $env:HIFI_URL -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if ($hash -ne $env:HIFI_SHA256) { throw "Hi-Fi Cable pack sha256 $hash, expected $env:HIFI_SHA256" }
+        Expand-Archive $zip -DestinationPath $dir
+        # Unlike VB-Cable's (Microsoft-signed), this driver is signed by
+        # VB-Audio's own certificate: without it trusted, Windows asks
+        # "install this device software?" where no one can answer and
+        # the setup hangs. VB-Cable's older catalogs carry that signer.
+        $cat = Get-ChildItem installer/windows/vbcable -Filter vbaudio_cable64_win7.cat
+        $cert = (Get-AuthenticodeSignature $cat.FullName).SignerCertificate
+        "trusting $($cert.Subject)"
+        $store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher', 'LocalMachine')
+        $store.Open('ReadWrite'); $store.Add($cert); $store.Close()
+        # Once only: run again, a VB-Audio setup uninstalls what it finds.
+        $p = Start-Process "$dir/HiFiCableAsioBridgeSetup.exe" -ArgumentList '-i', '-h' -WorkingDirectory $dir -PassThru
+        if (-not $p.WaitForExit(180000)) { throw "Hi-Fi Cable setup still running after 180 s" }
+        "Hi-Fi Cable setup exit code: $($p.ExitCode)"
+        # The device is up at once, its endpoints follow later.
+        $deadline = (Get-Date).AddSeconds(90)
+        while ($true) {
+          try { ./tools/win_endpoints.ps1 -Default 'Hi-Fi Cable Input' -List; break }
+          catch {
+            if ((Get-Date) -gt $deadline) {
+              Get-PnpDevice -Class MEDIA | Format-Table Status, Problem, FriendlyName -AutoSize | Out-String
+              throw
+            }
+            Start-Sleep 2
+          }
+        }

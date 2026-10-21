@@ -22,6 +22,7 @@ the download when the x64 setup is already staged).
 """
 import hashlib
 import sys
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -35,6 +36,7 @@ PACK_SHA256 = "b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb"
 INSTALLER_DIR = Path(__file__).resolve().parent / "windows"
 STAGE_DIR = INSTALLER_DIR / "vbcable"
 WANTED = ("VBCABLE_Setup_x64.exe", "VBCABLE_Setup.exe")
+ATTEMPTS = 3
 
 
 def _sha256(path: Path) -> str:
@@ -58,11 +60,17 @@ def main() -> int:
     STAGE_DIR.mkdir(parents=True, exist_ok=True)
     tmp_zip = STAGE_DIR / "pack45.zip"
     print(f"Downloading {PACK_URL} ...")
-    try:
-        urllib.request.urlretrieve(PACK_URL, tmp_zip)
-    except Exception as e:
-        print(f"error: download failed: {e}", file=sys.stderr)
-        return 1
+    # A few tries: CI runners see the odd DNS or connection failure.
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            urllib.request.urlretrieve(PACK_URL, tmp_zip)
+            break
+        except Exception as e:
+            print(f"error: download failed ({attempt}/{ATTEMPTS}): {e}",
+                  file=sys.stderr)
+            if attempt == ATTEMPTS:
+                return 1
+            time.sleep(5 * attempt)
 
     digest = _sha256(tmp_zip)
     if digest.lower() != PACK_SHA256.lower():
