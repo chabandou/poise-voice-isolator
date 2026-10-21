@@ -7,7 +7,10 @@ block_cipher = None
 
 # Define paths
 project_dir = os.getcwd()
-icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon.ico')
+# Poise.exe's file-system icon (Explorer, shortcuts, taskbar pin): the
+# About page's mark, the same .ico Poise_Setup.exe wears. Regenerate it
+# with tools/bake_setup_icon.py when icon.svg changes.
+icon_path = os.path.join(project_dir, 'stream_denoiser', 'gui', 'assets', 'icon-setup.ico')
 models_dir = os.path.join(project_dir, 'stream_denoiser', 'models')
 rnnoise_dll_path = os.path.join(project_dir, 'stream_denoiser', 'native', 'rnnoise.dll')
 # Native audio path (make -C native/poise_wasapi).
@@ -92,6 +95,15 @@ def _qml_wanted(entry):
 a.datas = [e for e in a.datas if _qml_wanted(e)]
 a.binaries = [e for e in a.binaries if _qml_wanted(e)]
 
+# Qt files nothing loads: the software OpenGL fallback, translations,
+# unused image formats and plugins, Git's stray OpenSSL (tools/qt_trim.py
+# lists each with its reason). Before the DLL pass below, so Qt6Pdf goes
+# with the PDF image plugin that was its only user.
+sys.path.insert(0, os.path.join(SPECPATH, 'tools'))
+from qt_trim import trim as _qt_trim  # noqa: E402
+from win_version import version_info  # noqa: E402
+a.binaries, a.datas = _qt_trim(a.binaries, a.datas)
+
 # Qt DLLs still linked from what is left (Qt loads none of them by name).
 _qt_dlls = {os.path.basename(_dest(e)).lower(): e for e in a.binaries
             if _dest(e).startswith(_QT_BIN)
@@ -128,6 +140,8 @@ exe = EXE(
     codesign_identity=None,
     entitlements=None,
     icon=icon_path,
+    # Properties > Details: publisher, copyright, version (tools/win_version.py).
+    version=version_info(SPECPATH, 'Poise Voice Isolator', 'Poise.exe'),
 )
 coll = COLLECT(
     exe,

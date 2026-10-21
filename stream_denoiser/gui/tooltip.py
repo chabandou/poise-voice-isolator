@@ -12,16 +12,19 @@ press/key/wheel/focus change, when the cursor leaves, or when hovering
 something without tip text. Reduced motion (or any failure) degrades to
 instant show/hide.
 """
+import math
+
 from PyQt6.QtCore import (
     QEasingCurve, QObject, QPoint, QPropertyAnimation,
     QParallelAnimationGroup, Qt, QTimer, QEvent,
 )
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtGui import QFontMetricsF
+from PyQt6.QtWidgets import QApplication, QLabel, QWIDGETSIZE_MAX
 
 SHOW_DELAY_MS = 450
 IN_MS = 140
 OUT_MS = 120
-MAX_W = 360
+MAX_CH = 35          # lines wrap at this many characters ("0" widths)
 
 _manager = None
 
@@ -40,7 +43,6 @@ class TipManager(QObject):
         self._show_timer.timeout.connect(self._show)
         self._anim = None
 
-        from .scaling import sp
         tip = QLabel(parent)
         tip.setObjectName("poise-tip")
         tip.setWindowFlags(Qt.WindowType.ToolTip)
@@ -48,7 +50,6 @@ class TipManager(QObject):
         tip.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         tip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         tip.setWordWrap(True)
-        tip.setMaximumWidth(sp(MAX_W))
         tip.hide()
         self._tip = tip
         app.installEventFilter(self)
@@ -118,8 +119,8 @@ class TipManager(QObject):
             avail = screen.availableGeometry() if screen else None
         except Exception:
             avail = None
-        self._tip.adjustSize()
-        size = self._tip.sizeHint()
+        self._fit()
+        size = self._tip.size()
         x, y = pos.x() + 14, pos.y() + 20
         if avail is not None:
             if x + size.width() > avail.right():
@@ -129,6 +130,30 @@ class TipManager(QObject):
             x = max(avail.left(), x)
             y = max(avail.top(), y)
         return QPoint(x, y)
+
+    def _fit(self) -> None:
+        """Size the tip to its text: as wide as its longest line, up to
+        MAX_CH characters, then wrapped. (A word-wrapped QLabel left to
+        itself picks a narrow column.)"""
+        tip = self._tip
+        tip.ensurePolished()
+        tip.setMinimumSize(0, 0)
+        tip.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
+        # The label's own measure of its text on one line (with the
+        # stylesheet's padding and border), against the cap's.
+        tip.setWordWrap(False)
+        natural = tip.sizeHint().width()
+        frame = natural - math.ceil(max(
+            (tip.fontMetrics().horizontalAdvance(line)
+             for line in tip.text().splitlines()), default=0))
+        cap = math.ceil(MAX_CH * QFontMetricsF(tip.font())
+                        .horizontalAdvance("0")) + frame
+        if natural <= cap:
+            tip.setFixedSize(natural, tip.sizeHint().height())
+            return
+        tip.setWordWrap(True)
+        tip.setFixedWidth(cap)
+        tip.setFixedHeight(tip.heightForWidth(cap))
 
     def _show(self) -> None:
         text = self._pending_text
