@@ -9,7 +9,7 @@ name: Build Linux binary
 #
 # Triggers:
 #   - GitHub web UI -> Actions -> Build Linux binary -> Run workflow
-#   - git tag v1.1.0 && git push origin v1.1.0  (also publishes a Release)
+#   - git tag v1.5.0 && git push origin v1.5.0  (also publishes a Release)
 
 on:
   workflow_dispatch:
