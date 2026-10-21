@@ -48,34 +48,34 @@ namespace PoiseCi {
   [ComImport, Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IPropertyStore {
-    int GetCount(out int n);
-    int GetAt(int i, out PropertyKey key);
-    int GetValue(ref PropertyKey key, out PropVariant pv);
-    int SetValue(ref PropertyKey key, ref PropVariant pv);
-    int Commit();
+    [PreserveSig] int GetCount(out int n);
+    [PreserveSig] int GetAt(int i, out PropertyKey key);
+    [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant pv);
+    [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant pv);
+    [PreserveSig] int Commit();
   }
 
   [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IMMDevice {
-    int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o);
-    int OpenPropertyStore(int access, out IPropertyStore store);
-    int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
-    int GetState(out int state);
+    [PreserveSig] int Activate(ref Guid iid, int ctx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o);
+    [PreserveSig] int OpenPropertyStore(int access, out IPropertyStore store);
+    [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
+    [PreserveSig] int GetState(out int state);
   }
 
   [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IMMDeviceCollection {
-    int GetCount(out int n);
-    int Item(int i, out IMMDevice dev);
+    [PreserveSig] int GetCount(out int n);
+    [PreserveSig] int Item(int i, out IMMDevice dev);
   }
 
   [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IMMDeviceEnumerator {
-    int EnumAudioEndpoints(int flow, int mask, out IMMDeviceCollection devs);
-    int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice dev);
+    [PreserveSig] int EnumAudioEndpoints(int flow, int mask, out IMMDeviceCollection devs);
+    [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice dev);
   }
 
   [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
@@ -86,20 +86,20 @@ namespace PoiseCi {
   [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"),
    InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
   interface IPolicyConfig {
-    int GetMixFormat(string id, IntPtr fmt);
-    int GetDeviceFormat(string id, int def, IntPtr fmt);
-    int ResetDeviceFormat(string id);
-    int SetDeviceFormat(string id, IntPtr fmt, IntPtr mix);
-    int GetProcessingPeriod(string id, int def, IntPtr a, IntPtr b);
-    int SetProcessingPeriod(string id, IntPtr p);
-    int GetShareMode(string id, IntPtr mode);
-    int SetShareMode(string id, IntPtr mode);
-    int GetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, int fx,
+    [PreserveSig] int GetMixFormat(string id, IntPtr fmt);
+    [PreserveSig] int GetDeviceFormat(string id, int def, IntPtr fmt);
+    [PreserveSig] int ResetDeviceFormat(string id);
+    [PreserveSig] int SetDeviceFormat(string id, IntPtr fmt, IntPtr mix);
+    [PreserveSig] int GetProcessingPeriod(string id, int def, IntPtr a, IntPtr b);
+    [PreserveSig] int SetProcessingPeriod(string id, IntPtr p);
+    [PreserveSig] int GetShareMode(string id, IntPtr mode);
+    [PreserveSig] int SetShareMode(string id, IntPtr mode);
+    [PreserveSig] int GetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, int fx,
                          ref PropertyKey key, out PropVariant pv);
-    int SetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, int fx,
+    [PreserveSig] int SetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, int fx,
                          ref PropertyKey key, ref PropVariant pv);
-    int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role);
-    int SetEndpointVisibility(string id, int visible);
+    [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role);
+    [PreserveSig] int SetEndpointVisibility(string id, int visible);
   }
 
   [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
@@ -135,9 +135,11 @@ namespace PoiseCi {
         Check(en.EnumAudioEndpoints(flow, 1, out c), "EnumAudioEndpoints");
         int n; c.GetCount(out n);
         for (int i = 0; i < n; i++) {
-          IMMDevice dev; c.Item(i, out dev);
-          string id; dev.GetId(out id);
-          IPropertyStore s; Check(dev.OpenPropertyStore(0, out s), "OpenPropertyStore");
+          // An endpoint still being set up (a device just added) can
+          // vanish between the count and the read: skip it.
+          IMMDevice dev; string id; IPropertyStore s;
+          if (c.Item(i, out dev) != 0 || dev.GetId(out id) != 0
+              || dev.OpenPropertyStore(0, out s) != 0) continue;
           list.Add(new Endpoint { Id = id, Flow = flow == 0 ? "Render" : "Capture",
             Description = Read(s, DeviceDesc), Name = Read(s, FriendlyName),
             IsDefault = id == def });
