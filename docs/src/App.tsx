@@ -6,6 +6,7 @@ import Grid from './components/Grid';
 import Quote from './components/Quote';
 import Transparency from './components/Transparency';
 import FinalCTA from './components/FinalCTA';
+import Colophon from './components/Colophon';
 import Footer from './components/Footer';
 import { useReveal } from './reveal';
 import { useSmoothScroll } from './smoothScroll';
@@ -25,6 +26,7 @@ export default function App() {
         <Quote />
         <Transparency />
         <FinalCTA />
+        <Colophon />
       </main>
       <Footer />
     </div>

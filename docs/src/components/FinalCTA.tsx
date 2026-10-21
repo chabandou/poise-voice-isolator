@@ -166,7 +166,7 @@ const FinalCTA = () => {
 
 	return (
 		<>
-			<section className="px-6 pb-24 pt-8 md:px-12 md:pb-32" id="downloads">
+			<section className="px-6 pb-8 pt-8 md:px-12 md:pb-10" id="downloads">
 				<div className="mx-auto max-w-5xl">
 					<div className="mb-14 text-center md:mb-16">
 						<div className="kicker mb-5" {...reveal(0)}>
