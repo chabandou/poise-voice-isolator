@@ -70,6 +70,18 @@ except Exception:
 
 
 @pytest.fixture(autouse=True)
+def _collect_between_tests():
+    """Windows a test leaves behind (closed, not deleted) go when Python's
+    cycle collector gets to them. Left to chance, that can be in the middle
+    of a later test's event loop, inside a frame tick of the very dial it
+    is dismantling (a fatal "wrapped C/C++ object has been deleted"). So
+    collect after each test, while no Qt event is being handled."""
+    yield
+    import gc
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
 def _ambient_motion_on():
     """Each test starts with the ambient motion on: a window a test
     builds sets Reduce motion for the whole process (animations.set_still)
