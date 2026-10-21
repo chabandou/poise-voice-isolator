@@ -140,6 +140,7 @@ class Sidebar(QFrame):
     """Navigation rail. Emits page_requested(index) on nav clicks."""
 
     page_requested = pyqtSignal(int)
+    update_clicked = pyqtSignal()
 
     PAGES = (
         ("Home", "waveform"),
@@ -204,6 +205,22 @@ class Sidebar(QFrame):
 
         layout.addStretch()
 
+        # Update pill above the version: shown while a newer Poise is out
+        # (set_update), it leads to About, where the update is.
+        self._update_pill = QPushButton()
+        self._update_pill.setObjectName("update-pill")
+        self._update_pill.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        try:
+            from ..cursors import apply_link_cursor
+            apply_link_cursor(self._update_pill)
+        except Exception:
+            self._update_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_pill.clicked.connect(self.update_clicked)
+        self._update_pill.hide()
+        self._update_version = ""
+        layout.addWidget(self._update_pill,
+                         alignment=Qt.AlignmentFlag.AlignHCenter)
+
         # Version footer.
         self._version = QLabel(f"POISE v{__version__}")
         self._version.setObjectName("version")
@@ -254,6 +271,26 @@ class Sidebar(QFrame):
         self._active_index = index
         self._slide_indicator(animated=True)
 
+    def set_update(self, version: str) -> None:
+        """Show the update pill for `version` ("" hides it)."""
+        if version == self._update_version:
+            return
+        self._update_version = version
+        self._update_pill.setText(f"Update to {version}" if version else "")
+        self._update_pill.setToolTip(
+            f"Poise {version} is out. Open About to install it."
+            if version else "")
+        self._sync_update_pill(fade=True)
+
+    def _sync_update_pill(self, fade: bool = False) -> None:
+        # The icon rail has no room for it (the version hides too).
+        shown = bool(self._update_version) and not self._compact
+        was = self._update_pill.isVisible()
+        self._update_pill.setVisible(shown)
+        if shown and not was and fade:
+            from ..animations import fade_in
+            fade_in(self._update_pill, duration_ms=360)
+
     @property
     def is_compact(self) -> bool:
         return self._compact
@@ -279,6 +316,7 @@ class Sidebar(QFrame):
             del taken
             self._logo_spacer = False
         self._version.setVisible(not compact)
+        self._sync_update_pill()
         # Geometry changed: re-snap the indicator without animating.
         self._snap_indicator()
 

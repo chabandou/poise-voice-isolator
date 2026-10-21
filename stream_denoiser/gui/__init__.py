@@ -8,7 +8,7 @@ import sys
 
 from PyQt6 import sip
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QByteArray, QProcess, QSharedMemory
+from PyQt6.QtCore import QByteArray, QProcess, QSharedMemory, QTimer
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 from .main_window import MainWindow
@@ -132,9 +132,13 @@ def _setup_local_server(window: MainWindow):
 def _handle_client_message(socket: QLocalSocket, window: MainWindow):
     """Handle message from another instance."""
     data = socket.readAll()
+    socket.disconnectFromServer()
     if data == b"activate":
         window.bring_to_front()
-    socket.disconnectFromServer()
+    elif data == b"quit":
+        # Poise Setup is about to install over this copy.
+        _logger.info("Setup asked Poise to quit")
+        QTimer.singleShot(0, window._quit_app)
 
 # Harmless Qt noise dropped from the log. setPointSize(-1): Qt style code
 # copies the point size of a font that our stylesheet sizes in px (which
@@ -223,6 +227,10 @@ def run_gui():
             # This might be a stale lock, so we'll continue anyway
             _logger.warning("Could not connect to existing instance, but shared memory indicates one may be running.")
     
+    # Tell an installer (in-app update or a manual run) Poise is open.
+    from ..updates import hold_running_mutex
+    hold_running_mutex()
+
     # Point Qt at the OS cursor theme before it resolves link/hand
     # cursors (XCURSOR_THEME unset == ugly built-in fallback glyphs).
     try:

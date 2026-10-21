@@ -1229,6 +1229,11 @@ def _hover_specs():
         ("QPushButton", "primary"): lambda p: {
             "background-color": (QColor(p["accent"]),
                                  QColor(p["accent_light"]))},
+        ("QPushButton", "update"): lambda p: {
+            "background-color": (QColor(p["accent"]),
+                                 QColor(p["accent_light"])),
+            "border-color": (QColor(p["accent"]),
+                             QColor(p["accent_light"]))},
         ("QComboBox", "device-combo"): lambda p: {
             "border-color": (slate(0.25), QColor(p["secondary"]))},
     }

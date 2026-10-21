@@ -14,6 +14,7 @@ nothing here reads Inno's own log format.
 from __future__ import annotations
 
 import codecs
+import ntpath
 import os
 import sys
 from dataclasses import dataclass
@@ -250,6 +251,74 @@ def existing_install() -> Existing | None:
             location = os.path.normpath(location) if location else ""
         return Existing(version=version, location=location)
     return None
+
+
+def same_exe(path: str, target_dir: str) -> bool:
+    """`path` is the Poise.exe of an install in `target_dir`. Windows
+    path rules (ntpath) on every platform: these are Windows paths."""
+    if not path or not target_dir:
+        return False
+    norm = lambda p: ntpath.normcase(ntpath.normpath(p))  # noqa: E731
+    return norm(path) == norm(ntpath.join(target_dir, APP_EXE))
+
+
+def running_poise(target_dir: str) -> list[int]:
+    """Pids of Poise processes (window and audio) started from the folder
+    about to be installed over. Replacing files under a running Poise
+    fails part-way, and the core's own "Poise is running" prompt is off
+    in a silent run, so the window has to see to it. [] off Windows."""
+    if sys.platform != "win32":
+        return []
+    return [pid for pid, path in _process_images()
+            if same_exe(path, target_dir)]
+
+
+def _process_images() -> list[tuple[int, str]]:
+    """(pid, full exe path) of every process this one may query."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return []
+    found = []
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            # Only Poise.exe by name: everything else needs no path.
+            if entry.szExeFile.lower() == APP_EXE.lower():
+                handle = kernel32.OpenProcess(
+                    0x1000, False, entry.th32ProcessID)  # QUERY_LIMITED
+                if handle:
+                    try:
+                        size = wintypes.DWORD(1024)
+                        buf = ctypes.create_unicode_buffer(size.value)
+                        if kernel32.QueryFullProcessImageNameW(
+                                handle, 0, buf, ctypes.byref(size)):
+                            found.append((entry.th32ProcessID, buf.value))
+                    finally:
+                        kernel32.CloseHandle(handle)
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return found
 
 
 def _read_value(key, name: str) -> str:

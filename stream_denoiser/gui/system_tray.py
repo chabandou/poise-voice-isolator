@@ -21,6 +21,7 @@ class SystemTray(QSystemTrayIcon):
     start_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     quit_requested = pyqtSignal()
+    update_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,6 +55,12 @@ class SystemTray(QSystemTrayIcon):
         show_action.triggered.connect(self.restore_requested.emit)
         menu.addAction(show_action)
         
+        # Shown while a newer Poise is out (set_update).
+        self._update_action = QAction("", menu)
+        self._update_action.triggered.connect(self.update_requested.emit)
+        self._update_action.setVisible(False)
+        menu.addAction(self._update_action)
+
         menu.addSeparator()
         
         # Quit
@@ -72,6 +79,11 @@ class SystemTray(QSystemTrayIcon):
             self._start_stop_action.setText("Start Isolation")
             self.setToolTip("Poise Voice Isolator (Idle)")
     
+    def set_update(self, version: str):
+        """Offer the update to `version` in the menu ("" hides it)."""
+        self._update_action.setText(f"Update to {version}...")
+        self._update_action.setVisible(bool(version))
+
     def _on_start_stop(self):
         """Handle start/stop action."""
         if self._start_stop_action.text().startswith("Start"):

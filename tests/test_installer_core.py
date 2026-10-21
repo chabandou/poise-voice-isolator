@@ -36,6 +36,23 @@ def test_silent_run_arguments():
     assert "/TASKS=desktopicon" in args
 
 
+def test_a_running_poise_is_matched_by_its_install_folder():
+    target = r"C:\Program Files (x86)\Poise Voice Isolator"
+    assert core.same_exe(target + r"\Poise.exe", target)
+    assert core.same_exe(target.lower() + r"\POISE.EXE", target + "\\")
+    # Another copy (a portable build, a dev checkout) is left alone.
+    assert not core.same_exe(r"D:\portable\Poise\Poise.exe", target)
+    assert not core.same_exe("", target)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process list")
+def test_running_poise_reads_the_process_list():
+    # This test process is python.exe: never a Poise.
+    assert core.running_poise(os.path.dirname(sys.executable)) == []
+    images = core._process_images()
+    assert isinstance(images, list)
+
+
 def test_no_desktop_icon_means_no_task():
     args = core.build_args(core.InstallPlan("C:\\Poise", desktop_icon=False))
     assert not any(arg.startswith("/TASKS") for arg in args)
@@ -211,3 +228,12 @@ def test_colours_come_only_from_the_palette():
         with open(os.path.join(here, name), encoding="utf-8") as fh:
             found = re.findall(r"#[0-9a-fA-F]{6}\b", fh.read())
         assert not found, f"{name} hard-codes {found}"
+
+
+def test_driver_probe_reads_the_64_bit_registry():
+    """setup.iss is 32-bit Inno: its probe must run the native PowerShell,
+    or MMDevices is invisible and the driver setup runs on every install."""
+    with open(SETUP_ISS, encoding="utf-8") as f:
+        script = f.read()
+    assert r"{sysnative}\WindowsPowerShell" in script
+    assert "Exec('powershell.exe'" not in script

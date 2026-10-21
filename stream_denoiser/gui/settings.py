@@ -80,6 +80,13 @@ class Settings:
 
     KEY_THEME = "appearance/theme"
     KEY_REDUCE_MOTION = "appearance/reduce_motion"
+
+    KEY_CHECK_UPDATES = "updates/check"
+    KEY_LAST_UPDATE_CHECK = "updates/last_check"        # epoch seconds
+    KEY_UPDATE_NOTIFIED = "updates/notified_version"    # tray notice shown
+    # Set just before quitting for an update; read by the next start.
+    KEY_UPDATE_FROM = "updates/pending_from"
+    KEY_UPDATE_RESUME = "updates/resume_isolating"
     
     # Default values
     DEFAULTS = {
@@ -96,6 +103,11 @@ class Settings:
         KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
         KEY_MODEL: "deepfilternet3",
         KEY_THEME: "halcyon",
+        KEY_CHECK_UPDATES: True,
+        KEY_LAST_UPDATE_CHECK: 0.0,
+        KEY_UPDATE_NOTIFIED: "",
+        KEY_UPDATE_FROM: "",
+        KEY_UPDATE_RESUME: False,
     }
     
     def __init__(self):
@@ -331,6 +343,15 @@ class Settings:
     def reduce_motion(self, value: bool) -> None:
         self.set(self.KEY_REDUCE_MOTION, bool(value))
     
+    @property
+    def check_updates(self) -> bool:
+        """Look for a new release on GitHub once a day."""
+        return bool(self.get(self.KEY_CHECK_UPDATES))
+
+    @check_updates.setter
+    def check_updates(self, value: bool) -> None:
+        self.set(self.KEY_CHECK_UPDATES, bool(value))
+
     def save_window_geometry(self, geometry: bytes) -> None:
         """Save window geometry."""
         self.set(self.KEY_WINDOW_GEOMETRY, geometry)

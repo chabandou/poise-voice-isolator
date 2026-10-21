@@ -34,6 +34,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Read version
+        id: version
+        # pyproject.toml is the one version source: the installer takes
+        # it from here, and a release tag must match it (the in-app
+        # updater compares the tag with the version the app reports).
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF_NAME.Substring(1)
+            if ($tag -ne $version) {
+              Write-Error "Tag v$tag does not match pyproject.toml version $version"
+              exit 1
+            }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -60,7 +76,7 @@ jobs:
       - name: Compile installer core (Inno Setup)
         # The core is the silent engine behind Poise_Setup.exe: it still
         # owns files, shortcuts, the uninstaller and the driver.
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DCORE setup.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DCORE /DMyAppVersion=${{ steps.version.outputs.version }} setup.iss'
 
       - name: Verify installer core
         run: |
@@ -82,6 +98,19 @@ jobs:
           }
           Get-Item installer/Poise_Setup.exe | Format-Table Name, Length
 
+      - name: Stage update core
+        # The in-app updater downloads the core and runs it silently
+        # (stream_denoiser/updates.py CORE_ASSET; the name is its
+        # contract). Published as PoiseCore-update.exe so the release
+        # page does not read as a second installer; Poise_Setup.exe
+        # embeds the same file. GitHub's asset digest is preferred,
+        # the .sha256 is the fallback.
+        run: |
+          Copy-Item installer/PoiseCore.exe installer/PoiseCore-update.exe
+          $hash = (Get-FileHash installer/PoiseCore-update.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path installer/PoiseCore-update.exe.sha256 -Value "$hash  PoiseCore-update.exe" -Encoding ascii -NoNewline
+          Get-Content installer/PoiseCore-update.exe.sha256
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -90,8 +119,14 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release (tags only)
+        # A draft until build-linux.yml has attached its binary too.
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: installer/Poise_Setup.exe
-          generate_release_notes: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          bash tools/release_upload.sh "$GITHUB_REF_NAME"
+          installer/Poise_Setup.exe
+          installer/PoiseCore-update.exe
+          installer/PoiseCore-update.exe.sha256

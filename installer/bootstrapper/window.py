@@ -14,6 +14,7 @@ installer.
 from __future__ import annotations
 
 import os
+import time
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt
 from PyQt6.QtGui import QIcon
@@ -36,6 +37,10 @@ HEIGHT = 612
 PHASE_TARGETS = {"prepare": 12.0, "files": 64.0, "driver": 88.0, "finish": 97.0}
 
 FADE_MS = 170
+
+#: How long a running Poise gets to quit when asked: stopping isolation
+#: and the audio process can take ~10 s on its own.
+CLOSE_WAIT_S = 25.0
 
 _SAMPLE_LOG = """\
 2026-10-19 14:32:07.921   Log opened. (Time zone: UTC+01:00)
@@ -78,6 +83,9 @@ class SetupWindow(QWidget):
         self._fade = None
         self._animation = None
         self._drag_offset = None
+        self._plan = None
+        self._closing_since = 0.0
+        self._closing_wait = 0.0
 
         self._existing = core.existing_install()
         if not target_dir:
@@ -128,6 +136,10 @@ class SetupWindow(QWidget):
         self._pump.setInterval(16)
         self._pump.timeout.connect(self._advance)
 
+        self._closing = QTimer(self)
+        self._closing.setInterval(250)
+        self._closing.timeout.connect(self._poll_closing)
+
     def _connect(self) -> None:
         self.welcome.browse_clicked.connect(self._choose_dir)
         self.welcome.install_clicked.connect(self.start_install)
@@ -165,7 +177,42 @@ class SetupWindow(QWidget):
         self._installing = True
         self._show(self.progress)
         self._pump.start()
-        self._installer.start(plan)
+        self._plan = plan
+        if core.running_poise(plan.target_dir):
+            self._close_poise()
+        else:
+            self._installer.start(plan)
+
+    # -- a Poise running from the target folder ------------------------------
+
+    def _close_poise(self) -> None:
+        """Ask the running Poise to quit, then install once it is gone.
+        Its files cannot be replaced while it runs, and closing it by
+        force would leave the default playback device on the cable."""
+        self.progress.set_phase("prepare")
+        self.progress.detail.setText("Closing Poise...")
+        asked = engine.ask_poise_to_quit()
+        self._closing_since = time.monotonic()
+        self._closing_wait = CLOSE_WAIT_S if asked else 0.0
+        self._closing.start()
+
+    def _poll_closing(self) -> None:
+        if not core.running_poise(self._plan.target_dir):
+            self._closing.stop()
+            self._installer.start(self._plan)
+            return
+        if time.monotonic() - self._closing_since < self._closing_wait:
+            return
+        self._closing.stop()
+        # Too old to take the request, or stuck: the user quits it.
+        self._installing = False
+        self._pump.stop()
+        self.welcome.set_installing(False)
+        self.close_button.setEnabled(True)
+        self.welcome.set_note(
+            "Poise is running. Quit it from its tray icon menu, "
+            "then click Install again.")
+        self._show(self.welcome)
 
     def _advance(self) -> None:
         if abs(self._target - self._value) < 0.05:

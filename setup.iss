@@ -2,8 +2,11 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Poise Voice Isolator"
-; Keep in step with version in pyproject.toml (release checklist there)
-#define MyAppVersion "1.5.0"
+; CI passes the release's version (ISCC /DMyAppVersion=X.Y.Z, checked
+; against pyproject.toml); this default only serves local builds.
+#ifndef MyAppVersion
+  #define MyAppVersion "1.5.0"
+#endif
 #define MyAppPublisher "chabandou"
 #define MyAppURL "https://github.com/chabandou/Poise-Voice-Isolator"
 #define MyAppExeName "Poise.exe"
@@ -43,6 +46,14 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 InfoBeforeFile=installer\windows\vbcable-notice.txt
+; Files in use (Poise, or its audio process) are closed through the
+; Restart Manager; silent runs need /CLOSEAPPLICATIONS for it.
+CloseApplications=yes
+
+[InstallDelete]
+; The PyInstaller runtime is replaced whole on every install: modules and
+; DLLs a newer build dropped must not linger next to the new ones.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -67,10 +78,116 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+; An in-app update starts Poise again from DeinitializeSetup instead,
+; whether the install worked or not.
 
 [Code]
+const
+  { Held by a running Poise (stream_denoiser/updates.py RUNNING_MUTEX). }
+  RunningMutex = 'PoiseVoiceIsolatorRunning';
+  { How long an update waits for Poise to quit (it stops isolating and
+    restores the default playback device first), then for Windows to
+    release the mutex once it has been closed by force. }
+  QuitWaitMs = 30000;
+  KillWaitMs = 5000;
+
 var
   VbcableNeedsReboot: Boolean;
+  { An update made Poise quit: it must be started again on the way out,
+    on success (the new version) and on failure (whatever is there). }
+  RelaunchPoise: Boolean;
+
+{ In-app updates pass /POISEUPDATE=<file>: the file Poise watches to
+  learn that this (elevated) setup is running and it should quit. }
+function UpdateSignalPath(): String;
+begin
+  Result := ExpandConstant('{param:POISEUPDATE|}');
+end;
+
+function IsPoiseUpdate(): Boolean;
+begin
+  Result := UpdateSignalPath() <> '';
+end;
+
+{ Wait up to TimeoutMs for every Poise to be gone. }
+function WaitForPoiseToQuit(TimeoutMs: Integer): Boolean;
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  while CheckForMutexes(RunningMutex) and (Waited < TimeoutMs) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  Result := not CheckForMutexes(RunningMutex);
+  if Result then
+    Log(Format('Poise: quit after %d ms', [Waited]));
+end;
+
+{ The Poise that asked for this update (its /POISEPID), with its audio
+  process. Only ever that process: other users' Poise stay untouched. }
+procedure ClosePoiseByForce();
+var
+  Pid: String;
+  ResultCode: Integer;
+begin
+  Pid := ExpandConstant('{param:POISEPID|}');
+  if (Pid = '') or (StrToIntDef(Pid, 0) <= 0) then
+  begin
+    Log('Poise: no /POISEPID to close');
+    Exit;
+  end;
+  Log('Poise: still running, closing pid ' + Pid);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /PID ' + Pid, '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log(Format('Poise: taskkill exited with code %d', [ResultCode]));
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if IsPoiseUpdate() then
+  begin
+    if not SaveStringToFile(UpdateSignalPath(), 'started', False) then
+      Log('Poise: could not write the update signal file');
+    { Poise quits as soon as it sees the signal. One that hangs on the
+      way out is closed by force: installing over a running Poise would
+      leave a half-replaced _internal that does not start. }
+    if not WaitForPoiseToQuit(QuitWaitMs) then
+    begin
+      ClosePoiseByForce();
+      if not WaitForPoiseToQuit(KillWaitMs) then
+      begin
+        Log('Poise: still running, update abandoned');
+        Result := False;
+        Exit;
+      end;
+    end;
+    RelaunchPoise := True;
+    Exit;
+  end;
+  { A manual install over a running Poise: it hides in the tray when its
+    window closes, so the Restart Manager alone cannot close it. }
+  while CheckForMutexes(RunningMutex) and not WizardSilent() do
+    if MsgBox('Poise is running. Quit it from its tray icon menu, ' +
+        'then click OK to continue.', mbInformation, MB_OKCANCEL) = IDCANCEL then
+    begin
+      Result := False;
+      Exit;
+    end;
+end;
+
+{ This Setup is 32-bit: a plain powershell.exe is the SysWOW64 one, whose
+  HKLM\SOFTWARE is the 32-bit view - no MMDevices there, so CABLE always
+  looked missing and the driver setup ran on every install and update. }
+function PowerShellExe(): String;
+begin
+  if IsWin64 then
+    Result := ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe')
+  else
+    Result := 'powershell.exe';
+end;
 
 { Scan the MMDevices registry for a CABLE Input render endpoint.
   Needs no AudioDeviceCmdlets module, so it works on fresh machines.
@@ -97,7 +214,7 @@ begin
     'Out-File -FilePath ''' + OutPath + ''' -InputObject $verdict -Encoding ascii;' + #13#10;
   if not SaveStringToFile(PsPath, Script, False) then
     Exit;
-  if not Exec('powershell.exe',
+  if not Exec(PowerShellExe(),
       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + PsPath + '"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Exit;
@@ -177,4 +294,32 @@ end;
 function NeedRestart(): Boolean;
 begin
   Result := VbcableNeedsReboot;
+end;
+
+{ Runs however Setup ends. After an update, start Poise again as the
+  user (not elevated): the new version, or the old one if the install
+  failed - Poise then sees its version did not change and says so. }
+procedure DeinitializeSetup();
+var
+  Exe: String;
+  ResultCode: Integer;
+begin
+  if not RelaunchPoise then
+    Exit;
+  try
+    Exe := ExpandConstant('{app}\{#MyAppExeName}');
+  except
+    Log('Poise: install folder unknown, cannot start Poise again');
+    Exit;
+  end;
+  if not FileExists(Exe) then
+  begin
+    Log('Poise: ' + Exe + ' is missing, cannot start Poise again');
+    Exit;
+  end;
+  if ExecAsOriginalUser(Exe, '', ExtractFileDir(Exe), SW_SHOWNORMAL,
+      ewNoWait, ResultCode) then
+    Log('Poise: started again after the update')
+  else
+    Log(Format('Poise: could not start again (%d)', [ResultCode]));
 end;
