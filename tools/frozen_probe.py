@@ -9,7 +9,7 @@ Runs a few seconds of processing (CABLE Output to the default WASAPI
 output device, VB-Cable switching off) and writes probe.json next to the
 executable: the worker's events, the backend the audio process ran,
 its final stats and the verdict. Exits 0 when the session ran and
-processed frames without an error, 1 otherwise.
+stopped without an error, 1 otherwise.
 
 Environment: PROBE_SECONDS (default 6), PROBE_MODEL (default
 deepfilternet3), POISE_BACKEND (the app's own: auto, wasapi, portaudio).
@@ -98,11 +98,11 @@ if __name__ == "__main__":
     except Exception:
         result["exception"] = traceback.format_exc()
 
-    frames = (result.get("final_stats") or {}).get("frame_count", 0)
+    # No frame count check: nothing plays into the cable in CI, so
+    # silence skipping keeps every frame from the model.
     result["ok"] = bool(
         result.get("child_pid")
         and result.get("backend")
-        and frames > 0
         and not any(e["kind"] == "error" for e in result["events"])
         and "exception" not in result)
     with open(os.path.join(here, "probe.json"), "w") as f:
