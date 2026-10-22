@@ -74,6 +74,9 @@ jobs:
             echo "Library clean, no patching needed"
           fi
 
+      - name: Build RNNoise (bundled librnnoise.so)
+        run: bash build-rnnoise-dll.sh linux
+
       - name: Build poise binary (Nuitka)
         run: |
           rm -rf dist/__main__.* dist/poise
@@ -93,6 +96,7 @@ jobs:
             --include-data-files=stream_denoiser/models/gtcrn.onnx=stream_denoiser/models/gtcrn.onnx \
             --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
             --include-data-files=pyproject.toml=pyproject.toml \
+            --include-data-files=stream_denoiser/native/librnnoise.so=stream_denoiser/native/librnnoise.so \
             --output-filename=poise \
             --output-dir=dist \
             poise_tui.py
