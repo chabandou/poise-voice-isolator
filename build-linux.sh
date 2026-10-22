@@ -31,7 +31,8 @@ echo "Installing build dependencies..."
 # NOTE: textual is pinned to the repo floor (>=8.2.8): older releases wash
 # footer key text and can't render transparent filler. A bare `textual`
 # requirement would keep whatever stale version the env already has.
-pip install -q nuitka ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate scipy
+# nuitka[onefile] brings zstandard, which compresses the onefile (~4x).
+pip install -q "nuitka[onefile]" ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate scipy
 
 # Install ccache if not present (speeds up rebuilds)
 if ! command -v ccache &> /dev/null; then
