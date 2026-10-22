@@ -1,5 +1,5 @@
 <div align="center">
-<img src="stream_denoiser/gui/assets/banner_lattice.png" alt="Poise: Take back control." width="100%"/>
+<img src=".github/media/banner.webp" alt="Poise: Take back control." width="100%"/>
 </div>
 
 
@@ -30,358 +30,228 @@
 </picture>
 </div>
 
-# Poise Voice Isolator
+<h1 align="center">Poise Voice Isolator</h1>
 
-A high-performance real-time system audio denoiser and voice isolator that captures system audio, processes it through an ONNX neural network model, and outputs enhanced audio with minimal latency.
+<p align="center">
+  <b>Real-time voice isolation for everything your computer plays.</b><br/>
+  <sub>Music and noise out, speech in. Local, open source, in sync with the picture.</sub>
+</p>
 
-<img src="stream_denoiser/gui/assets/screenshot.png" alt="Poise Voice Isolator GUI" width="100%"/>
+<p align="center">
+  <a href="https://github.com/chabandou/poise-voice-isolator/releases/latest"><b>Download</b></a> ·
+  <a href="https://chabandou.github.io/poise-voice-isolator/">Website</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#models">Models</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#development">Development</a>
+</p>
 
----
+<img src=".github/media/switch-on.webp" alt="Poise desktop app switching on: Start on the strength dial, the starting steps, then the lattice lights up and the headline reads Isolating voices" width="100%"/>
 
-## Navigation
+Poise sits between your apps and your speakers. It takes the system mix (YouTube, streams, podcasts, calls), runs it through a neural speech model, and plays back only the voices. Turn it on once and forget it.
 
-- [For Users](#for-users)
-  - [Why Poise?](#why-poise)
-  - [Features](#features)
-  - [Installation](#installation)
-  - [Troubleshooting](#troubleshooting)
-- [For Developers](#for-developers)
-  - [Installation from Source](#installation-from-source)
-  - [Usage](#usage)
-  - [Available Options](#available-options)
-  - [Models](#models)
-  - [Package Structure](#package-structure)
-  - [Processing Flow](#processing-flow)
-  - [Model Requirements](#model-requirements)
-- [Special Thanks](#special-thanks)
-- [License](#license)
-- [Contributing](#contributing)
+- **Strips music, keeps speech.** DeepFilterNet3 removes instrumentals and background noise while leaving voices intact. A halal-friendly way to watch and listen to online content.
+- **Stays in sync.** The delay is fixed and reported to the audio server, so video players hold the picture to match: 76 ms end to end on Linux.
+- **Light on the machine.** Silence skips the model entirely. Inference runs at ~0.12× real time on a laptop CPU, or ~0.04× with GTCRN.
+- **Private by construction.** Everything runs on your machine. No cloud, no account, no telemetry.
+- **Free.** MIT licensed, no subscription.
 
----
+> [!NOTE]
+> On Android, Poise lives in a separate app for Samsung devices: [poise-android](https://github.com/chabandou/poise-android).
 
-## For Users
+## Install
 
-### Why Poise?
+### Windows
 
-Poise is a real-time audio filter that runs in the background while you browse, stream, or work. Simply enable it and let it automatically remove music and background noise from everything you hear - YouTube, social media, podcasts, live streams, and more.
+Download **`Poise_Setup.exe`** from the [latest release](https://github.com/chabandou/poise-voice-isolator/releases/latest) and run it. Pick a folder (or keep the default) and press **Install**. The same window updates an existing install in place, and the app updates itself after that.
 
-**Key Benefits:**
+> [!WARNING]
+> The installer is not code-signed yet, so SmartScreen shows **"Windows protected your PC"**. Click **More info → Run anyway**.
 
-- **Enable & Forget** - Turn it on once and it continuously processes all system audio in real-time
-- **Instant Music Removal** - Automatically strips out music and instrumentals while preserving speech and vocals from any source
-- **100% Private & Local** - All processing happens on your machine. Your audio never leaves your computer. Zero cloud dependencies. No tracking, no telemetry.
-- **Halal-Friendly Alternative** - For those who practice Islamic values, easily remove musical content while preserving speech and spoken word from any online content
-- **Real-time Processing** - Processes audio as it plays with only ~10ms latency, unnoticeable to the user
-- **Works Everywhere** - Automatically filters system audio whether you're watching YouTube, streaming content, on video calls, or listening to podcasts
-- **Completely Free & Open Source** - MIT licensed. No subscriptions. No hidden costs.
+> [!TIP]
+> Setup bundles and silently installs the [VB-Cable](https://vb-audio.com/Cable/) driver when it is missing (reboot if asked). VB-Cable is donationware by VB-Audio; consider supporting them. Portable runs offer a one-click **Install VB-Cable** from the copy beside `Poise.exe`.
 
-### Features
+### Linux
 
-| Feature | Description |
-|---------|-------------|
-| **Voice Isolation** | Removes music and instrumentals, keeps only vocals and speech |
-| **Real-time Processing** | Direct time-domain processing with ~10ms frame latency |
-| **Audio Activity Detection** | Performance boost by skipping silence and non-speech sections |
-| **Low Latency** | Blocking sounddevice I/O with ~10ms frames |
-| **WASAPI Capture** | Captures system audio on Windows via VB Cable (regular WASAPI input) |
-| **VB Cable Integration** | Automatic Windows audio device switching for seamless capture |
-
-### Installation
-
-| Platform | Status |
-|----------|--------|
-| ![](https://img.shields.io/badge/Windows-0078D4?style=flat-square&logo=windows) | Full Support |
-| ![](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black) | Full Support |
-| ![](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white) | SAMSUNG ONLY [(poise-android)](https://github.com/chabandou/poise-android) |
-
-#### Windows
-
-Download `Poise_Setup.exe` from the
-[latest release](https://github.com/chabandou/poise-voice-isolator/releases/latest)
-and run it.
-
-> **"Windows protected your PC"?** The installer is not code-signed yet,
-> so SmartScreen does not recognise it. Click **More info**, then
-> **Run anyway**.
-
-Setup is a single Poise-branded window: choose a location (or keep the
-default), press **Install**, and it copies the app, registers the
-uninstaller and sets up audio without any further prompts. If Poise is
-already installed, the same window offers to update it in place.
-
-The installer bundles the VB-Cable driver (by VB-Audio,
-https://vb-audio.com/Cable/ — donationware, consider supporting them)
-and installs it automatically when CABLE endpoints are missing
-(silent install, reboot afterwards if asked). No manual download needed.
-
-Portable runs: if VB-Cable is missing at startup, the error dialog
-offers a one-click **Install VB-Cable** using the copy shipped beside
-`Poise.exe` (`vbcable\`), falling back to the VB-Audio website.
-
-#### Linux Binary
-
-Download the prebuilt binary for the TUI directly from GitHub:
-
-```bash
-# Download the latest release
-curl -L -o poise https://github.com/chabandou/Poise-Voice-Isolator/releases/latest/download/poise
-
-# Make it executable
-chmod +x poise
-
-# Move to your PATH (optional)
-sudo mv poise /usr/local/bin/
-
-# Run the TUI
-poise
-```
-
-Or on **Arch Linux**, from the [AUR](https://aur.archlinux.org/packages/poise-bin) (with an AUR helper such as `yay` or `paru`):
+Arch Linux, from the [AUR](https://aur.archlinux.org/packages/poise-bin):
 
 ```bash
 yay -S poise-bin
-
-# Run the TUI
-poise
 ```
 
-### Troubleshooting
-
-#### No audio devices found
-
-- Run `python -m stream_denoiser --list-devices` to see available devices
-- On Windows, ensure VB Cable is installed (CABLE Output must be visible)
-
-#### High latency
-
-- Lower `POISE_PW_MARGIN_MS` (Linux) or `POISE_WIN_MARGIN_MS` (Windows): the margin adds directly to the fixed delay, but frames that miss it play unprocessed
-- Ensure AAD is enabled to reduce processing load
-- Check that your system can process frames faster than real-time (RTF < 1.0)
-
-#### Audio dropouts
-
-- Reduce processing load (enable AAD, reduce model complexity)
-- Check system CPU usage and close unnecessary applications, the model can be resource hungry.
-
-#### Linux Troubleshooting
-
-Run the built-in doctor first — it detects the issues below automatically:
+Any distribution, as a single binary:
 
 ```bash
-python -m stream_denoiser --doctor
+curl -L -o poise https://github.com/chabandou/poise-voice-isolator/releases/latest/download/poise
+chmod +x poise && sudo mv poise /usr/local/bin/
 ```
 
-Normal startup also runs a fast pre-flight for these (bypass with
-`--no-health-check` or `POISE_SKIP_HEALTH=1`).
+Then run `poise` to open the terminal UI. All three models are built in.
 
-##### Error: `cannot enable executable stack as shared object requires: Invalid argument`
+<details>
+<summary><b>Terminal UI preview</b></summary>
+<br/>
+<img src=".github/media/1.5.0/linux-tui.png" alt="Poise terminal UI on Linux: input and voice scopes, isolation strength, output device and events" width="100%"/>
+</details>
 
-**Fix (automatic):**
+## Models
+
+Switch with `m` in the TUI, the **Model** card in the app, or `--model` on the command line.
+
+| Model | Engine delay | Load (RTF) | Best for |
+|:--|:--:|:--:|:--|
+| **DeepFilterNet3** *(default)* | 32 ms | ~0.12 | Voice isolation from music and noise |
+| **GTCRN** | 18 ms | ~0.04 | Noisy speech on weak CPUs, lowest delay |
+| **RNNoise** | 20 ms | ~0.08 | Steady noise: fans, hiss, hum |
+
+<sub>RTF = processing time ÷ audio time, measured on a Ryzen 5 4500U laptop on AC. Below 1.0 keeps up with real time.</sub>
+
+<details>
+<summary><b>Model notes</b></summary>
+
+- **DeepFilterNet3** works on 512-sample frames at 48 kHz. The vendored `denoiser_model_df3.onnx` is the original export rewritten by `tools/optimize_df3.py` into an equivalent graph (output within 3e-7) that runs ~15% faster: the inverse FFT, a 4.2 MB matrix product, became two small MatMuls.
+- **GTCRN** ([upstream](https://github.com/Xiaobin-Rong/gtcrn), 248 KB, also used by Poise for Android) runs at 16 kHz: each 16 ms frame is low-passed, decimated, enhanced one STFT hop at a time and interpolated back, so its output stops at ~7.6 kHz. `tools/optimize_gtcrn.py` rewrites upstream's streaming export into an equivalent graph (output within 1e-6) that runs ~2.2× faster, since at this size per-operator overhead, not arithmetic, sets the cost.
+- **RNNoise** is the same model EasyEffects uses, bundled as `librnnoise.so` / `rnnoise.dll`.
+
+Both rewrite scripts rebuild their file from the original (checked by SHA-256) and need the `onnx` package. Poise itself does not.
+
+</details>
+
+## How it works
+
+<img src=".github/media/processing-flow.png" alt="Poise processing flow: capture, frame, gate (silence skips the model), isolate (DeepFilterNet3, GTCRN or RNNoise), polish, sync, play. 48 kHz for DeepFilterNet3 and RNNoise, 10 ms frames, 76 ms end to end on Linux with DeepFilterNet3, about 190 ms on Windows." width="100%"/>
+
+| Platform | Route | End to end |
+|:--|:--|:--:|
+| **Linux · PipeWire** *(default)* | A **Poise Voice Isolator** sink becomes the default; a native node inside PipeWire's graph processes each cycle and hands it to your speakers | ~76 ms |
+| **Linux · Pulse** *(fallback)* | A `Poise_Capture` null sink becomes the default; Poise records its monitor and plays to your speakers | varies |
+| **Windows** | **CABLE Input** becomes the default; a native WASAPI path on an MMCSS thread carries **CABLE Output** to your speakers | ~190 ms |
+
+> [!NOTE]
+> A frame that misses its deadline plays **unprocessed** rather than late, so audio never drifts behind the video (the log counts these as `dry`). Your original default device comes back on exit, and if Poise is killed, its PipeWire sink disappears with it. On Windows, Poise mirrors CABLE Input's volume onto your real device, so volume keys and mute keep working.
+
+## Troubleshooting
+
+On Linux, start with the built-in doctor. It checks the audio server and the PipeWire node and says what to do (a quick version also runs at every start):
 
 ```bash
-python -m stream_denoiser --fix-execstack
+poise --doctor
 ```
 
-This clears the flag with `patchelf` (installed automatically with the
-hints below if missing). Manual fallback:
+<details>
+<summary><b>No sound, or doubled audio</b></summary>
 
-Clear the executable stack flag on the ONNX Runtime library using `execstack` or `patchelf`.
-
-1. Install `patchelf`:
-
-   ```bash
-   sudo pacman -S patchelf    # Arch Linux
-   sudo apt install patchelf  # Ubuntu/Debian
-   ```
-
-2. Locate the `onnxruntime` shared object file and clear the flag:
-
-   ```bash
-   # Find the path (example path for conda environment 'poise')
-   find ~/miniforge3/envs/poise/lib/ -name "onnxruntime_pybind11_state.so"
-   
-   # Apply the fix
-   patchelf --clear-execstack /path/to/onnxruntime_pybind11_state.so
-   ```
-
----
-
-##### No audio output or echo/duplicate audio
-
-The denoiser automatically routes system audio through its own sink
-(**Poise Voice Isolator** with PipeWire, `Poise_Capture` otherwise). If audio isn't working:
-
-1. **Reset routing in one command:**
-
-   ```bash
-   python -m stream_denoiser --reset-audio
-   ```
-
-   This restores your real default sink and unloads leftover Poise sinks.
-   Manual equivalents follow.
-
-2. **Check current default sink:**
-   ```bash
-   pactl get-default-sink
-   ```
-3. **If stuck on `Poise_Capture` after a crash:**
-
-   ```bash
-   pactl set-default-sink alsa_output.pci-0000_00_1f.3.analog-stereo
-   ```
-
-   (Replace with your actual sink name from `pactl list sinks short`)
-
-4. **Remove leftover null sink:**
-   ```bash
-   pactl unload-module module-null-sink
-   ```
-
----
-
-## For Developers
-
-### Installation from Source
-
-Recommended to be done in a separate conda environment.
+**Linux:** restore your real default output and remove leftover Poise sinks, for example after a crash:
 
 ```bash
-conda create -n poise python=3.10
-conda activate poise
+poise --reset-audio
 ```
 
-1. Clone the repository:
+**Windows:** Poise needs VB-Cable. If **CABLE Output** is missing from your recording devices, run `Poise_Setup.exe` again, or use **Install VB-Cable** in the error dialog.
+
+</details>
+
+<details>
+<summary><b>Dropouts or unprocessed moments</b></summary>
+
+- Switch to **GTCRN**: about a third of DeepFilterNet3's CPU load.
+- Keep **Skip silence** on (the default).
+- Close heavy background apps; the **load** readout should stay well below 1.0.
+
+</details>
+
+<details>
+<summary><b>Advanced: trade delay for headroom</b></summary>
+
+Each frame gets a fixed deadline; a frame that misses it plays unprocessed. The margin adds directly to the delay, so raise it for fewer misses or lower it for less delay:
+
+```bash
+POISE_PW_MARGIN_MS=30 poise      # Linux, default 21
+```
+
+On Windows, set `POISE_WIN_MARGIN_MS` as a user environment variable and restart Poise.
+
+</details>
+
+## Development
+
+### From source
 
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
 cd poise-voice-isolator
+conda create -n poise python=3.10 && conda activate poise
+
+pip install -e ".[linux]"   # TUI: textual, pulsectl
+pip install -e ".[gui]"     # desktop app: PyQt6
 ```
 
-2. Install required dependencies:
+| Run | Command |
+|:--|:--|
+| Terminal UI (Linux) | `poise` · `python -m stream_denoiser.tui` |
+| Desktop app (Windows) | `python -m stream_denoiser.gui` |
+| Headless CLI | `poise-cli` · `python -m stream_denoiser` |
+| Tests | `pytest` (live-audio tests are marked `integration`) |
+
+> [!NOTE]
+> On newer glibc, a pip-installed ONNX Runtime may fail with `cannot enable executable stack as shared object requires`. `poise --fix-execstack` clears the flag with `patchelf`. Release binaries ship already patched.
+
+### Native audio paths
+
+Both compile the same fixed-delay core, `native/core/poise_core.c`. Without them Poise falls back to the pulse-simple loop (Linux) or PortAudio streams (Windows).
 
 ```bash
-pip install onnxruntime numpy sounddevice scipy PyQt6
-
-# For better resampling performance (optional):
-pip install samplerate
+make -C native/poise_pw        # Linux:   stream_denoiser/native/libpoise_pw.so (needs PipeWire headers)
+make -C native/poise_wasapi    # Windows: stream_denoiser/native/poise_wasapi.dll (mingw-w64)
 ```
 
-3. Linux: build the PipeWire node (needs a C compiler and the PipeWire
-   headers: `pipewire` on Arch, `libpipewire-0.3-dev` on Debian/Ubuntu).
-   Without it Poise falls back to the pulse-simple backend.
+> [!TIP]
+> To measure real A/V offset (on hardware, not a VM), `native/latmeter` plays noise into CABLE Input the way a video player does and records the speakers; `tools/win_latency.py` runs Poise beside it under load:
+> ```bash
+> make -C native/latmeter
+> python tools/win_latency.py run --backend wasapi-proc --phases idle:60,cpu:60
+> ```
 
-```bash
-make -C native/poise_pw    # -> stream_denoiser/native/libpoise_pw.so
-```
+<details>
+<summary><b>TUI themes</b></summary>
 
-4. Windows: the native audio path, `poise_wasapi.dll` (CABLE Output to
-   the speakers with a fixed delay, on an MMCSS thread). Cross-compiled
-   with mingw-w64 like `rnnoise.dll`; without it Poise falls back to
-   PortAudio streams (`POISE_BACKEND=portaudio` forces that).
-
-```bash
-make -C native/poise_wasapi    # -> stream_denoiser/native/poise_wasapi.dll
-```
-
-   Both native paths compile the same fixed-delay core,
-   `native/core/poise_core.c`, into their library.
-
-   To measure the delay on real devices (not in a VM: virtual audio
-   timing there is nothing like a sound card's), `native/latmeter` plays
-   noise into CABLE Input the way a video player does and records the
-   speakers; `tools/win_latency.py` runs Poise beside it under chosen
-   load and reports the A/V offset over time, split at CABLE Output.
-
-```bash
-make -C native/latmeter        # -> build/latmeter.exe
-python tools/win_latency.py run --backend wasapi-proc --phases idle:60,cpu:60
-```
-
-#### Usage
-
-##### CLI Mode
-
-Process system audio with default settings (AAD enabled, automatic audio device switching):
-
-```bash
-# Using the modular package (recommended)
-python -m stream_denoiser
-
-# Or using the entry point script
-python -m stream_denoiser.cli
-```
-
-### Available Options
-
-- `--model`: Denoising engine — `deepfilternet3` (default, music/voice isolation), `gtcrn` (tiny speech-denoising model, light on CPU, lower delay) or `rnnoise` (light noise suppression, same model as EasyEffects)
-- `--onnx`: Path to ONNX model file (deepfilternet3 only, default: the vendored `stream_denoiser/models/denoiser_model_df3.onnx`)
-- `--input-device`: Input device ID for system audio capture
-- `--output-device`: Output device ID for audio playback
-- `--no-aad`: Disable Audio Activity detection
-- `--aad-threshold`: AAD threshold in dB (default: -40.0, lower = more sensitive)
-- `--atten-lim-db`: Attenuation limit in dB (default: -60.0)
-- `--list-devices`: List all available audio devices and exit
-- `--no-vb-cable`: Disable automatic VB Cable switching (use current default device). On Linux, keeps the default sink as it is; route apps to the Poise sink yourself
-- `--vb-cable-name`: Custom name for VB Cable device (auto-detected if not specified)
-- `--backend`: `auto` (default; the PipeWire node on Linux, the native WASAPI path on Windows, when available), `pipewire` or `pulse` (Linux), `wasapi` or `portaudio` (Windows). Also `POISE_BACKEND`
-- `POISE_PW_MARGIN_MS` (environment): extra time each frame gets on the PipeWire node before it plays unprocessed (default 21 ms; adds to the fixed delay)
-- `POISE_WIN_MARGIN_MS` (environment): the same on the Windows native path
-
-### Models
-
-- **deepfilternet3** (default): DeepFilterNet3 (`denoiser_model_df3.onnx` + states, vendored in `stream_denoiser/models/`). Removes music and keeps vocals/speech, 512-sample frames. RTF ~0.12 (Windows, Ryzen 5 4500U laptop on AC). No extra install.
-
-  The vendored file is the original DF3 export rewritten by `tools/optimize_df3.py` into an equivalent graph (same inputs, outputs and states; output within 3e-7 of the original's) that runs ~15% faster: its inverse FFT was a 4.2 MB matrix product, now two small MatMuls. The script rebuilds the file from the original (`git show 05c081a:stream_denoiser/models/denoiser_model_df3.onnx`, checked by SHA-256) and needs the `onnx` package; Poise itself does not.
-- **gtcrn**: [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) (`gtcrn.onnx`, 248 KB, vendored; the model Poise for Android uses), an ultra-lightweight speech-enhancement network. It runs at 16 kHz: each 768-sample frame (16 ms) is low-passed and decimated to 16 kHz, enhanced one STFT hop at a time, and interpolated back, so its output stops at ~7.6 kHz. Removes broadband noise about as well as DeepFilterNet3, but like RNNoise it does *not* remove music. Its model delay is 18 ms (DeepFilterNet3: 32 ms), so Poise's total delay is ~9 ms lower. Light on CPU: RTF ~0.04, vs ~0.12 for DeepFilterNet3 and ~0.08 for the bundled rnnoise.dll (Windows, Ryzen 5 4500U laptop on AC). No extra install.
-
-  The vendored file is upstream's streaming export rewritten by `tools/optimize_gtcrn.py` into an equivalent graph (same inputs, outputs and caches; output within 1e-6 of upstream's) that ONNX Runtime runs ~2.2x faster: at this size its per-operator overhead, not the arithmetic, sets the cost. The script rebuilds the file from upstream's `gtcrn.onnx` (checked by SHA-256) and needs the `onnx` package; Poise itself does not.
-- **rnnoise**: lightweight stationary-noise suppression using the system `librnnoise` (same model EasyEffects uses). Low CPU, no model download — but it does *not* remove music. Good for fans, hiss, and weak machines.
-
-```bash
-# DeepFilterNet3 mode (faster)
-python -m stream_denoiser --model deepfilternet3
-
-# Tiny speech-denoising model (light on CPU, leaves music in)
-python -m stream_denoiser --model gtcrn
-
-# Light noise-suppression mode
-python -m stream_denoiser --model rnnoise
-
-# TUI with RNNoise (press `m` to switch models)
-poise --model rnnoise
-```
-
-> **Linux note:** the RNNoise engine needs the `rnnoise` package, e.g. `sudo pacman -S rnnoise` on Arch or `sudo apt install librnnoise0` on Ubuntu/Debian.
-
-##### GUI Mode (Windows only)
-
-```bash
-# Run the Poise Voice Isolator GUI
-python -m stream_denoiser.gui
-```
-
-##### TUI Mode (Linux only)
-
-```bash
-# Run the Poise Voice Isolator TUI
-python -m stream_denoiser.tui
-```
-
-**TUI colors.** Press `t` to cycle the built-in themes: `abyss` (default), `verdant`, `mono`, `ultraviolet`, `ember`, `orchid`. The choice is saved in `~/.config/poise/tui.json` (or `$XDG_CONFIG_HOME/poise/tui.json`), where you can also set any color yourself, over the theme:
+Press `t` to cycle `abyss` (default), `verdant`, `mono`, `ultraviolet`, `ember`, `orchid`. The choice is saved in `$XDG_CONFIG_HOME/poise/tui.json` (usually `~/.config/poise/tui.json`), where any color can be overridden on top of the theme:
 
 ```json
 {
   "theme": "ember",
-  "colors": {
-    "accent": "#ff8800",
-    "border": "#3a3a3a"
-  }
+  "colors": { "accent": "#ff8800", "border": "#3a3a3a" }
 }
 ```
 
-Colors are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice_light`, `highlight`, `text`, `soft`, `muted`, `dim`, `border`, `groove`, `selection`, `scope_in`, `surface`, `on_accent`, `scrim`, `ok`, `warn`, `error`. Setting `accent` alone also shades `accent_dim` and `voice_light` from it. A bad value is skipped and noted in the events box at start.
+Values are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice_light`, `highlight`, `text`, `soft`, `muted`, `dim`, `border`, `groove`, `selection`, `scope_in`, `surface`, `on_accent`, `scrim`, `ok`, `warn`, `error`. Setting `accent` alone also shades `accent_dim` and `voice_light`. Invalid values are skipped and reported in the events box.
 
-### Package Structure
+</details>
+
+<details>
+<summary><b>Readouts</b></summary>
+
+| Readout | Meaning |
+|:--|:--|
+| **load** | Real-time factor; below 1.0 keeps up |
+| **frame** | Average inference time per frame |
+| **skipped** | Share of frames bypassed as silence |
+| **dry** | Frames that missed their deadline and played unprocessed |
+
+</details>
+
+<details>
+<summary><b>DeepFilterNet3 model interface</b></summary>
+
+A replacement passed with `--onnx` must match:
+
+- **Inputs:** `input_frame`, float32 `[512]` (512 samples at 48 kHz), plus 12 state tensors (norm states, STFT overlap buffers, GRU hidden states; shapes in `stream_denoiser/models/denoiser_model_df3_states.npz`).
+- **Outputs:** `enhanced_audio_frame`, float32 `[512]`, plus the 12 updated states as `new_<input_name>`, in input order.
+
+</details>
+
+### Layout
 
 <img src=".github/media/file-tree.png" alt="Poise file tree: root and core, signal (backends, engines, models), desktop app, terminal and native, ship, prove. Each file is tagged with its stop on the signal path." width="100%"/>
 
@@ -428,7 +298,7 @@ stream_denoiser/
 │   ├── rnnoise.py           # RNNoise
 │   └── rnnoise_lib.py       # ctypes binding for the RNNoise library
 ├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
-├── native/                  # Prebuilt Windows DLLs: poise_wasapi, rnnoise
+├── native/                  # Prebuilt libraries: poise_wasapi, rnnoise (.so and .dll)
 ├── gui/                     # Desktop GUI (PyQt6)
 │   ├── main_window.py
 │   ├── worker.py            # QThread audio worker, signals to the GUI
@@ -447,82 +317,65 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 
 </details>
 
-### Processing Flow
+## Reference
 
-<img src=".github/media/processing-flow.png" alt="Poise processing flow: capture, frame, gate (silence skips the model), isolate (DeepFilterNet3, GTCRN or RNNoise), polish, sync, play. 48 kHz engine rate, 10 ms frames, 76 ms end to end on Linux with DeepFilterNet3, about 190 ms on Windows." width="100%"/>
+<details>
+<summary><b>CLI reference</b></summary>
 
-### Model Requirements
+| Option | Effect |
+|:--|:--|
+| `--model {deepfilternet3,gtcrn,rnnoise}` | Engine (default `deepfilternet3`) |
+| `--onnx PATH` | Custom DeepFilterNet3 model file |
+| `--backend` | `auto`, `pipewire`, `pulse` (Linux) · `wasapi`, `portaudio` (Windows) |
+| `--source` / `--sink` | Pulse capture source / playback sink (Linux) |
+| `--input-device` / `--output-device` | Device IDs (Windows) |
+| `--list-devices` | List devices and exit |
+| `--no-aad` | Process silence too |
+| `--aad-threshold DB` | Skip below this level (default −40; lower is more sensitive) |
+| `--atten-lim-db DB` | Reduction strength (default −60) |
+| `--no-vb-cable` | Leave the default device alone; route apps yourself |
+| `--vb-cable-name NAME` | VB-Cable device name, if not auto-detected |
+| `--doctor` · `--reset-audio` · `--fix-execstack` | Linux repair tools |
 
-The ONNX model should have the following interface:
+</details>
 
-### Inputs
+<details>
+<summary><b>Environment variables</b></summary>
 
-- `input_frame`: Float32 array of shape `[512]` (512 samples @ 48kHz)
-- 12 state tensors (norm states, STFT overlap buffers, GRU hidden states —
-  see `stream_denoiser/models/denoiser_model_df3_states.npz` for shapes)
+| Variable | Effect |
+|:--|:--|
+| `POISE_BACKEND` | Same as `--backend` |
+| `POISE_PW_MARGIN_MS` · `POISE_WIN_MARGIN_MS` | Per-frame deadline margin; adds to the delay |
+| `POISE_ONNX_THREADS` | Inference threads (default 2 on Linux, 1 on Windows) |
+| `POISE_SKIP_HEALTH=1` | Skip the startup pre-flight |
+| `POISE_LOG_LEVEL` · `POISE_LOG_DIR` · `POISE_DISABLE_FILE_LOG=1` | Logging |
+| `POISE_UI_SCALE` · `POISE_REDUCE_MOTION=1` | Desktop app scale and motion |
 
-### Outputs
+</details>
 
-- `enhanced_audio_frame`: Float32 array of shape `[512]`
-- 12 updated state tensors (`new_<input_name>`, in input order)
+## Credits
 
-### Statistics
-
-During processing, the script/GUI displays real-time statistics:
-
-- **RTF**: Real-time factor (processing time / frame duration, <1.0 means real-time capable)
-- **Avg**: Average processing time per frame in milliseconds
-- **AAD bypass**: Percentage of frames skipped due to silence (the GUI's status bar instead shows `skip on/off`: whether it is skipping right now)
-- **Buffer status**: Input/output buffer fill levels
-
-##### Audio routing (how it works)
-
-On Linux with PipeWire (the default on current distributions), Poise runs
-inside PipeWire's processing graph, the way EasyEffects and PipeWire's own
-filter-chain do:
-
-1. Adds a virtual sink, **Poise Voice Isolator** (`Poise_Isolator`), and makes it the default (apps send audio there)
-2. Processes each graph cycle's input and hands the output to your real speakers in the same cycle
-3. Keeps the delay between the two fixed (about 76 ms with DeepFilterNet3, 67 ms with GTCRN) and reports it to PipeWire, so video players can hold the picture back to match
-4. Restores the original default on exit; if Poise is killed, the sink disappears with it
-
-If a frame isn't processed in time, that moment plays unprocessed (and the
-log counts it as `dry`) instead of the audio falling behind the video.
-
-Without PipeWire (or with `--backend pulse` / `POISE_BACKEND=pulse`), Poise
-uses the pulse-simple path instead: it creates a null sink
-(`Poise_Capture`), makes it the default, captures from its monitor, and
-plays the processed audio to your speakers.
-
-On Windows, Poise makes VB-Cable's **CABLE Input** the default playback
-device, captures **CABLE Output** and plays the processed audio to your
-speakers or headphones. VB-Cable ignores CABLE Input's own volume control,
-so while Poise runs it mirrors that control onto the output device: the
-volume keys, the taskbar slider and mute work as usual, and the output
-device keeps the level you leave it at when Poise stops.
-
-## Special Thanks
-
-DeepFilterNet (Rikorose) for the [DeepFilterNet3 model](https://github.com/Rikorose/DeepFilterNet).
-
-Mozilla/Xiph for [RNNoise](https://github.com/mozilla/rnnoise).
-
-Xiaobin Rong for the [GTCRN model](https://github.com/Xiaobin-Rong/gtcrn) (MIT; `gtcrn.onnx` is its official streaming export, rewritten into an equivalent, faster graph by `tools/optimize_gtcrn.py`).
-
-yuyun2000 for the speech enhancement [model](https://github.com/yuyun2000/SpeechDenoiser).
-
-## License
-
-MIT License
+| | |
+|:--|:--|
+| [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) | Hendrik Schröter (Rikorose) |
+| [GTCRN](https://github.com/Xiaobin-Rong/gtcrn) | Xiaobin Rong (MIT; official streaming export) |
+| [RNNoise](https://github.com/xiph/rnnoise) | Xiph.Org / Mozilla |
+| [SpeechDenoiser](https://github.com/yuyun2000/SpeechDenoiser) | yuyun2000 |
+| [VB-Cable](https://vb-audio.com/Cable/) | VB-Audio |
 
 ## Contributing
 
-I have no specific method of contribution, but I'm open to ideas, and all contributions are welcome.
+There is no formal process yet. Issues, ideas and pull requests are all welcome.
+
+## License
+
+[MIT](LICENSE)
 
 <div align="center">
+<br/>
 
-### Made with care by Chabandou
+**Made with care by Chabandou**
 
-[Star us on GitHub](https://github.com/chabandou/poise-voice-isolator) · [Report Bug](https://github.com/chabandou/poise-voice-isolator/issues) · [Request Feature](https://github.com/chabandou/poise-voice-isolator/issues)
+[Star on GitHub](https://github.com/chabandou/poise-voice-isolator) · [Report a bug](https://github.com/chabandou/poise-voice-isolator/issues) · [Request a feature](https://github.com/chabandou/poise-voice-isolator/issues)
 
 </div>
