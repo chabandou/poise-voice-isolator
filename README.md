@@ -434,58 +434,7 @@ stream_denoiser/
 
 ### Processing Flow
 
-```
-┌─────────────────┐
-│  System Audio   │
-│    (Input)      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Input Buffer    │
-│ (Ring Buffer)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Resampler       │◄─── Convert to 48kHz if needed
-│ (if needed)     │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Frame Splitter  │◄─── Engine frame size @ 48kHz (deepfilternet3: 512, gtcrn: 768, rnnoise: 480)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ AAD Check       │◄─── Skip processing if silence
-│ (optional)      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ ONNX Inference  │◄─── Denoiser model processing
-│ (with state)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Post-processing │◄─── Normalize, clip, remove DC
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Output Buffer   │
-│ (Ring Buffer)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Audio Output   │
-│   (Speakers)    │
-└─────────────────┘
-```
+<img src=".github/media/processing-flow.png" alt="Poise processing flow: capture, frame, gate (silence skips the model), isolate (DeepFilterNet3, GTCRN or RNNoise), polish, sync, play. 48 kHz engine rate, 10 ms frames, 76 ms end to end on Linux with DeepFilterNet3, about 190 ms on Windows." width="100%"/>
 
 ### Model Requirements
 
