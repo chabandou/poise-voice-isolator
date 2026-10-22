@@ -49,7 +49,7 @@
 
 <img src=".github/media/switch-on.webp" alt="Poise desktop app switching on: Start on the strength dial, the starting steps, then the lattice lights up and the headline reads Isolating voices" width="100%"/>
 
-Poise sits between your apps and your speakers. It takes the system mix (YouTube, streams, podcasts, calls), runs it through a neural speech model, and plays back only the voices. Turn it on once and forget it.
+Poise sits between your apps and your speakers. It takes the system mix (YouTube, streams, podcasts), runs it through a neural speech model, and plays back only the voices. Turn it on once and forget it.
 
 - **Strips music, keeps speech.** DeepFilterNet3 removes instrumentals and background noise while leaving voices intact. A halal-friendly way to watch and listen to online content.
 - **Stays in sync.** The delay is fixed and reported to the audio server, so video players hold the picture to match: 76 ms end to end on Linux.
