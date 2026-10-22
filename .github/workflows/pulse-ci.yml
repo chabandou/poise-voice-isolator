@@ -187,6 +187,8 @@ jobs:
     # Rebuild it from the sources (the Makefile's default mingw-w64) and fail
     # when the C API has moved on without it.
     runs-on: ubuntu-latest
+    # Takes about a minute; a hung apt mirror would otherwise hold it for 6 h.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Install mingw-w64
