@@ -383,54 +383,69 @@ Colors are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice
 
 ### Package Structure
 
+<img src=".github/media/file-tree.png" alt="Poise file tree: root and core, signal (backends, engines, models), desktop app, terminal and native, ship, prove. Each file is tagged with its stop on the signal path." width="100%"/>
+
+<details>
+<summary>The same tree as text</summary>
+
 ```
 stream_denoiser/
-├── tui/                     # Terminal UI (Linux)
-│   ├── __init__.py
-│   ├── __main__.py          # TUI entry point
-│   ├── app.py               # Main Textual app
-│   ├── styles.tcss          # TUI stylesheet
-│   └── widgets/             # TUI components
-│       ├── device_list.py   # Device selection widget
-│       ├── stats_panel.py   # Statistics display
-│       └── status_line.py   # Status bar widget
-├── gui/                     # Desktop GUI (Windows, PyQt6)
-│   ├── __init__.py
-│   ├── __main__.py
-│   ├── assets/              # Icons and images
-│   ├── widgets/             # Custom UI components
-│   ├── main_window.py
-│   ├── settings.py
-│   ├── styles.py
-│   ├── system_tray.py
-│   └── worker.py            # Audio processing thread
-├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
+├── __main__.py              # python -m stream_denoiser
+├── cli.py                   # Command-line interface
+├── audio_host.py            # The GUI/TUI's audio process
+├── session.py               # Builds the processor, runs the chosen loop
+├── audio_gc.py              # Garbage collector paused during a run
+├── processor.py             # Engine frames, dry mix, AAD bypass
+├── resampler.py             # Streaming resampler to 48 kHz
+├── aad.py                   # Audio Activity Detection
+├── sync.py                  # Capture backlog guard (pulse-simple fallback)
+├── backend_detection.py     # Backend availability checks
+├── device_utils.py          # Audio device utilities
+├── platform_utils.py        # Platform detection
+├── health.py                # Startup health checks and audio recovery (Linux)
+├── updates.py               # In-app updates (Windows installs)
+├── constants.py             # Global configuration
+├── logging_config.py        # Logging configuration
 ├── backends/                # Audio interface backends
+│   ├── choice.py            # Which backend the user asked for
 │   ├── pipewire_backend.py  # Linux: Poise as a PipeWire node (default)
 │   ├── pipewire_node.py     # ctypes binding for libpoise_pw.so (native/poise_pw)
 │   ├── pulse_backend.py     # Linux fallback: pulse-simple loop
+│   ├── pulse_simple.py      # ctypes binding for libpulse-simple
 │   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
 │   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
 │   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by both native nodes
 │   ├── node_loop.py         # Inference thread for either native node
 │   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
-│   └── platform/            # Platform-specific code
-│       ├── linux.py         # PulseAudio integration
-│       └── windows.py       # WASAPI support, VB-Cable switching
-├── processor.py             # Core ONNX model wrapper
-├── aad.py                   # Audio Activity Detection
-├── resampler.py             # Audio resampling
-├── device_utils.py          # Audio device utilities
-├── platform_utils.py        # Platform detection
-├── constants.py             # Global configurations
-├── session.py               # Builds the processor, runs the chosen loop
-├── audio_host.py            # The GUI/TUI's audio process
-├── cli.py                   # Command-line interface
-├── logging_config.py        # Logging configuration
-├── backend_detection.py     # Backend availability checks
-├── __init__.py
-└── __main__.py
+│   ├── _loop_util.py        # Helpers the loops share
+│   └── platform/            # linux.py (PulseAudio), windows.py (WASAPI, VB-Cable switching)
+├── engines/                 # Denoise engines
+│   ├── base.py              # DenoiseEngine base class
+│   ├── availability.py      # Which models can run here
+│   ├── onnx_model.py        # ONNX Runtime session and model lookup
+│   ├── deepfilternet3.py    # DeepFilterNet3 (ONNX)
+│   ├── gtcrn.py             # GTCRN (ONNX, 16 kHz)
+│   ├── rnnoise.py           # RNNoise
+│   └── rnnoise_lib.py       # ctypes binding for the RNNoise library
+├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
+├── native/                  # Prebuilt Windows DLLs: poise_wasapi, rnnoise
+├── gui/                     # Desktop GUI (PyQt6)
+│   ├── main_window.py
+│   ├── worker.py            # QThread audio worker, signals to the GUI
+│   ├── themes.py · styles.py · settings.py · system_tray.py · titlebar.py · updater.py
+│   ├── widgets/             # Dial, power button, model and device selectors, lattice, sky…
+│   └── assets/              # Icons and images
+└── tui/                     # Terminal UI (Textual)
+    ├── app.py               # Main Textual app
+    ├── styles.tcss          # TUI stylesheet
+    └── widgets/             # Device list, signal, isolation and events panels, model picker
+
+native/                      # C sources: core/ (shared delay), poise_pw/, poise_wasapi/, latmeter/
+installer/                   # Windows setup app (bootstrapper/), VB-Cable fetch
+docs/                        # Website (Vite + React); scripts/render-file-tree.mjs draws the image above
 ```
+
+</details>
 
 ### Processing Flow
 
