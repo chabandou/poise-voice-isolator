@@ -19,6 +19,8 @@ desktop.ini
 installer/windows/vbcable/
 # Built by native/poise_pw/Makefile (build-linux.sh runs it)
 stream_denoiser/native/libpoise_pw.so
+# Built by build-rnnoise-dll.sh linux (build-linux.sh runs it)
+stream_denoiser/native/librnnoise.so
 # Release binaries: CI builds and publishes these (build-linux.yml,
 # build-windows.yml); never commit them
 installer/linux/poise

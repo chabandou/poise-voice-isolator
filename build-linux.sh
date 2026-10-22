@@ -3,7 +3,7 @@
 # Poise Voice Isolator - Linux Build Script (Nuitka)
 #
 # Builds an optimized single-file executable.
-# Requires: Python 3.13, gcc, conda/mamba, libpipewire-0.3 headers
+# Requires: Python 3.13, gcc, git, curl, conda/mamba, libpipewire-0.3 headers
 #           (optional: the PipeWire node backend)
 #
 
@@ -123,6 +123,15 @@ else
 fi
 echo
 
+# RNNoise: bundled so the engine works without the distro package, on the
+# same pinned weights as the Windows DLL. Built once, reused after that.
+if [ ! -f stream_denoiser/native/librnnoise.so ]; then
+    echo "Building RNNoise (librnnoise.so)..."
+    CC="${SYS_CC:-/usr/bin/cc}" bash build-rnnoise-dll.sh linux
+fi
+echo "✓ RNNoise library ready"
+echo
+
 # Clean previous build
 rm -rf dist/__main__.* dist/poise
 
@@ -145,6 +154,7 @@ python -m nuitka \
     --include-data-files=stream_denoiser/models/gtcrn.onnx=stream_denoiser/models/gtcrn.onnx \
     --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
     --include-data-files=pyproject.toml=pyproject.toml \
+    --include-data-files=stream_denoiser/native/librnnoise.so=stream_denoiser/native/librnnoise.so \
     "${PW_NODE_ARGS[@]}" \
     --output-filename=poise \
     --output-dir=dist \

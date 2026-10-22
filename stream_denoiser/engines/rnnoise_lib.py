@@ -1,8 +1,8 @@
 """
 RNNoise library loading
 
-Finds and loads librnnoise (Linux) or the vendored rnnoise.dll (Windows)
-through ctypes. Kept apart from the engine (and numpy) so the UI can ask
+Finds and loads RNNoise through ctypes: the vendored build (librnnoise.so
+on Linux, else the system library; rnnoise.dll on Windows). Kept apart from the engine (and numpy) so the UI can ask
 whether RNNoise runs here without loading the audio code.
 """
 import ctypes
@@ -52,7 +52,14 @@ def _load_library() -> ctypes.CDLL:
         return _lib
 
     if sys.platform.startswith("linux"):
-        candidates = ["librnnoise.so.0", "librnnoise.so"]
+        # Bundled build first (build-rnnoise-dll.sh linux), so every install
+        # runs the same weights; then the distro library.
+        here = os.path.dirname(os.path.abspath(__file__))
+        candidates = [
+            os.path.normpath(os.path.join(here, "..", "native", "librnnoise.so")),
+            "librnnoise.so.0",
+            "librnnoise.so",
+        ]
         found = ctypes.util.find_library("rnnoise")
         if found and found not in candidates:
             candidates.append(found)
