@@ -226,6 +226,7 @@ def _record(msg, level=logging.INFO, name="stream_denoiser"):
 def test_log_lines_for_the_events_box():
     """One short line per record, or none when the screen says it
     already; a periodic sync summary is one sticky line."""
+    pytest.importorskip("textual.app")  # the tui package imports the app
     from stream_denoiser.tui.log_events import SYNC_KEY, LogLine, clean
 
     for covered in ("perf: frames=1 avg_ms=1.0", "engine ready: model=x",
