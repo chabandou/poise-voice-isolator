@@ -217,87 +217,82 @@ def test_processor_diagnostics_exposes_resampler():
     assert "aad_total" in diag
 
 
-def _import_status_line_without_textual():
-    """Import the status_line module with minimal textual stubs.
+def _record(msg, level=logging.INFO, name="stream_denoiser"):
+    return logging.makeLogRecord({"name": name, "levelno": level,
+                                  "levelname": logging.getLevelName(level),
+                                  "msg": msg, "args": None})
 
-    Loaded by path: the widgets package pulls in the whole Textual UI.
-    Neither the stubs nor the module stay in sys.modules: a stub textual
-    left behind would shadow the real one in later tests, or let
-    importorskip("textual") pass where Textual is not installed.
-    """
-    import importlib.util
-    import types
-    from pathlib import Path
-    textual = types.ModuleType("textual")
-    widgets = types.ModuleType("textual.widgets")
 
-    class Static:
-        def __init__(self, *args, **kwargs):
+def test_log_lines_for_the_events_box():
+    """One short line per record, or none when the screen says it
+    already; a periodic sync summary is one sticky line."""
+    from stream_denoiser.tui.log_events import SYNC_KEY, LogLine, clean
+
+    for covered in ("perf: frames=1 avg_ms=1.0", "engine ready: model=x",
+                    "run stop: frames=1", "backend: pipewire (1.4)",
+                    "Default sink: Poise_Isolator (was alsa)",
+                    "DeepFilterNet3 model loaded with optimizations"):
+        assert clean(_record(covered)) is None, covered
+    assert clean(_record("something", logging.DEBUG)) is None
+
+    assert clean(_record(
+        "sync: latency=76.0ms (delay=3648 engine=1536 samples) wet=900 "
+        "dry=0 late=2 skipped=0")) == LogLine(
+            "sync  latency 76 ms · 2 late", "info", SYNC_KEY)
+    assert clean(_record(
+        "sync: 12 frames (120 ms) played unprocessed; longest gap 40 ms"
+    )) == LogLine("sync  12 frames (120 ms) played unprocessed", "info",
+                  None)
+    assert clean(_record("Processing error: boom\nTraceback ...",
+                         logging.ERROR)) == LogLine(
+        "Processing error: boom", "error", None)
+
+
+def test_the_tui_shows_its_log_and_lets_go_of_it():
+    pytest.importorskip("textual.app")
+    import asyncio
+    from stream_denoiser.logging_config import _forward_handlers, get_logger
+    from stream_denoiser.tui import app as app_mod
+    from stream_denoiser.tui.widgets import EventsPanel
+
+    class Bare(app_mod.PoiseApp):
+        # Relative paths resolve next to the subclass's module.
+        CSS_PATH = __import__("pathlib").Path(app_mod.__file__).with_name(
+            "styles.tcss")
+
+        def _setup_logging(self):
             pass
 
-    widgets.Static = Static
-    reactive_mod = types.ModuleType("textual.reactive")
+        def _setup_cleanup_handlers(self):
+            pass
 
-    class _Reactive:
-        def __new__(cls, default=None):
-            return default
+        def _load_model(self):
+            self.engine = True
 
-        def __class_getitem__(cls, item):
-            return cls
+    async def run():
+        app = Bare()
+        app.audio.launch = lambda: None
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            log = get_logger("stream_denoiser.backends.pipewire_backend")
+            for n in (1, 2):
+                log.info(f"sync: latency=7{n}.0ms dry=0 late=0")
+            log.warning("sink busy, retry")
+            log.warning("sink busy, retry")
+            log.info("perf: frames=1")
+            await pilot.pause()
+            events = list(app.query_one(EventsPanel).events)
+            assert events[0].message == "sink busy, retry"
+            assert events[0].count == 2 and events[0].tag == "warn"
+            syncs = [e for e in events if e.message.startswith("sync")]
+            assert [e.message for e in syncs] == ["sync  latency 72 ms"]
+            assert not any("perf" in e.message for e in events)
+            handler = app._log_handler
+            await pilot.press("q")
+        assert handler not in _forward_handlers
+        assert handler not in log.handlers
 
-    reactive_mod.reactive = _Reactive
-    textual.widgets = widgets
-    stubs = {"textual": textual, "textual.widgets": widgets,
-             "textual.reactive": reactive_mod}
-    path = (
-        Path(__file__).resolve().parent.parent
-        / "stream_denoiser" / "tui" / "widgets" / "status_line.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "_status_line_with_stub_textual", path)
-    mod = importlib.util.module_from_spec(spec)
-    saved = {name: sys.modules.get(name) for name in stubs}
-    sys.modules.update(stubs)
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        for name, prev in saved.items():
-            if prev is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = prev
-    return mod
-
-
-def test_status_line_never_receives_log_records():
-    """The status line is notify()-only: no logging.Handler lives in the
-    widget module and no log-to-status wiring remains in the TUI app."""
-    mod = _import_status_line_without_textual()
-    assert not any(
-        isinstance(obj, type) and issubclass(obj, logging.Handler)
-        for obj in vars(mod).values()
-    ), "status_line module must not define a logging handler"
-
-    from pathlib import Path
-    app_src = (
-        Path(__file__).resolve().parent.parent
-        / "stream_denoiser" / "tui" / "app.py"
-    ).read_text()
-    for token in ("TUIStatusHandler", "log_handler", "set_widget"):
-        assert token not in app_src, f"app.py still references {token}"
-
-    # notify() remains the only way to update the widget: log traffic on
-    # the app logger leaves the widget untouched.
-    widget = mod.StatusLine()
-    widget.notify("Starting audio processing...")
-    assert widget.current_message == "Starting audio processing..."
-    logger = logging.getLogger("test-poise-status-line-unwired")
-    logger.handlers = []
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
-    logger.warning("something odd")
-    logger.error("boom")
-    assert widget.current_message == "Starting audio processing..."
+    asyncio.run(run())
 
 
 _REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]

@@ -1,8 +1,6 @@
-$fg: #e0e0e0;
-$dim: white;
-$border: #1a1a1a;
-$accent: #3be8ff;
-$running: #6eff25ff;
+/* The "Monitor" design. Colors are $poise-<role> variables from the
+   app's palette (palette.py), so a theme or the user's own colors
+   reach the stylesheet too. */
 
 /* Base background for the whole app: the terminal default, so the app
    blends with the terminal instead of painting a dark rectangle.
@@ -20,48 +18,40 @@ $running: #6eff25ff;
 /* State and surface rules that widget DEFAULT_CSS used to provide.
    They must live here: app CSS beats widget DEFAULT_CSS for the same
    property, so the `*` rule above would otherwise swallow them. */
-ModelPickerScreen > Vertical {
-    background: #1a1a1a;
-}
-
-ModelPickerScreen ListView {
-    background: #1a1a1a;
-}
-
-ModelPickerScreen ListItem {
-    background: #1a1a1a;
-}
-
+ModelPickerScreen > Vertical,
+ModelPickerScreen ListView,
+ModelPickerScreen ListItem,
+ModelPickerScreen Horizontal,
 ModelPickerScreen Label {
-    background: #1a1a1a;
+    background: $poise-surface;
 }
 
-ModelPickerScreen ListItem.-hovered {
-    background: $block-hover-background;
+ModelPickerScreen ListItem.-hovered,
+ModelPickerScreen ListItem.-hovered Horizontal,
+ModelPickerScreen ListItem.-hovered Label {
+    background: $poise-selection;
 }
 
-ModelPickerScreen ListItem.-highlight {
-    background: $accent;
-    color: #1a1a1a;
+/* The highlighted model: filled with the accent, dark text. */
+ModelPickerScreen ListItem.-highlight,
+ModelPickerScreen ListItem.-highlight Horizontal,
+ModelPickerScreen ListItem.-highlight Label {
+    background: $poise-accent;
+    color: $poise-on-accent;
 }
 
-ModelPickerScreen ListItem.-highlight > Label {
-    background: $accent;
-    color: #1a1a1a;
+ModelPickerScreen ListItem.-highlight .model-head Label {
+    text-style: bold;
 }
 
-#device-list ListItem.-hovered {
-    background: $block-hover-background;
+/* Textual's cursor bolds the whole item; only the name is bold here. */
+ModelPickerScreen ListView > ListItem.-highlight {
+    text-style: none;
 }
 
-#device-list ListItem.-highlight {
-    background: $accent;
-    color: #1a1a1a;
-}
-
-#device-list ListItem.-highlight > Label {
-    background: $accent;
-    color: #1a1a1a;
+/* No focus tint: it shows between the rows. */
+ModelPickerScreen ListView:focus {
+    background-tint: 0%;
 }
 
 /* The App node paints the screen base via App.render() (Screen defers to
@@ -74,140 +64,73 @@ PoiseApp {
 
 Screen {
     background: ansi_default;
-    color: $fg;
+    color: $poise-text;
     layout: vertical;
 }
 
-Screen.-running {
-    /* No global change needed, we target specific widgets */
+/* The model picker dims the screen behind it. After the Screen rule,
+   which would otherwise make it opaque (same specificity). */
+ModelPickerScreen {
+    background: $poise-scrim 55%;
 }
 
-#top-bar {
-    height: auto;
-    margin-bottom: 1;
-}
-
-#title-row {
-    width: auto;
-    height: 3;
-}
-
-#app-title {
-    width: auto;
-    color: $accent;
-    height: 3;
-    text-style: bold;
-    content-align: left top;
-}
-
-#app-subtitle {
-    width: auto;
-    color: white;
-    height: 3;
-    content-align: left middle;
-}
-
-#title-divider {
-    width: auto;
-    height: 3;
-    color: $accent;
-    margin: 0 1;
-}
-
-/* Screen.-running #app-title {
-    color: $running;
-} */
-
-/* 
-Header {
-    dock: top;
-    background: transparent;
-    color: $dim;
-}
-
-HeaderIcon {
-    color: transparent;
-}
-
-HeaderTitle {
-    color: $accent;
-    text-style: bold;
-}
-
-Screen.-running HeaderTitle {
-    color: $running;
-}
-*/
-
-Footer {
-    dock: bottom;
-    background: ansi_default;
-    color: #888888;
-    margin-top: 1;
-}
-
-FooterKey {
-    background: ansi_default;
-    color: #888888;
-    padding: 0 1;
-}
-
-FooterKey>.footer-key--key {
-    background: $accent;
-    color: #1a1a1a;
-    text-style: bold;
-    padding: 0 1;
-}
-
-/* Unavailable right now (e.g. model switch while processing). */
-FooterKey.-disabled>.footer-key--key {
-    background: $accent 35%;
-}
-
-/* NOTE: bare `.footer-key--*` selectors feed FooterKey's render-time
-   component styles (older Textual renders key/description as Text spans,
-   not child widgets, so descendant selectors match nothing there). */
-.footer-key--description,
-FooterKey>.footer-key--description {
-    padding: 0 0 0 1;
-    color: $fg;
-    background: ansi_default;
-}
-
-/* Screen.-running FooterKey>.footer-key--key {
-    color: $running;
-} */
-
-#main-container {
-    width: 1fr;
+#main {
     height: 1fr;
 }
 
-#panels-container {
-    layout: grid;
-    grid-size: 2 2;
-    grid-columns: 1fr 1fr;
-    grid-rows: 2fr 1fr;
-    grid-gutter: 1;
-    width: 1fr;
-    height: 1fr;
-}
-
-/* DeviceList and StatsPanel styles moved to bottom for layout grouping */
-
-DeviceList {
-    column-span: 1;
-    row-span: 1;
-    background: ansi_default;
-    border: round $accent;
-    border-title-color: $accent;
+/* Every panel. The title's line run (box.py) takes border-title-color,
+   so it must equal the border color in each state. */
+Box {
+    border: round $poise-border;
+    border-title-color: $poise-border;
     border-title-background: transparent;
-    border-title-style: bold;
-    padding: 1;
+    padding: 1 1 0 1;
+}
+
+Box:focus-within {
+    border: round $poise-accent;
+    border-title-color: $poise-accent;
+}
+
+#signal-panel {
+    height: auto;
+    padding: 0 1 1 1;
+}
+
+#signal-body {
+    height: auto;
+}
+
+LevelScope {
+    width: 1fr;
+    height: 13;
+}
+
+SessionStats {
+    width: 34;
+    height: auto;
+    margin-left: 2;
+    padding-left: 2;
+    border-left: solid $poise-groove;
+}
+
+#bottom-row {
+    height: 1fr;
+}
+
+#bottom-row > Box {
+    width: 1fr;
+    height: 1fr;
+}
+
+#isolation-body {
+    width: 1fr;
 }
 
 /* ListView paints $surface by default — keep the panel on terminal bg. */
 #device-list {
+    height: auto;
+    max-height: 1fr;
     background: ansi_default;
 }
 
@@ -219,190 +142,76 @@ DeviceList {
     background: ansi_default;
 }
 
-DeviceListItem {
-    background: ansi_default;
+#device-list:focus ListItem.-highlight {
+    background: $poise-selection;
 }
 
-DeviceListItem Label {
-    background: ansi_default;
+#device-list ListItem.-highlight > Label {
+    background: transparent;
 }
 
-AADPanel {
-    column-span: 1;
-    row-span: 1;
-    background: ansi_default;
-    border: round $accent;
-    border-title-color: $accent;
-    border-title-background: transparent;
-    border-title-style: bold;
-    padding: 1;
+#device-list:focus ListItem.-highlight > Label {
+    background: $poise-selection;
 }
 
-StatsPanel {
-    column-span: 1;
-    row-span: 2;
-    background: ansi_default;
-    border: round $accent;
-    border-title-color: $accent;
-    border-title-background: transparent;
-    border-title-style: bold;
-    padding: 1;
+#device-note {
+    margin-top: 1;
 }
 
-StatsPanel Rule {
-    color: #888888;
-    background: ansi_default;
-    margin: 0 0;
+#events-body {
+    width: 1fr;
+    height: 1fr;
+    overflow: hidden;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
-/* Removed dynamic color for Rule to keep it static light gray */
-/* 
-Screen.-running StatsPanel Rule {
-    color: $running;
-}
-*/
-
-#stats-container {
-    padding: 0 0;
-}
-
-.stat-row {
+KeyBar {
     height: 1;
     width: 1fr;
-    /* This creates space between items if width is available? 
-       Actually in Textual Horizontal, items stack. 
-       We need 1fr on the value to push it to the right with content-align. */
-}
-
-.stat-label {
-    width: auto;
-    color: $dim;
-}
-
-.stat-value {
-    width: 1fr;
-    content-align: right middle;
-    color: $accent;
-}
-
-.model-row {
-    height: auto;
-}
-
-#model-block {
-    width: 1fr;
-    height: auto;
-}
-
-#model-block Static {
-    width: 1fr;
-    height: 1;
-    content-align: right middle;
-}
-
-#val-model {
-    color: $accent;
-}
-
-.model-sub {
-    color: $accent;
-}
-
-/* Screen.-running .stat-value {
-    color: $running;
-} */
-
-StatusLine {
-    width: 1fr;
-    height: auto;
-    background: ansi_default;
-    align: right top;
-}
-
-#status-state {
-    width: 1fr;
-    height: 1;
-    content-align: right top;
-    background: ansi_default;
-}
-
-#status-text {
-    width: 1fr;
-    height: 1;
-    content-align: right top;
-    background: ansi_default;
 }
 
 Scrollbar {
     background: ansi_default;
-    color: $dim;
+    color: $poise-muted;
     width: 1;
 }
 
-/* Layout styles are in #panels-container grid above */
-
-/* Narrow terminals (<100 cols): stack panels vertically with page scroll,
-   drop the subtitle/divider from the title row to fit. */
-Screen.-narrow #panels-container {
-    layout: vertical;
+/* Narrow terminals (<100 cols): the stats go under the scope, the
+   boxes stack and the page scrolls. */
+Screen.-narrow #main {
     overflow-y: auto;
-    grid-size: 1 1;
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $poise-border;
+    scrollbar-color-hover: $poise-muted;
+    scrollbar-color-active: $poise-accent;
+    scrollbar-background: ansi_default;
+    scrollbar-background-hover: ansi_default;
+    scrollbar-background-active: ansi_default;
 }
 
-Screen.-narrow #device-panel {
-    height: 11;
+Screen.-narrow #signal-body {
+    layout: vertical;
 }
 
-Screen.-narrow #stats-panel {
-    height: 21;
-}
-
-Screen.-narrow #aad-panel {
-    height: 11;
-}
-
-Screen.-narrow #app-subtitle {
-    display: none;
-}
-
-Screen.-narrow #title-divider {
-    display: none;
-}
-
-#aad-container {
-    padding: 0 0;
-}
-
-.aad-row {
-    height: 1;
+Screen.-narrow SessionStats {
     width: 1fr;
+    margin: 1 0 0 0;
+    padding-left: 0;
+    border-left: none;
 }
 
-.aad-label {
-    width: auto;
-    color: $dim;
+Screen.-narrow #bottom-row {
+    layout: vertical;
+    height: auto;
 }
 
-.aad-value {
-    width: 1fr;
-    content-align: right middle;
-    color: $accent;
+Screen.-narrow #bottom-row > Box {
+    height: auto;
+    /* All four sides: a lone padding-bottom zeroes the others. */
+    padding: 1 1 1 1;
 }
 
-.aad-status {
-    width: 1fr;
-    content-align: right middle;
-    color: $accent;
-}
-
-.aad-hint {
-    width: 1fr;
-    content-align: center middle;
-    color: #888888;
-}
-
-.aad-bar {
-    width: 1fr;
-    content-align: center middle;
-    color: $accent;
+Screen.-narrow #events-panel {
+    height: 9;
 }

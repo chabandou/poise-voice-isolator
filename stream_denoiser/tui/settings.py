@@ -1,9 +1,11 @@
 """
 TUI Settings
 
-The choices a user makes in the TUI (model, output device, AAD threshold),
-kept across sessions in $XDG_CONFIG_HOME/poise/tui.json. The GUI keeps its
-own through QSettings; the TUI does not depend on Qt.
+The choices a user makes in the TUI (model, output device, AAD threshold,
+strength, color theme), kept across sessions in
+$XDG_CONFIG_HOME/poise/tui.json, plus colors of their own set there by
+hand. The GUI keeps its own through QSettings; the TUI does not depend
+on Qt.
 
 Reading never fails: a missing, unreadable or malformed file, or a bad
 value in it, gives the default for that setting.
@@ -18,6 +20,10 @@ from ..constants import ALL_MODELS
 
 AAD_MIN_DB = -80.0
 AAD_MAX_DB = 0.0
+# Strength (the engines' attenuation limit), the GUI dial's range: past
+# -50 dB the leftover noise is below the model's own residual.
+ATTEN_MIN_DB = -50.0
+ATTEN_MAX_DB = -10.0
 
 _logger = logging.getLogger("stream_denoiser")
 
@@ -73,6 +79,34 @@ class TuiSettings:
     @aad_threshold_db.setter
     def aad_threshold_db(self, value: float) -> None:
         self._set("aad_threshold_db", float(value))
+
+    @property
+    def atten_lim_db(self) -> Optional[float]:
+        value = self._data.get("atten_lim_db")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return max(ATTEN_MIN_DB, min(ATTEN_MAX_DB, float(value)))
+
+    @atten_lim_db.setter
+    def atten_lim_db(self, value: float) -> None:
+        self._set("atten_lim_db", float(value))
+
+    @property
+    def theme(self) -> Optional[str]:
+        """A palette theme name (checked by palette.apply)."""
+        value = self._data.get("theme")
+        return value if isinstance(value, str) and value else None
+
+    @theme.setter
+    def theme(self, value: str) -> None:
+        self._set("theme", value)
+
+    @property
+    def colors(self) -> dict:
+        """The user's own colors, role -> color, over the theme. Only
+        ever edited by hand (checked by palette.apply)."""
+        value = self._data.get("colors")
+        return dict(value) if isinstance(value, dict) else {}
 
     def _set(self, key: str, value) -> None:
         if self._data.get(key) == value:
