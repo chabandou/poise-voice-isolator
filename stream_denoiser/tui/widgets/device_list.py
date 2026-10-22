@@ -1,13 +1,20 @@
 """
 Device List Widget
 
-Displays available PulseAudio output sinks (by name) with selection.
+Box 3: the PulseAudio output sinks (by name). The one in use carries a
+gold dot; ↑ ↓ move, enter picks. Locked while a session runs (the sink
+is chosen at start).
 """
+from typing import List, Optional, Tuple
+
 from textual.message import Message
-from textual.widgets import Static, ListView, ListItem, Label
-from textual.containers import Vertical
 from textual.reactive import reactive
-from typing import List, Tuple, Optional
+from textual.widgets import Label, ListItem, ListView, Static
+
+from .. import palette as P
+from .box import Box
+
+NAME_MAX = 40
 
 
 class DeviceListItem(ListItem):
@@ -17,21 +24,37 @@ class DeviceListItem(ListItem):
         super().__init__()
         self.sink_name = sink_name
         self.device_name = description
+        self.in_use = False
 
     def compose(self):
-        # Truncate long names
-        display_name = self.device_name[:40] + "..." if len(self.device_name) > 43 else self.device_name
-        yield Label(f"{display_name}")
+        yield Label(self._text())
+
+    def _text(self) -> str:
+        name = self.device_name
+        if len(name) > NAME_MAX + 3:
+            name = name[:NAME_MAX] + "..."
+        name = name.replace("[", "\\[")
+        if self.in_use:
+            return f"[{P.GOLD}]●[/] [b]{name}[/]"
+        return f"  [{P.MUTED}]{name}[/]"
+
+    def repaint(self) -> None:
+        try:
+            self.query_one(Label).update(self._text())
+        except Exception:
+            pass
+
+    def set_in_use(self, in_use: bool) -> None:
+        if in_use != self.in_use:
+            self.in_use = in_use
+            try:
+                self.query_one(Label).update(self._text())
+            except Exception:
+                pass
 
 
-class DeviceList(Static):
+class DeviceList(Box):
     """Widget to display and select audio output sinks (Pulse names)."""
-
-    DEFAULT_CSS = """
-    DeviceList {
-        border: heavy $border;
-    }
-    """
 
     selected_device: reactive[Optional[str]] = reactive(None)
 
@@ -43,18 +66,38 @@ class DeviceList(Static):
             self.sink_name = sink_name
 
     def __init__(self, preferred: Optional[str] = None, **kwargs) -> None:
-        super().__init__(**kwargs)
+        super().__init__(number=3, label="output",
+                         right=lambda: f"[{P.ACCENT}]r[/] [{P.MUTED}]refresh[/]",
+                         **kwargs)
         # The sink to select whenever it is present (the last one picked).
         self.preferred = preferred
         self.devices: List[Tuple[str, str]] = []  # (sink_name, description)
-        self.border_title = "\\[ OUTPUT DEVICES ]"
 
     def compose(self):
         yield ListView(id="device-list")
+        yield Static("", id="device-note")
 
     def on_mount(self) -> None:
         """Load devices when widget mounts."""
         self.refresh_devices()
+
+    def watch_selected_device(self, sink_name: Optional[str]) -> None:
+        for item in self.query(DeviceListItem):
+            item.set_in_use(item.sink_name == sink_name)
+
+    def set_locked(self, locked: bool) -> None:
+        """While a session runs the sink cannot change."""
+        try:
+            self.query_one("#device-list", ListView).disabled = locked
+            self.query_one("#device-note", Static).update(
+                f"[{P.DIM}]  locked while isolating[/]" if locked else "")
+        except Exception:
+            pass
+
+    def _note(self, message: str, level: str = "info") -> None:
+        note = getattr(self.app, "note", None)
+        if note is not None:
+            note(message, level)
 
     def refresh_devices(self) -> None:
         """Refresh the sink list from PulseAudio."""
@@ -101,14 +144,11 @@ class DeviceList(Static):
                 except Exception:
                     list_view.index = 0
                 self.selected_device = selected
+                # New items: mark the one in use even if it did not change.
+                self.watch_selected_device(selected)
             else:
                 self.selected_device = None
-                try:
-                    from .status_line import StatusLine
-                    status_line = self.app.query_one("#status-line", StatusLine)
-                    status_line.notify("No PulseAudio sinks found", "error")
-                except Exception:
-                    pass
+                self._note("No PulseAudio sinks found", "error")
         except Exception:
             self.devices = []
             self.selected_device = None
@@ -119,12 +159,7 @@ class DeviceList(Static):
             self.selected_device = event.item.sink_name
             self.preferred = event.item.sink_name
             self.post_message(self.Picked(event.item.sink_name))
-            # Show feedback in status line
-            try:
-                from .status_line import StatusLine
-                status_line = self.app.query_one("#status-line", StatusLine)
-                # Truncate name for status
-                name = event.item.device_name[:30] + "..." if len(event.item.device_name) > 33 else event.item.device_name
-                status_line.notify(f"Selected: {name}", "success")
-            except Exception:
-                pass
+            name = event.item.device_name
+            if len(name) > 33:
+                name = name[:30] + "..."
+            self._note(f"output → {name}", "success")

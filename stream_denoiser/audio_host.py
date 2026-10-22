@@ -19,6 +19,7 @@ UI -> audio   {"cmd": "start", "config": {...}}     (see AudioHost.start)
 audio -> UI   {"event": "ready", "pid": n}
               {"event": "running", "backend": "pipewire"|"pulse"|"portaudio"|"wasapi"}
               {"event": "stats", "stats": {...}, "elapsed": s}
+                  stats["levels"]: [[in_db, out_db], ...] per 100 ms
               {"event": "error", "message": "...", "notice": "..."}
               {"event": "stopped", "stats": {...}}   ends every session
               {"event": "log", "name": "...", "level": n, "msg": "...",
@@ -33,6 +34,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from contextlib import contextmanager
 from typing import Callable, Optional
 
@@ -51,6 +53,8 @@ _logger = get_logger(__name__)
 STOP_TIMEOUT_SEC = 3.0
 # How often a running session sends stats.
 STATS_INTERVAL_SEC = 0.5
+# Level readings kept for the UI between takes (100 ms each).
+LEVELS_KEPT = 100
 
 AUDIO_ERROR_NOTICE = "Audio error. See log for details."
 CRASH_NOTICE = "Audio process stopped unexpectedly. See log for details."
@@ -139,7 +143,8 @@ class AudioHost:
 
     ``on_event(msg)`` runs on a reader thread for each event other than
     "log" (re-emitted into this process's loggers, so the log file keeps
-    one writer) and "stats" (kept in ``stats``). A session that ends on
+    one writer) and "stats" (kept in ``stats``; its level readings queue
+    for take_levels()). A session that ends on
     its own, through an error or a crash, ends with "stopped" like any
     other.
     """
@@ -152,6 +157,7 @@ class AudioHost:
         self._stopped.set()
         self.stats: dict = {}
         self.final_stats: dict = {}
+        self._levels: deque = deque(maxlen=LEVELS_KEPT)
 
     @property
     def alive(self) -> bool:
@@ -165,6 +171,16 @@ class AudioHost:
     @property
     def pid(self) -> Optional[int]:
         return self._proc.pid if self._proc is not None else None
+
+    def take_levels(self) -> list:
+        """[(in_db, out_db), ...] per 100 ms since the last take, oldest
+        first (the reader thread appends while this pops)."""
+        levels = []
+        while True:
+            try:
+                levels.append(tuple(self._levels.popleft()))
+            except IndexError:
+                return levels
 
     def launch(self) -> None:
         """Start the audio process unless it is up. Its imports take about
@@ -197,6 +213,7 @@ class AudioHost:
             raise RuntimeError("audio session already running")
         self.stats = {}
         self.final_stats = {}
+        self._levels.clear()
         msg = {"cmd": "start", "config": config}
         for attempt in range(2):
             # A process that died after the last check fails the send:
@@ -297,6 +314,7 @@ class AudioHost:
             _logger.info("audio process ready (pid %s)", msg.get("pid"))
         if kind == "stats":
             self.stats = msg.get("stats") or {}
+            self._levels.extend(self.stats.pop("levels", None) or ())
             return
         if kind == "stopped":
             self.final_stats = msg.get("stats") or self.stats
@@ -448,7 +466,8 @@ class _Control:
         native node's counters)."""
         self.channel.send({"event": "stats", "elapsed": elapsed,
                            "stats": {**(stats or {}),
-                                     **self.processor.get_diagnostics()}})
+                                     **self.processor.get_diagnostics(),
+                                     "levels": self.processor.levels.take()}})
 
     @contextmanager
     def signals(self):

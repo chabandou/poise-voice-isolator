@@ -40,6 +40,10 @@ OutputBaseFilename=PoiseCore
 OutputBaseFilename=Poise_Setup
 #endif
 SetupIconFile=stream_denoiser\gui\assets\icon-setup.ico
+; Tells Explorer to refresh its icon cache at the end of setup. Without it,
+; upgrading over an older Poise keeps showing the old shortcut icon,
+; because the shortcut path stays the same and the cached image is reused.
+ChangesAssociations=yes
 ; lzma2 at its strongest setting: a few percent smaller than plain lzma
 ; for the same payload, at the cost of a slower compile.
 Compression=lzma2/ultra64

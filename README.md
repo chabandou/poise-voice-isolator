@@ -367,6 +367,20 @@ python -m stream_denoiser.gui
 python -m stream_denoiser.tui
 ```
 
+**TUI colors.** Press `t` to cycle the built-in themes: `abyss` (default), `verdant`, `mono`, `ultraviolet`, `ember`, `orchid`. The choice is saved in `~/.config/poise/tui.json` (or `$XDG_CONFIG_HOME/poise/tui.json`), where you can also set any color yourself, over the theme:
+
+```json
+{
+  "theme": "ember",
+  "colors": {
+    "accent": "#ff8800",
+    "border": "#3a3a3a"
+  }
+}
+```
+
+Colors are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice_light`, `highlight`, `text`, `soft`, `muted`, `dim`, `border`, `groove`, `selection`, `scope_in`, `surface`, `on_accent`, `scrim`, `ok`, `warn`, `error`. Setting `accent` alone also shades `accent_dim` and `voice_light` from it. A bad value is skipped and noted in the events box at start.
+
 ### Package Structure
 
 ```

@@ -116,7 +116,9 @@ def test_session_streams_stats_until_stopped(monkeypatch):
         channel.inbox.append({"cmd": "stop"})
         while not should_stop():
             pass
-        processor.process_chunk(np.full(480, 0.1, dtype=np.float32))
+        # 100 ms of input: one level reading for the TUI's scope.
+        for _ in range(10):
+            processor.process_chunk(np.full(480, 0.1, dtype=np.float32))
         on_stats({}, 2.0)
         return {"empty_reads": 3}
 
@@ -126,10 +128,26 @@ def test_session_streams_stats_until_stopped(monkeypatch):
     stats = channel.events("stats")
     assert stats and stats[-1]["elapsed"] == 2.0
     assert stats[-1]["stats"]["aad_threshold_db"] == -50.0
+    assert stats[0]["stats"]["levels"] == []
+    (level_in, level_out), = stats[-1]["stats"]["levels"]
+    assert level_in == -20.0  # RMS of a constant 0.1
+    assert level_out <= 0.0
     final = channel.events("stopped")
     assert len(final) == 1 and channel.sent[-1]["event"] == "stopped"
     assert final[0]["stats"]["empty_reads"] == 3
-    assert final[0]["stats"]["aad_total"] == 1
+    assert final[0]["stats"]["aad_total"] == 10
+    assert "levels" not in final[0]["stats"]
+
+
+def test_host_queues_levels_until_taken():
+    host = ah.AudioHost()
+    host._dispatch({"event": "stats", "stats": {"rtf": 0.1,
+                                                "levels": [[-20, -30]]}})
+    host._dispatch({"event": "stats", "stats": {"levels": [[-21, -31],
+                                                           [-22, -32]]}})
+    assert "levels" not in host.stats
+    assert host.take_levels() == [(-20, -30), (-21, -31), (-22, -32)]
+    assert host.take_levels() == []
 
 
 def test_session_failure_sends_the_notice_then_stops(monkeypatch):
@@ -367,7 +385,7 @@ def test_tui_starts_its_audio_process_and_follows_its_events(tui):
     which once made every spawn fail."""
     import asyncio
     from stream_denoiser.tui.app import AudioEvent
-    from stream_denoiser.tui.widgets import StatusLine
+    from stream_denoiser.tui.widgets import EventsPanel
 
     async def run():
         app = tui(model="rnnoise")
@@ -375,15 +393,16 @@ def test_tui_starts_its_audio_process_and_follows_its_events(tui):
             await pilot.pause(0.2)
             assert app.audio.alive
             # A session that ends on its own resets the UI and keeps
-            # the reason on the status line.
+            # the reason as the newest event.
             app.is_processing = True
             app.post_message(AudioEvent({"event": "error",
                                          "notice": "Capture device not found."}))
             app.post_message(AudioEvent({"event": "stopped", "stats": {}}))
             await pilot.pause(0.2)
             assert not app.is_processing
-            status = app.query_one("#status-line", StatusLine)
-            assert status.current_message == "Capture device not found."
+            events = app.query_one(EventsPanel)
+            assert events.latest.message == "Capture device not found."
+            assert events.latest.level == "error"
             await pilot.press("q")
         assert not app.audio.alive
 

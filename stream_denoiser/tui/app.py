@@ -2,6 +2,10 @@
 Poise Voice Isolator TUI App
 
 Main Textual application with audio processing integration.
+
+The screen (the "Monitor" design): box 1 shows the signal in and out and
+the session's numbers, box 2 the isolation controls, box 3 the output
+device, box 4 recent events; the number keys focus them.
 """
 import asyncio
 import atexit
@@ -13,15 +17,37 @@ from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.message import Message
-from textual.widgets import Header, Footer, Rule, Static
 from textual.containers import Horizontal, Vertical
 from textual.binding import Binding
 
-from .settings import TuiSettings
-from .widgets import DeviceList, StatsPanel, StatusLine
+from .log_events import EventLogHandler, LogLine
+from . import palette as P
+from .settings import ATTEN_MAX_DB, ATTEN_MIN_DB, AAD_MAX_DB, AAD_MIN_DB, \
+    TuiSettings
+from .widgets.device_list import DeviceListItem
+from .widgets import (
+    Box, DeviceList, EventsPanel, IsolationPanel, KeyBar, LevelScope,
+    SessionStats, SignalPanel,
+)
 from ..audio_host import AudioHost
-from ..constants import DEFAULT_MODEL
+from ..constants import DEFAULT_AAD_THRESHOLD_DB, DEFAULT_MODEL, \
+    DEFAULT_SAMPLE_RATE, MODEL_INFO
 from ..logging_config import set_tui_mode, get_log_file_path
+
+# dB per key press.
+STRENGTH_STEP_DB = 5.0
+THRESHOLD_STEP_DB = 5.0
+# Out of the box: full reduction (the GUI dial's default).
+DEFAULT_STRENGTH_DB = ATTEN_MIN_DB
+
+
+class LogEvent(Message):
+    """A log record's line for the events box (log_events.py), posted
+    from whichever thread logged it."""
+
+    def __init__(self, line: LogLine) -> None:
+        super().__init__()
+        self.line = line
 
 
 class AudioEvent(Message):
@@ -33,28 +59,42 @@ class AudioEvent(Message):
         self.data = data
 
 
+def _clock(seconds: float) -> str:
+    mins, secs = divmod(int(seconds), 60)
+    hours, mins = divmod(mins, 60)
+    return f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
+
+
 class PoiseApp(App):
     """Poise Voice Isolator TUI Application."""
-    
-    TITLE = "[ POISE ISOLATOR ]"
+
+    TITLE = "Poise"
     CSS_PATH = "styles.tcss"
     ENABLE_COMMAND_PALETTE = False
-    
+
     BINDINGS = [
         Binding("space", "toggle_processing", "Start/Stop", priority=True),
-        Binding("m", "cycle_model", "Switch model"),
+        Binding("1", "focus_box(1)", "Focus box", show=False),
+        Binding("2", "focus_box(2)", "Focus box", show=False),
+        Binding("3", "focus_box(3)", "Focus box", show=False),
+        Binding("4", "focus_box(4)", "Focus box", show=False),
+        Binding("m", "cycle_model", "Model"),
+        Binding("t", "cycle_theme", "Theme"),
         Binding("r", "refresh_devices", "Refresh"),
-        Binding("minus", "decrease_threshold", "AAD -"),
-        Binding("plus", "increase_threshold", "AAD +"),
+        Binding("minus", "decrease_threshold", "Skip below -", show=False),
+        Binding("plus", "increase_threshold", "Skip below +", show=False),
         Binding("escape", "quit", "Quit", show=False),
         Binding("q", "quit", "Quit"),
     ]
-    
+
     def __init__(self, model: Optional[str] = None, **kwargs):
         """model: an explicit choice (--model) for this session only;
         None uses the last model picked, else the default."""
-        super().__init__(**kwargs)
+        # Colors first: the stylesheet is built in App.__init__.
         self.settings = TuiSettings()
+        self._color_problems = P.apply(self.settings.theme,
+                                       self.settings.colors)
+        super().__init__(**kwargs)
         self.model = model or self._saved_model()
         self.is_processing = False
         self.engine = None
@@ -68,15 +108,18 @@ class PoiseApp(App):
         self._audio_error: Optional[str] = None
         self._cleanup_done = False
         self._last_perf_log = 0.0
+        # Where the current burst of strength/threshold presses started.
+        self._burst_from: dict = {}
+        self._idle_backend: Optional[str] = None
         self._setup_logging()
         self._setup_cleanup_handlers()
-    
-    def _setup_logging(self) -> None:
-        """File logging on Linux; the status line is never log-driven.
 
-        The status line (upper right) is updated only via explicit,
-        UX-friendly ``StatusLine.notify()`` calls. No logging handler is
-        attached to it, so raw log records can never leak into line 2.
+    def _setup_logging(self) -> None:
+        """File logging on Linux; no console output under the TUI.
+
+        The events box shows the app's notes (``note()``) and, from mount,
+        its log cleaned up to one short line per record (log_events.py);
+        raw records and tracebacks stay in the file.
         """
         import logging
         import sys
@@ -97,7 +140,7 @@ class PoiseApp(App):
         logger = logging.getLogger('stream_denoiser')
         # Keep it file-only: drop console handlers, keep file handlers, and
         # attach the shared file handler in case this logger predates it.
-        # Nothing log-driven is attached to the status line widget.
+        # The events box's handler is attached at mount (_show_log).
         logger.propagate = False
         logger.handlers = [
             h for h in logger.handlers if isinstance(h, logging.FileHandler)
@@ -179,8 +222,36 @@ class PoiseApp(App):
             if not isinstance(f, ANSIToTruecolor)
         ]
 
+
+    def get_css_variables(self) -> dict:
+        """Textual's variables plus the palette's ($poise-<role>)."""
+        return {**super().get_css_variables(), **P.css_variables()}
+
+    def action_cycle_theme(self) -> None:
+        """Next built-in theme (the user's own colors stay on top)."""
+        name = P.next_theme()
+        P.apply(name, self.settings.colors)
+        self.settings.theme = name
+        self.refresh_css()
+        self._repaint()
+        self.note(f"theme {name}", key="theme")
+
+    def _repaint(self) -> None:
+        """Redraw everything that builds its colors in Python."""
+        for box in self.query(Box):
+            box._draw_title()
+        for widget in (IsolationPanel, SessionStats, EventsPanel, KeyBar):
+            try:
+                self.query_one(widget)._draw()
+            except Exception:
+                pass
+        for item in self.query(DeviceListItem):
+            item.repaint()
+        self.query_one(LevelScope).refresh()
+        self._draw_state()
+
     def on_resize(self, event) -> None:
-        """Toggle narrow layout below 100 columns (stack panels, trim title)."""
+        """Below 100 columns the boxes stack and the page scrolls."""
         try:
             self.screen.set_class(event.size.width < 100, "-narrow")
         except Exception:
@@ -188,34 +259,29 @@ class PoiseApp(App):
 
     def compose(self) -> ComposeResult:
         """Create the UI layout."""
-        # yield Header(show_clock=False)
-        
-        from .font import get_block_text
-        from .widgets import AADPanel
-        # Top bar: logo left, two-line status block right
-        with Horizontal(id="top-bar"):
-            with Horizontal(id="title-row"):
-                yield Static(get_block_text("POISE"), id="app-title")
-                yield Rule(orientation="vertical", id="title-divider")
-                yield Static("REAL-TIME\nVOICE\nISOLATOR", id="app-subtitle")
-            yield StatusLine(id="status-line")
-        
-        with Vertical(id="main-container"):
-            with Horizontal(id="panels-container"):
+        strength = self.settings.atten_lim_db
+        threshold = self.settings.aad_threshold_db
+        with Vertical(id="main"):
+            yield SignalPanel(id="signal-panel")
+            with Horizontal(id="bottom-row"):
+                yield IsolationPanel(
+                    strength_db=(DEFAULT_STRENGTH_DB if strength is None
+                                 else strength),
+                    threshold_db=(DEFAULT_AAD_THRESHOLD_DB if threshold is None
+                                  else threshold),
+                    id="isolation-panel")
                 yield DeviceList(preferred=self.settings.output_device,
                                  id="device-panel")
-                yield StatsPanel(id="stats-panel")
-                threshold = self.settings.aad_threshold_db
-                yield AADPanel(
-                    threshold_db=-40.0 if threshold is None else threshold,
-                    id="aad-panel")
-        
-        yield Footer()
-    
+                yield EventsPanel(id="events-panel")
+        yield KeyBar(id="key-bar")
+
     def on_mount(self) -> None:
         """Called when app is mounted."""
         # Log session header to file (Linux only) for remote diagnosis
         self._log_session_header()
+        self._show_log()
+        for problem in self._color_problems:
+            self.note(f"tui.json: {problem}", "warning")
 
         try:
             self.audio.launch()
@@ -224,11 +290,91 @@ class PoiseApp(App):
             logging.getLogger("stream_denoiser").warning(
                 "Could not start the audio process: %s", e)
 
+        self._show_backend(self._expected_backend())
         # Load ONNX model
         self._load_model()
+        self._draw_state()
+        # Not scrolled into view: a narrow screen opens on the scope.
+        self.query_one(IsolationPanel).focus(scroll_visible=False)
 
         # Start stats update timer
         self.set_interval(0.5, self._update_stats)
+
+    def _show_log(self) -> None:
+        """The log, cleaned up, in the events box from here on."""
+        from ..logging_config import forward_records
+        self._log_handler = EventLogHandler(
+            lambda line: self.post_message(LogEvent(line)))
+        forward_records(self._log_handler)
+        # The app's own logger (set up file-only in _setup_logging).
+        app_logger = logging.getLogger("stream_denoiser")
+        if self._log_handler not in app_logger.handlers:
+            app_logger.addHandler(self._log_handler)
+
+    def on_unmount(self) -> None:
+        handler = getattr(self, "_log_handler", None)
+        if handler is not None:
+            from ..logging_config import stop_forwarding
+            stop_forwarding(handler)
+            logging.getLogger("stream_denoiser").removeHandler(handler)
+            self._log_handler = None
+
+    def on_log_event(self, message: LogEvent) -> None:
+        line = message.line
+        try:
+            self.query_one(EventsPanel).add(
+                line.message, line.level, key=line.key,
+                sticky=line.key is not None)
+        except Exception:
+            pass
+
+    def action_focus_box(self, number: int) -> None:
+        for box in self.query(Box):
+            if box.number == number:
+                box.focus_box()
+                return
+
+    def note(self, message: str, level: str = "info",
+             tag: Optional[str] = None, key: Optional[str] = None) -> None:
+        """Explicit, UX-friendly event on screen (app thread only)."""
+        try:
+            self.query_one(EventsPanel).add(message, level, tag, key)
+        except Exception:
+            pass
+
+    def _expected_backend(self) -> Optional[str]:
+        """The backend a start would pick now (shown while idle)."""
+        try:
+            from ..backends.pipewire_backend import (
+                linux_backend_preference, select_linux_backend)
+            return select_linux_backend(linux_backend_preference())[0]
+        except Exception:
+            return None
+
+    def _show_backend(self, backend: Optional[str]) -> None:
+        self._idle_backend = backend
+        try:
+            self.query_one(IsolationPanel).update_values(
+                backend=backend or "—")
+        except Exception:
+            pass
+        self._draw_state()
+
+    def _draw_state(self) -> None:
+        """Box 1's top right: state, run time, backend and rate."""
+        backend = self.backend if self.is_processing else self._idle_backend
+        where = f"{backend} · " if backend else ""
+        where += f"{DEFAULT_SAMPLE_RATE // 1000} kHz"
+        if self.is_processing:
+            elapsed = _clock(time.time() - self.start_time)
+            state = (f"[{P.GREEN}]● isolating[/]  [{P.SOFT}]{elapsed}[/]  "
+                     f"[{P.MUTED}]{where}[/]")
+        else:
+            state = f"[{P.MUTED}]○ idle[/]  [{P.DIM}]{where}[/]"
+        try:
+            self.query_one(SignalPanel).set_right(state)
+        except Exception:
+            pass
 
     @staticmethod
     def _cpu_model() -> str:
@@ -274,57 +420,50 @@ class PoiseApp(App):
 
     def _load_model(self) -> None:
         """Validate the selected denoising engine is available."""
-        status_line = self.query_one("#status-line", StatusLine)
-        
+        label = MODEL_INFO.get(self.model, {}).get("label", self.model)
         try:
             from ..engines import create_engine
             from ..constants import DEFAULT_FRAME_SIZE
-            status_line.notify(f"Loading {self.model} engine...")
             engine = create_engine(self.model)
             frame_size = engine.required_frame_size or DEFAULT_FRAME_SIZE
             engine.close()
             self.engine = True  # marker: engine validated
-            self._show_model_on_panel(self.model, frame_size)
-            status_line.notify(f"Model '{self.model}' ready.", "success")
+            self._show_model(self.model, frame_size)
+            self.note(label, "success", tag="ready")
             logging.getLogger("stream_denoiser").info(
                 "engine ready: model=%s frame_size=%s", self.model, frame_size
             )
         except Exception as e:
             self.engine = None
-            # Single-line widget: show only the first line, log the rest.
+            self._show_model(self.model)
+            # One line on screen, the rest in the log.
             first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
-            status_line.notify(
-                f"Failed to load model '{self.model}': {first_line}", "error"
-            )
+            self.note(f"{label} failed to load: {first_line}", "error")
             _logger = logging.getLogger("stream_denoiser")
             _logger.warning(f"Model load failed: {self.model}: {first_line}")
             _logger.debug(f"Model load failed: {e!r}")
 
-    def _show_model_on_panel(self, model_id: str, frame_size=None) -> None:
-        """Pre-fill the performance panel's model block (works idle too)."""
+    def _show_model(self, model_id: str, frame_size=None) -> None:
+        """Model name in box 1 and box 2 (idle too)."""
+        label = MODEL_INFO.get(model_id, {}).get("label", model_id)
+        frame = (f"{frame_size}-frame @ {DEFAULT_SAMPLE_RATE // 1000} kHz"
+                 if frame_size else "")
         try:
-            from .widgets import StatsPanel
-            from ..constants import MODEL_INFO, DEFAULT_SAMPLE_RATE
-            panel = self.query_one("#stats-panel", StatsPanel)
-            info = MODEL_INFO.get(model_id, {})
-            panel.model = info.get("label", model_id)
-            panel.model_blurb = info.get("blurb", "")
-            if frame_size is not None:
-                panel.model_frame = f"{frame_size}-frame @ {DEFAULT_SAMPLE_RATE // 1000}kHz"
+            self.query_one(SessionStats).set_model(label, frame)
+            self.query_one(IsolationPanel).update_values(model=label)
         except Exception:
             pass
 
     def check_action(self, action: str, parameters) -> bool | None:
-        """Dim the model switch in the footer while processing."""
+        """No model switch while processing."""
         if action == "cycle_model" and self.is_processing:
             return None
         return True
 
     def action_cycle_model(self) -> None:
         """Open the model picker (blocked while running)."""
-        status_line = self.query_one("#status-line", StatusLine)
         if self.is_processing:
-            status_line.notify("Stop processing to change model", "warning")
+            self.note("stop to change the model", "warning")
             return
         try:
             from .widgets import ModelPickerScreen
@@ -333,7 +472,7 @@ class PoiseApp(App):
                 self._on_model_picked,
             )
         except Exception as e:
-            status_line.notify(f"Model switch failed: {e}", "error")
+            self.note(f"model switch failed: {e}", "error")
 
     def _on_model_picked(self, model_id) -> None:
         """Validate and apply the model chosen in the picker."""
@@ -342,74 +481,89 @@ class PoiseApp(App):
         if model_id != self.model:
             self.model = model_id
             self._load_model()
-            self.query_one("#status-line", StatusLine).notify(
-                f"Model: {model_id}")
         # Remember it only if it loads, so the next start does not fail.
         if self.engine is not None:
             self.settings.model = model_id
-    
+
     def action_toggle_processing(self) -> None:
         """Toggle audio processing on/off."""
         if self.is_processing:
             self._stop_processing()
         else:
             self._start_processing()
-    
+
     def action_refresh_devices(self) -> None:
         """Refresh the device list."""
-        device_list = self.query_one("#device-panel", DeviceList)
-        device_list.refresh_devices()
-        
-        status_line = self.query_one("#status-line", StatusLine)
-        status_line.notify("Devices refreshed")
+        if self.is_processing:
+            self.note("devices are locked while isolating", "warning")
+            return
+        self.query_one("#device-panel", DeviceList).refresh_devices()
+        self.note("devices refreshed")
 
     def on_device_list_picked(self, event: DeviceList.Picked) -> None:
         self.settings.output_device = event.sink_name
-    
+
+    def on_isolation_panel_adjust(self, event: IsolationPanel.Adjust) -> None:
+        if event.row == "strength" and event.step:
+            # Right: stronger (lower limit), as the bar fills that way.
+            self._adjust_strength(-event.step * STRENGTH_STEP_DB)
+        elif event.row == "skip" and event.step:
+            self._adjust_threshold(event.step * THRESHOLD_STEP_DB)
+        elif event.row == "model":
+            self.action_cycle_model()
+
     def action_increase_threshold(self) -> None:
-        """Increase AAD threshold (less sensitive)."""
-        self._adjust_threshold(5.0)
-    
+        """Raise the skip-silence threshold (more is skipped)."""
+        self._adjust_threshold(THRESHOLD_STEP_DB)
+
     def action_decrease_threshold(self) -> None:
-        """Decrease AAD threshold (more sensitive)."""
-        self._adjust_threshold(-5.0)
-    
+        """Lower the skip-silence threshold (less is skipped)."""
+        self._adjust_threshold(-THRESHOLD_STEP_DB)
+
     def _adjust_threshold(self, delta: float) -> None:
         """Adjust AAD threshold by delta dB."""
-        from .widgets import AADPanel
-        aad_panel = self.query_one("#aad-panel", AADPanel)
-        
-        # Clamp threshold between -80 and 0 dB
-        new_threshold = max(-80.0, min(0.0, aad_panel.threshold_db + delta))
-        aad_panel.set_threshold(new_threshold)
-        self.settings.aad_threshold_db = new_threshold
-        
+        panel = self.query_one(IsolationPanel)
+        old = panel.threshold_db
+        new = max(AAD_MIN_DB, min(AAD_MAX_DB, old + delta))
+        if new == old:
+            return
+        panel.update_values(threshold_db=new)
+        self.settings.aad_threshold_db = new
         # Update the running session (the next one starts with the panel's)
-        self.audio.set(aad_threshold_db=new_threshold)
-        
-        status_line = self.query_one("#status-line", StatusLine)
-        status_line.notify(f"AAD threshold: {new_threshold:.1f} dB")
-    
+        self.audio.set(aad_threshold_db=new)
+        self._note_change("skip below", "threshold", old, new)
+
+    def _adjust_strength(self, delta: float) -> None:
+        """Adjust the attenuation limit by delta dB."""
+        panel = self.query_one(IsolationPanel)
+        old = panel.strength_db
+        new = max(ATTEN_MIN_DB, min(ATTEN_MAX_DB, old + delta))
+        if new == old:
+            return
+        panel.update_values(strength_db=new)
+        self.settings.atten_lim_db = new
+        self.audio.set(atten_lim_db=new)
+        self._note_change("strength", "strength", old, new)
+
+    def _note_change(self, what: str, key: str, old: float,
+                     new: float) -> None:
+        """'strength -45 → -50 dB', one line per burst of presses."""
+        if not self.query_one(EventsPanel).merges(key):
+            self._burst_from[key] = old
+        self.note(f"{what} {self._burst_from[key]:.0f} → {new:.0f} dB",
+                  key=key)
+
     def _start_processing(self) -> None:
         """Start audio processing."""
-        status_line = self.query_one("#status-line", StatusLine)
-        
         if self.engine is None:
-            status_line.notify(f"Cannot start: model '{self.model}' not loaded", "error")
+            self.note(f"cannot start: model '{self.model}' not loaded",
+                      "error")
             return
-        
-        stats_panel = self.query_one("#stats-panel", StatsPanel)
+
         device_list = self.query_one("#device-panel", DeviceList)
-        
-        # Get selected output device
+        isolation = self.query_one(IsolationPanel)
         output_device = device_list.selected_device
-        
-        status_line.notify("Starting audio processing...")
-        self.screen.add_class("-running")
-        
-        # Update widgets running state
-        self.query_one("#stats-panel", StatsPanel).set_running(True)
-        
+
         # Backend: the PipeWire node when available (fixed delay; it routes
         # itself from the audio process), else pulse-simple through the
         # null sink set up here.
@@ -422,38 +576,36 @@ class PoiseApp(App):
             first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
             logging.getLogger("stream_denoiser").error(
                 "Cannot start: %s", e)
-            status_line.notify(f"Cannot start: {first_line}", "error")
-            self.screen.remove_class("-running")
-            stats_panel.set_running(False)
+            self.note(f"cannot start: {first_line}", "error")
             return
         logging.getLogger("stream_denoiser").info(
             "backend: %s (%s)", self.backend, reason)
 
         if self.backend == "pipewire":
             self.linux_router = None
-            status_line.notify("Routing through the Poise sink.", "success")
+            routed = "routed via the Poise node"
         else:
+            routed = None
             try:
                 from ..backends.platform.linux import LinuxAudioRouter
                 self.linux_router = LinuxAudioRouter(auto_switch=True)
                 if self.linux_router.get_monitor_source_name():
-                    status_line.notify("Null sink routing enabled.", "success")
+                    routed = "routed via the Poise sink"
                 else:
-                    status_line.notify("Using default audio capture.", "warning")
+                    self.note("using the default capture", "warning")
             except ImportError:
-                status_line.notify("Linux router not available.", "warning")
-        
+                self.note("Linux router not available", "warning")
+
         # Start the session in the audio process. Linux input is always
         # 48000 Hz; the audio process resolves pulse-simple's source and
         # sink (waiting for the null sink's monitor to appear).
-        from .widgets import AADPanel
         router = self.linux_router
         config = {
             "model": self.model,
             "backend": self.backend,
             "output_device": output_device or None,
-            "aad_threshold_db": self.query_one(
-                "#aad-panel", AADPanel).threshold_db,
+            "aad_threshold_db": isolation.threshold_db,
+            "atten_lim_db": isolation.strength_db,
             "routed": router is not None,
             "monitor_source": (router.get_monitor_source_name()
                                if router else None),
@@ -467,34 +619,36 @@ class PoiseApp(App):
         except Exception as e:
             logging.getLogger("stream_denoiser").error(
                 "Cannot start: %s", e)
-            status_line.notify("Cannot start: audio process unavailable.",
-                               "error")
+            self.note("cannot start: audio process unavailable", "error")
             if self.linux_router:
                 self.linux_router.restore_original_sink()
                 self.linux_router = None
-            self.screen.remove_class("-running")
-            stats_panel.set_running(False)
             return
 
         self.is_processing = True
         self.refresh_bindings()
-        status_line.set_running(True)
-    
+        self.screen.add_class("-running")
+        self.query_one(LevelScope).clear()
+        self.query_one(SessionStats).set_stats({})
+        isolation.update_values(running=True, backend=self.backend)
+        device_list.set_locked(True)
+        self.query_one(KeyBar).set_running(True)
+        self._draw_state()
+        self.note("session started")
+        if routed:
+            self.note(routed, "success")
+
     def _stop_processing(self) -> None:
         """Stop audio processing."""
-        status_line = self.query_one("#status-line", StatusLine)
-        
-        status_line.notify("Stopping audio processing...")
-        
         # End the session; returns once the audio process has closed its
         # streams and restored the routing it owns (the PipeWire node's).
         final = self.audio.stop()
-        
+
         # Restore audio routing
         if self.linux_router:
             self.linux_router.restore_original_sink()
             self.linux_router = None
-        
+
         self.is_processing = False
         self.refresh_bindings()
         if final.get("frame_count") is not None:
@@ -511,48 +665,52 @@ class PoiseApp(App):
                 time.time() - self.start_time if self.start_time else 0.0,
                 get_log_file_path(),
             )
-        status_line.set_running(False)
         self.screen.remove_class("-running")
-        self.query_one("#stats-panel", StatsPanel).set_running(False)
-        status_line.notify("Processing stopped.", "info")
-    
-    def _notify_status(self, message: str, level: str = "info") -> None:
-        """Explicit, UX-friendly status-line update (app thread only)."""
-        try:
-            self.query_one("#status-line", StatusLine).notify(message, level)
-        except Exception:
-            pass
+        self.query_one(SessionStats).set_stats(None)
+        self.query_one(IsolationPanel).update_values(
+            running=False, backend=self._idle_backend or "—")
+        self.query_one("#device-panel", DeviceList).set_locked(False)
+        self.query_one(KeyBar).set_running(False)
+        self._draw_state()
+        self.note(f"session stopped after "
+                  f"{_clock(time.time() - self.start_time)}")
 
     def _post_audio_event(self, data: dict) -> None:
         """AudioHost callback (its reader thread): hand over to the app."""
         self.post_message(AudioEvent(data))
 
     def on_audio_event(self, message: AudioEvent) -> None:
-        """Errors get a short status note (the log has the detail); a
-        session that ended on its own (error, crash) resets the UI."""
+        """Errors get a short note (the log has the detail); a session
+        that ended on its own (error, crash) resets the UI."""
         kind = message.data.get("event")
         if kind == "error":
             self._audio_error = (message.data.get("notice")
                                  or "Audio error. See log for details.")
-            self._notify_status(self._audio_error, "error")
+            self.note(self._audio_error, "error")
         elif kind == "stopped" and self.is_processing \
                 and not self.audio.running:
             self._stop_processing()
             if self._audio_error:
-                # Keep the reason up rather than "Processing stopped."
-                self._notify_status(self._audio_error, "error")
+                # Keep the reason on top rather than "session stopped".
+                self.note(self._audio_error, "error")
 
     def _update_stats(self) -> None:
         """Update stats display (called periodically)."""
+        if not self.is_processing:
+            return
+        self._draw_state()
+        try:
+            self.query_one(LevelScope).push(self.audio.take_levels())
+        except Exception:
+            pass
         # Sent by the audio process every 0.5 s; empty until the first.
         stats = self.audio.stats
-        if not self.is_processing or not stats:
+        if not stats:
             return
-        
+
         try:
-            stats_panel = self.query_one("#stats-panel", StatsPanel)
+            self.query_one(SessionStats).set_stats(stats)
             running_time = time.time() - self.start_time
-            stats_panel.update_stats(stats, running_time)
             # Throttled file snapshot (~every 5s): distinguishes AAD-bypass
             # zeros (silence) from genuine slow-inference RTF on weak CPUs.
             now = time.monotonic()
@@ -575,7 +733,7 @@ class PoiseApp(App):
                 )
         except Exception:
             pass
-    
+
     def action_quit(self) -> None:
         """Quit the application."""
         if self.is_processing:
