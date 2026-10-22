@@ -171,6 +171,14 @@ def forward_records(handler: logging.Handler) -> None:
         _attach(logger, handler)
 
 
+def stop_forwarding(handler: logging.Handler) -> None:
+    """Undo forward_records(handler)."""
+    if handler in _forward_handlers:
+        _forward_handlers.remove(handler)
+    for logger in _loggers.values():
+        logger.removeHandler(handler)
+
+
 def _coerce_level(level: Union[int, str]) -> int:
     if isinstance(level, int):
         return level

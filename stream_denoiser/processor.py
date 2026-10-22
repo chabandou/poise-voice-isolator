@@ -56,6 +56,55 @@ class FractionalBlock:
         self._err = 0.0
 
 
+# Floor for a level reading (an all-zero window has no dB value).
+LEVEL_FLOOR_DB = -100.0
+
+
+class LevelMeter:
+    """Input and output RMS level per window (100 ms by default), kept
+    until the UI takes them: the TUI's scope draws one column each.
+
+    One dot product per signal per frame; nothing else on the audio path.
+    """
+
+    def __init__(self, sample_rate: int, window_sec: float = 0.1,
+                 keep: int = 64):
+        self.window = max(1, int(sample_rate * window_sec))
+        self.keep = keep
+        self._in = self._out = 0.0
+        self._n = 0
+        self._levels: list = []
+
+    @staticmethod
+    def _db(mean_square: float) -> float:
+        if mean_square <= 0.0:
+            return LEVEL_FLOOR_DB
+        return round(max(LEVEL_FLOOR_DB, 10.0 * np.log10(mean_square)), 1)
+
+    def add(self, x: np.ndarray, y: np.ndarray) -> None:
+        """One frame: ``x`` into the engine, ``y`` out of the pipeline."""
+        self._in += float(np.dot(x, x))
+        self._out += float(np.dot(y, y))
+        self._n += len(x)
+        if self._n >= self.window:
+            self._levels.append((self._db(self._in / self._n),
+                                 self._db(self._out / self._n)))
+            if len(self._levels) > self.keep:
+                del self._levels[0]
+            self._in = self._out = 0.0
+            self._n = 0
+
+    def take(self) -> list:
+        """[(in_db, out_db), ...] since the last take, oldest first."""
+        levels, self._levels = self._levels, []
+        return levels
+
+    def reset(self) -> None:
+        self._in = self._out = 0.0
+        self._n = 0
+        self._levels = []
+
+
 class DenoiserAudioProcessor:
     """
     Audio processor for denoiser models.
@@ -146,6 +195,7 @@ class DenoiserAudioProcessor:
         # Statistics
         self.frame_count = 0
         self.total_processing_time = 0.0
+        self.levels = LevelMeter(target_sr)
 
         # Reusable scratch buffer for post-processing (avoids per-frame allocs)
         self._abs_scratch = np.zeros(frame_size, dtype=np.float32)
@@ -331,7 +381,9 @@ class DenoiserAudioProcessor:
         # Post-processing: makeup gain + limiter (bypassed frames too, so
         # loudness stays consistent and the boosted signal can't clip),
         # then output resampling (same length/timing for every frame).
-        return self._resample_output(self._postprocess_audio(audio_output))
+        audio_output = self._postprocess_audio(audio_output)
+        self.levels.add(audio_chunk, audio_output)
+        return self._resample_output(audio_output)
 
     def _process_engine(self, audio_chunk: np.ndarray) -> np.ndarray:
         """Run the engine on one frame, with stats and shape checks."""
@@ -493,6 +545,7 @@ class DenoiserAudioProcessor:
             self.output_resampler.reset()
         if self.aad:
             self.aad.reset()
+        self.levels.reset()
         if self._bypass_delay is not None:
             self._bypass_delay.reset()
         self._skipped_frames = 0
