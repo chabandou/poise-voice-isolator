@@ -38,7 +38,8 @@ jobs:
           # patchelf: clears a bad executable-stack flag on the ONNX
           #   Runtime library before Nuitka bundles it (see build-linux.sh)
           # libportaudio2: needed to import sounddevice at build time
-          sudo apt-get install -y patchelf libportaudio2
+          # libpipewire-0.3-dev: headers for the PipeWire node (libpoise_pw.so)
+          sudo apt-get install -y patchelf libportaudio2 libpipewire-0.3-dev
 
       - name: Install Python dependencies
         run: |
@@ -77,6 +78,11 @@ jobs:
       - name: Build RNNoise (bundled librnnoise.so)
         run: bash build-rnnoise-dll.sh linux
 
+      - name: Build the PipeWire node (libpoise_pw.so)
+        # Poise's default Linux backend; without it the binary falls back
+        # to pulse-simple (1.5.0-1 and -2 shipped that way).
+        run: make -C native/poise_pw
+
       - name: Build poise binary (Nuitka)
         run: |
           rm -rf dist/__main__.* dist/poise
@@ -97,6 +103,7 @@ jobs:
             --include-data-dir=stream_denoiser/tui=stream_denoiser/tui \
             --include-data-files=pyproject.toml=pyproject.toml \
             --include-data-files=stream_denoiser/native/librnnoise.so=stream_denoiser/native/librnnoise.so \
+            --include-data-files=stream_denoiser/native/libpoise_pw.so=stream_denoiser/native/libpoise_pw.so \
             --output-filename=poise \
             --output-dir=dist \
             poise_tui.py
