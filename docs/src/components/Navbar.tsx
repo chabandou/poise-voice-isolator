@@ -15,7 +15,6 @@ const navLinks: NavLink[] = [
   { label: 'How it works', href: '#how-it-works', sectionIds: ['how-it-works'] },
   { label: 'The app', href: '#app', sectionIds: ['app'] },
   { label: 'Features', href: '#features', sectionIds: ['features'] },
-  { label: 'Download', href: '#downloads', sectionIds: ['downloads'] },
 ];
 
 const Navbar = () => {
