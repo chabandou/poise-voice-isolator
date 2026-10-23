@@ -92,6 +92,7 @@ class PoiseApp(App):
         None uses the last model picked, else the default."""
         # Colors first: the stylesheet is built in App.__init__.
         self.settings = TuiSettings()
+        self._settings_stamp = self._read_settings_stamp()
         self._color_problems = P.apply(self.settings.theme,
                                        self.settings.colors)
         super().__init__(**kwargs)
@@ -236,6 +237,30 @@ class PoiseApp(App):
         self._repaint()
         self.note(f"theme {name}", key="theme")
 
+    def _read_settings_stamp(self) -> Optional[int]:
+        try:
+            return self.settings.path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _follow_settings_file(self) -> None:
+        """Pick up tui.json edited from outside (e.g. a wallpaper palette
+        written by Noctalia) and recolor live when theme or colors moved."""
+        stamp = self._read_settings_stamp()
+        if stamp == self._settings_stamp:
+            return
+        self._settings_stamp = stamp
+        old = self.settings
+        # Always adopt the file: the next save writes the whole of it back.
+        self.settings = TuiSettings(old.path)
+        if (self.settings.theme, self.settings.colors) == (old.theme,
+                                                           old.colors):
+            return
+        for problem in P.apply(self.settings.theme, self.settings.colors):
+            self.note(f"tui.json: {problem}", "warning", key="colors")
+        self.refresh_css()
+        self._repaint()
+
     def _repaint(self) -> None:
         """Redraw everything that builds its colors in Python."""
         for box in self.query(Box):
@@ -299,6 +324,7 @@ class PoiseApp(App):
 
         # Start stats update timer
         self.set_interval(0.5, self._update_stats)
+        self.set_interval(1.0, self._follow_settings_file)
 
     def _show_log(self) -> None:
         """The log, cleaned up, in the events box from here on."""

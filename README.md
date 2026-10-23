@@ -225,7 +225,7 @@ Press `t` to cycle `abyss` (default), `verdant`, `mono`, `ultraviolet`, `ember`,
 }
 ```
 
-Values are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice_light`, `highlight`, `text`, `soft`, `muted`, `dim`, `border`, `groove`, `selection`, `scope_in`, `surface`, `on_accent`, `scrim`, `ok`, `warn`, `error`. Setting `accent` alone also shades `accent_dim` and `voice_light`. Invalid values are skipped and reported in the events box.
+Values are hex, `rgb(...)` or color names. Roles: `accent`, `accent_dim`, `voice_light`, `highlight`, `text`, `soft`, `muted`, `dim`, `border`, `groove`, `selection`, `scope_in`, `surface`, `on_accent`, `scrim`, `ok`, `warn`, `error`. Setting `accent` alone also shades `accent_dim` and `voice_light`. Invalid values are skipped and reported in the events box. A running TUI picks up changes to the file within a second, so a wallpaper-palette hook (e.g. a Noctalia or matugen template) can recolor it live.
 
 </details>
 

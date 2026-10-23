@@ -377,3 +377,25 @@ def test_t_cycles_the_theme_and_keeps_own_colors(make_app):
     run(make_app(), steps)
     assert TuiSettings().theme == "verdant"
     assert TuiSettings().colors == {"highlight": "#ff0000"}
+
+
+def test_colors_follow_tui_json_while_running(make_app):
+    write(settings_path(), {"model": MODEL_RNNOISE,
+                            "colors": {"border": "#123456"}})
+
+    async def steps(app, pilot):
+        from stream_denoiser.tui import palette as P
+        from stream_denoiser.tui.widgets import Box
+        # Rewritten from outside, as a wallpaper palette hook would.
+        write(settings_path(), {"model": MODEL_RNNOISE,
+                                "colors": {"border": "#abcdef"}})
+        app._follow_settings_file()
+        await pilot.pause()
+        assert P.EDGE == "#ABCDEF"
+        box = app.query_one("#events-panel", Box)
+        assert box.styles.border_top[1].hex6 == "#ABCDEF"
+        # A later save keeps the new colors rather than the stale ones.
+        await pilot.press("minus")
+        await pilot.pause()
+    run(make_app(), steps)
+    assert TuiSettings().colors == {"border": "#abcdef"}
