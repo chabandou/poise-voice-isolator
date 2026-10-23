@@ -665,14 +665,16 @@ body {
 	initial-value: 0px;
 }
 
-/* The ring: clear 80 px inside its edge, full strength 22 px inside it. */
+/* The ring: clear 80 px inside its edge, full strength 22 px inside it.
+   --ping-r is in dial units and scaled here: Firefox misreads var() in
+   the keyframes of a registered property. */
 .lattice-ping {
 	opacity: 0;
 	--ping-mask: radial-gradient(
 		circle at var(--cx) var(--cy),
-		transparent calc(var(--ping-r) - 80px * var(--k)),
-		#000 calc(var(--ping-r) - 22px * var(--k)),
-		transparent var(--ping-r)
+		transparent calc((var(--ping-r) - 80px) * var(--k)),
+		#000 calc((var(--ping-r) - 22px) * var(--k)),
+		transparent calc(var(--ping-r) * var(--k))
 	);
 	-webkit-mask-image: var(--ping-mask);
 	mask-image: var(--ping-mask);
@@ -688,23 +690,23 @@ body {
 
 @keyframes lattice-ping-first {
 	from {
-		--ping-r: calc(70px * var(--k));
+		--ping-r: 70px;
 		opacity: 0.85;
 	}
 	to {
-		--ping-r: calc(720px * var(--k));
+		--ping-r: 720px;
 		opacity: 0;
 	}
 }
 
 @keyframes lattice-ping-loop {
 	0% {
-		--ping-r: calc(70px * var(--k));
+		--ping-r: 70px;
 		opacity: 0.32;
 		animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1);
 	}
 	45%, 100% {
-		--ping-r: calc(720px * var(--k));
+		--ping-r: 720px;
 		opacity: 0;
 	}
 }
