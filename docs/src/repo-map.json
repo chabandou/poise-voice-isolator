@@ -1,0 +1,899 @@
+{
+	"sections": [
+		{
+			"title": "Root & core",
+			"nodes": [
+				{
+					"name": "poise-voice-isolator/",
+					"path": "",
+					"children": [
+						{
+							"name": "run_poise_gui.py",
+							"path": "run_poise_gui.py",
+							"stage": 1,
+							"desc": "Starts the desktop app"
+						},
+						{
+							"name": "poise_tui.py",
+							"path": "poise_tui.py",
+							"stage": 1,
+							"desc": "Starts the terminal UI"
+						},
+						{
+							"name": "run_denoiser.py",
+							"path": "run_denoiser.py",
+							"stage": 1,
+							"desc": "Starts the headless CLI"
+						},
+						{
+							"name": "build-linux.sh",
+							"path": "build-linux.sh",
+							"desc": "Builds the Linux onefile with Nuitka"
+						},
+						{
+							"name": "poise_windows.spec",
+							"path": "poise_windows.spec",
+							"desc": "PyInstaller spec for the Windows app"
+						},
+						{
+							"name": "setup.iss",
+							"path": "setup.iss",
+							"desc": "Inno Setup script for the installer"
+						},
+						{
+							"name": "pyproject.toml",
+							"path": "pyproject.toml",
+							"desc": "Package metadata and dependencies"
+						},
+						{
+							"name": "requirements.txt",
+							"path": "requirements.txt",
+							"desc": "Pinned runtime requirements"
+						},
+						{
+							"name": "stream_denoiser/",
+							"path": "stream_denoiser/",
+							"desc": "The app itself",
+							"children": [
+								{
+									"name": "__main__.py",
+									"path": "stream_denoiser/__main__.py",
+									"stage": 1,
+									"desc": "python -m stream_denoiser"
+								},
+								{
+									"name": "cli.py",
+									"path": "stream_denoiser/cli.py",
+									"stage": 1,
+									"desc": "Command-line flags, runs a session"
+								},
+								{
+									"name": "audio_host.py",
+									"path": "stream_denoiser/audio_host.py",
+									"stage": 2,
+									"desc": "Runs the audio loop in its own process"
+								},
+								{
+									"name": "session.py",
+									"path": "stream_denoiser/session.py",
+									"stage": 2,
+									"desc": "Builds the processor, picks the loop"
+								},
+								{
+									"name": "audio_gc.py",
+									"path": "stream_denoiser/audio_gc.py",
+									"stage": 2,
+									"desc": "Pauses garbage collection during a run"
+								},
+								{
+									"name": "backend_detection.py",
+									"path": "stream_denoiser/backend_detection.py",
+									"stage": 3,
+									"desc": "Which audio backends this machine has"
+								},
+								{
+									"name": "device_utils.py",
+									"path": "stream_denoiser/device_utils.py",
+									"stage": 3,
+									"desc": "Lists and resolves audio devices"
+								},
+								{
+									"name": "sync.py",
+									"path": "stream_denoiser/sync.py",
+									"stage": 3,
+									"desc": "Clears capture backlog in the pulse loop"
+								},
+								{
+									"name": "processor.py",
+									"path": "stream_denoiser/processor.py",
+									"stage": 4,
+									"desc": "Engine frames, dry mix, silence bypass"
+								},
+								{
+									"name": "resampler.py",
+									"path": "stream_denoiser/resampler.py",
+									"stage": 4,
+									"desc": "Streaming resample to and from 48 kHz"
+								},
+								{
+									"name": "aad.py",
+									"path": "stream_denoiser/aad.py",
+									"stage": 4,
+									"desc": "Detects silence so the model can rest"
+								},
+								{
+									"name": "constants.py",
+									"path": "stream_denoiser/constants.py",
+									"desc": "Sample rates, model names, defaults"
+								},
+								{
+									"name": "platform_utils.py",
+									"path": "stream_denoiser/platform_utils.py",
+									"desc": "Platform detection, safe platform imports"
+								},
+								{
+									"name": "health.py",
+									"path": "stream_denoiser/health.py",
+									"desc": "Startup checks, audio recovery (Linux)"
+								},
+								{
+									"name": "logging_config.py",
+									"path": "stream_denoiser/logging_config.py",
+									"desc": "Log files and levels"
+								},
+								{
+									"name": "updates.py",
+									"path": "stream_denoiser/updates.py",
+									"desc": "Checks for and installs updates (Windows)"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Signal",
+			"nodes": [
+				{
+					"name": "stream_denoiser/",
+					"path": "stream_denoiser/",
+					"children": [
+						{
+							"name": "backends/",
+							"path": "stream_denoiser/backends/",
+							"desc": "Getting audio in and out",
+							"children": [
+								{
+									"name": "choice.py",
+									"path": "stream_denoiser/backends/choice.py",
+									"stage": 3,
+									"desc": "Which backend the user asked for"
+								},
+								{
+									"name": "pipewire_backend.py",
+									"path": "stream_denoiser/backends/pipewire_backend.py",
+									"stage": 3,
+									"desc": "Linux default: Poise as a PipeWire node"
+								},
+								{
+									"name": "pipewire_node.py",
+									"path": "stream_denoiser/backends/pipewire_node.py",
+									"stage": 3,
+									"desc": "ctypes binding for libpoise_pw.so"
+								},
+								{
+									"name": "wasapi_backend.py",
+									"path": "stream_denoiser/backends/wasapi_backend.py",
+									"stage": 3,
+									"desc": "Windows default: native WASAPI path"
+								},
+								{
+									"name": "wasapi_node.py",
+									"path": "stream_denoiser/backends/wasapi_node.py",
+									"stage": 3,
+									"desc": "ctypes binding for poise_wasapi.dll"
+								},
+								{
+									"name": "delay_core.py",
+									"path": "stream_denoiser/backends/delay_core.py",
+									"stage": 3,
+									"desc": "ctypes side of poise_core, both nodes"
+								},
+								{
+									"name": "node_loop.py",
+									"path": "stream_denoiser/backends/node_loop.py",
+									"stage": 3,
+									"desc": "Inference thread for either native node"
+								},
+								{
+									"name": "pulse_backend.py",
+									"path": "stream_denoiser/backends/pulse_backend.py",
+									"stage": 3,
+									"desc": "Linux fallback: pulse-simple loop"
+								},
+								{
+									"name": "pulse_simple.py",
+									"path": "stream_denoiser/backends/pulse_simple.py",
+									"stage": 3,
+									"desc": "ctypes binding for libpulse-simple"
+								},
+								{
+									"name": "sounddevice_backend.py",
+									"path": "stream_denoiser/backends/sounddevice_backend.py",
+									"stage": 3,
+									"desc": "Windows fallback: PortAudio, VB-Cable"
+								},
+								{
+									"name": "_loop_util.py",
+									"path": "stream_denoiser/backends/_loop_util.py",
+									"stage": 3,
+									"desc": "Helpers the audio loops share"
+								},
+								{
+									"name": "platform/",
+									"path": "stream_denoiser/backends/platform/",
+									"folded": true,
+									"children": [
+										{
+											"name": "linux.py",
+											"path": "stream_denoiser/backends/platform/linux.py",
+											"stage": 3,
+											"desc": "Pulse/PipeWire devices, null-sink routing"
+										},
+										{
+											"name": "windows.py",
+											"path": "stream_denoiser/backends/platform/windows.py",
+											"stage": 3,
+											"desc": "WASAPI devices, VB-Cable switching"
+										}
+									]
+								}
+							]
+						},
+						{
+							"name": "engines/",
+							"path": "stream_denoiser/engines/",
+							"desc": "The denoisers",
+							"children": [
+								{
+									"name": "base.py",
+									"path": "stream_denoiser/engines/base.py",
+									"stage": 5,
+									"desc": "DenoiseEngine, what every engine provides"
+								},
+								{
+									"name": "availability.py",
+									"path": "stream_denoiser/engines/availability.py",
+									"stage": 5,
+									"desc": "Which models can run on this machine"
+								},
+								{
+									"name": "onnx_model.py",
+									"path": "stream_denoiser/engines/onnx_model.py",
+									"stage": 5,
+									"desc": "Finds a model file, tunes ONNX Runtime"
+								},
+								{
+									"name": "deepfilternet3.py",
+									"path": "stream_denoiser/engines/deepfilternet3.py",
+									"stage": 5,
+									"desc": "DeepFilterNet3, 12 states per frame"
+								},
+								{
+									"name": "gtcrn.py",
+									"path": "stream_denoiser/engines/gtcrn.py",
+									"stage": 5,
+									"desc": "GTCRN at 16 kHz, decimated by 3"
+								},
+								{
+									"name": "rnnoise.py",
+									"path": "stream_denoiser/engines/rnnoise.py",
+									"stage": 5,
+									"desc": "RNNoise, 480-sample frames"
+								},
+								{
+									"name": "rnnoise_lib.py",
+									"path": "stream_denoiser/engines/rnnoise_lib.py",
+									"stage": 5,
+									"desc": "Loads the RNNoise C library"
+								}
+							]
+						},
+						{
+							"name": "models/",
+							"path": "stream_denoiser/models/",
+							"desc": "Vendored model weights",
+							"children": [
+								{
+									"name": "denoiser_model_df3.onnx",
+									"path": "stream_denoiser/models/denoiser_model_df3.onnx",
+									"stage": 5,
+									"desc": "DeepFilterNet3 network"
+								},
+								{
+									"name": "denoiser_model_df3_states.npz",
+									"path": "stream_denoiser/models/denoiser_model_df3_states.npz",
+									"stage": 5,
+									"desc": "Its initial state tensors"
+								},
+								{
+									"name": "gtcrn.onnx",
+									"path": "stream_denoiser/models/gtcrn.onnx",
+									"stage": 5,
+									"desc": "GTCRN network"
+								}
+							]
+						},
+						{
+							"name": "native/",
+							"path": "stream_denoiser/native/",
+							"desc": "Prebuilt Windows libraries",
+							"children": [
+								{
+									"name": "poise_wasapi.dll",
+									"path": "stream_denoiser/native/poise_wasapi.dll",
+									"stage": 3,
+									"desc": "The native WASAPI audio node"
+								},
+								{
+									"name": "rnnoise.dll",
+									"path": "stream_denoiser/native/rnnoise.dll",
+									"stage": 5,
+									"desc": "RNNoise for Windows"
+								}
+							]
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Desktop app",
+			"nodes": [
+				{
+					"name": "stream_denoiser/gui/",
+					"path": "stream_denoiser/gui/",
+					"desc": "PyQt6",
+					"children": [
+						{
+							"name": "__main__.py",
+							"path": "stream_denoiser/gui/__main__.py",
+							"stage": 1,
+							"desc": "python -m stream_denoiser.gui"
+						},
+						{
+							"name": "main_window.py",
+							"path": "stream_denoiser/gui/main_window.py",
+							"stage": 1,
+							"desc": "The window: Home, Settings, Logs, About"
+						},
+						{
+							"name": "worker.py",
+							"path": "stream_denoiser/gui/worker.py",
+							"stage": 2,
+							"desc": "QThread that drives the audio process"
+						},
+						{
+							"name": "settings.py",
+							"path": "stream_denoiser/gui/settings.py",
+							"stage": 1,
+							"desc": "Saved preferences"
+						},
+						{
+							"name": "system_tray.py",
+							"path": "stream_denoiser/gui/system_tray.py",
+							"stage": 1,
+							"desc": "Tray icon and its menu"
+						},
+						{
+							"name": "titlebar.py",
+							"path": "stream_denoiser/gui/titlebar.py",
+							"stage": 1,
+							"desc": "Themed Windows title bar"
+						},
+						{
+							"name": "themes.py",
+							"path": "stream_denoiser/gui/themes.py",
+							"stage": 1,
+							"desc": "The six colourways"
+						},
+						{
+							"name": "styles.py",
+							"path": "stream_denoiser/gui/styles.py",
+							"stage": 1,
+							"desc": "The Qt stylesheet built from a theme"
+						},
+						{
+							"name": "animations.py",
+							"path": "stream_denoiser/gui/animations.py",
+							"stage": 1,
+							"desc": "Easing curves and motion helpers"
+						},
+						{
+							"name": "fonts.py",
+							"path": "stream_denoiser/gui/fonts.py",
+							"stage": 1,
+							"desc": "Loads the bundled fonts"
+						},
+						{
+							"name": "cursors.py",
+							"path": "stream_denoiser/gui/cursors.py",
+							"stage": 1,
+							"desc": "Picks up the OS cursor theme"
+						},
+						{
+							"name": "scaling.py",
+							"path": "stream_denoiser/gui/scaling.py",
+							"stage": 1,
+							"desc": "UI scale for high-DPI screens"
+						},
+						{
+							"name": "tooltip.py",
+							"path": "stream_denoiser/gui/tooltip.py",
+							"stage": 1,
+							"desc": "Animated tooltips"
+						},
+						{
+							"name": "updater.py",
+							"path": "stream_denoiser/gui/updater.py",
+							"desc": "Update prompt and download progress"
+						},
+						{
+							"name": "utils.py",
+							"path": "stream_denoiser/gui/utils.py",
+							"desc": "Icon paths and shared helpers"
+						},
+						{
+							"name": "widgets/",
+							"path": "stream_denoiser/gui/widgets/",
+							"folded": true,
+							"children": [
+								{
+									"name": "dial.py",
+									"path": "stream_denoiser/gui/widgets/dial.py",
+									"stage": 1,
+									"desc": "Start/Stop ring, also sets strength"
+								},
+								{
+									"name": "power_button.py",
+									"path": "stream_denoiser/gui/widgets/power_button.py",
+									"stage": 1,
+									"desc": "Glowing power disc the dial grew from"
+								},
+								{
+									"name": "home_scene.py",
+									"path": "stream_denoiser/gui/widgets/home_scene.py",
+									"stage": 1,
+									"desc": "The Home card as one Qt Quick scene"
+								},
+								{
+									"name": "lattice.py",
+									"path": "stream_denoiser/gui/widgets/lattice.py",
+									"stage": 1,
+									"desc": "Geometric lattice patterns"
+								},
+								{
+									"name": "sky.py",
+									"path": "stream_denoiser/gui/widgets/sky.py",
+									"stage": 1,
+									"desc": "Night sky backdrop"
+								},
+								{
+									"name": "sky_gpu.py",
+									"path": "stream_denoiser/gui/widgets/sky_gpu.py",
+									"stage": 1,
+									"desc": "The night sky drawn on the GPU"
+								},
+								{
+									"name": "emblem.py",
+									"path": "stream_denoiser/gui/widgets/emblem.py",
+									"stage": 1,
+									"desc": "The Poise emblem"
+								},
+								{
+									"name": "model_selector.py",
+									"path": "stream_denoiser/gui/widgets/model_selector.py",
+									"stage": 1,
+									"desc": "Choose DeepFilterNet3, GTCRN, RNNoise"
+								},
+								{
+									"name": "device_selector.py",
+									"path": "stream_denoiser/gui/widgets/device_selector.py",
+									"stage": 1,
+									"desc": "Choose input and output devices"
+								},
+								{
+									"name": "stats_bar.py",
+									"path": "stream_denoiser/gui/widgets/stats_bar.py",
+									"stage": 1,
+									"desc": "Status line: load, frame time, buffer"
+								},
+								{
+									"name": "rolling_number.py",
+									"path": "stream_denoiser/gui/widgets/rolling_number.py",
+									"stage": 1,
+									"desc": "Numbers that roll when they change"
+								},
+								{
+									"name": "slider.py",
+									"path": "stream_denoiser/gui/widgets/slider.py",
+									"stage": 1,
+									"desc": "Painted slider"
+								},
+								{
+									"name": "switch.py",
+									"path": "stream_denoiser/gui/widgets/switch.py",
+									"stage": 1,
+									"desc": "Toggle switch"
+								},
+								{
+									"name": "combo.py",
+									"path": "stream_denoiser/gui/widgets/combo.py",
+									"stage": 1,
+									"desc": "Card-style dropdown"
+								},
+								{
+									"name": "chip.py",
+									"path": "stream_denoiser/gui/widgets/chip.py",
+									"stage": 1,
+									"desc": "Icon chip"
+								},
+								{
+									"name": "phosphor.py",
+									"path": "stream_denoiser/gui/widgets/phosphor.py",
+									"stage": 1,
+									"desc": "Phosphor icon set"
+								},
+								{
+									"name": "settings_row.py",
+									"path": "stream_denoiser/gui/widgets/settings_row.py",
+									"stage": 1,
+									"desc": "One row on the Settings page"
+								},
+								{
+									"name": "sidebar.py",
+									"path": "stream_denoiser/gui/widgets/sidebar.py",
+									"stage": 1,
+									"desc": "Sidebar navigation"
+								},
+								{
+									"name": "pattern_card.py",
+									"path": "stream_denoiser/gui/widgets/pattern_card.py",
+									"stage": 1,
+									"desc": "Card with a lattice pattern"
+								},
+								{
+									"name": "theme_tile.py",
+									"path": "stream_denoiser/gui/widgets/theme_tile.py",
+									"stage": 1,
+									"desc": "Theme picker tile"
+								},
+								{
+									"name": "donate_button.py",
+									"path": "stream_denoiser/gui/widgets/donate_button.py",
+									"stage": 1,
+									"desc": "Donate button"
+								},
+								{
+									"name": "vb_cable_dialog.py",
+									"path": "stream_denoiser/gui/widgets/vb_cable_dialog.py",
+									"stage": 1,
+									"desc": "Explains a VB-Cable routing error"
+								}
+							]
+						},
+						{
+							"name": "assets/",
+							"path": "stream_denoiser/gui/assets/",
+							"desc": "52 icons, images, banners"
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Terminal & native",
+			"nodes": [
+				{
+					"name": "stream_denoiser/tui/",
+					"path": "stream_denoiser/tui/",
+					"desc": "Textual",
+					"children": [
+						{
+							"name": "__main__.py",
+							"path": "stream_denoiser/tui/__main__.py",
+							"stage": 1,
+							"desc": "python -m stream_denoiser.tui"
+						},
+						{
+							"name": "app.py",
+							"path": "stream_denoiser/tui/app.py",
+							"stage": 1,
+							"desc": "The terminal app and its keys"
+						},
+						{
+							"name": "settings.py",
+							"path": "stream_denoiser/tui/settings.py",
+							"stage": 1,
+							"desc": "Saved preferences"
+						},
+						{
+							"name": "palette.py",
+							"path": "stream_denoiser/tui/palette.py",
+							"stage": 1,
+							"desc": "Theme colours plus your overrides"
+						},
+						{
+							"name": "font.py",
+							"path": "stream_denoiser/tui/font.py",
+							"stage": 1,
+							"desc": "Block font for the title"
+						},
+						{
+							"name": "log_events.py",
+							"path": "stream_denoiser/tui/log_events.py",
+							"stage": 1,
+							"desc": "Sends the log to the events box"
+						},
+						{
+							"name": "styles.tcss",
+							"path": "stream_denoiser/tui/styles.tcss",
+							"stage": 1,
+							"desc": "Textual stylesheet"
+						},
+						{
+							"name": "widgets/",
+							"path": "stream_denoiser/tui/widgets/",
+							"folded": true,
+							"children": [
+								{
+									"name": "box.py",
+									"path": "stream_denoiser/tui/widgets/box.py",
+									"stage": 1,
+									"desc": "Framed, numbered panel"
+								},
+								{
+									"name": "device_list.py",
+									"path": "stream_denoiser/tui/widgets/device_list.py",
+									"stage": 1,
+									"desc": "Pick a device"
+								},
+								{
+									"name": "signal_panel.py",
+									"path": "stream_denoiser/tui/widgets/signal_panel.py",
+									"stage": 1,
+									"desc": "Input and output side by side"
+								},
+								{
+									"name": "isolation_panel.py",
+									"path": "stream_denoiser/tui/widgets/isolation_panel.py",
+									"stage": 1,
+									"desc": "Controls that shape the sound"
+								},
+								{
+									"name": "events_panel.py",
+									"path": "stream_denoiser/tui/widgets/events_panel.py",
+									"stage": 1,
+									"desc": "What Poise has been doing"
+								},
+								{
+									"name": "model_picker.py",
+									"path": "stream_denoiser/tui/widgets/model_picker.py",
+									"stage": 1,
+									"desc": "Pick a model"
+								},
+								{
+									"name": "key_bar.py",
+									"path": "stream_denoiser/tui/widgets/key_bar.py",
+									"stage": 1,
+									"desc": "Key hints along the bottom"
+								}
+							]
+						}
+					]
+				},
+				{
+					"name": "native/",
+					"path": "native/",
+					"desc": "C sources",
+					"children": [
+						{
+							"name": "core/poise_core.c · .h",
+							"path": "native/core/poise_core.c",
+							"stage": 3,
+							"desc": "Fixed-delay exchange both nodes run"
+						},
+						{
+							"name": "poise_pw/poise_pw.c",
+							"path": "native/poise_pw/poise_pw.c",
+							"stage": 3,
+							"desc": "The in-graph PipeWire node"
+						},
+						{
+							"name": "poise_wasapi/poise_wasapi.c · .h",
+							"path": "native/poise_wasapi/poise_wasapi.c",
+							"stage": 3,
+							"desc": "The native WASAPI node"
+						},
+						{
+							"name": "latmeter/latmeter.c",
+							"path": "native/latmeter/latmeter.c",
+							"desc": "Measures end-to-end latency"
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Ship",
+			"nodes": [
+				{
+					"name": "installer/",
+					"path": "installer/",
+					"desc": "Windows setup",
+					"children": [
+						{
+							"name": "bootstrapper/",
+							"path": "installer/bootstrapper/",
+							"desc": "The setup app",
+							"folded": true,
+							"children": [
+								{
+									"name": "__main__.py",
+									"path": "installer/bootstrapper/__main__.py",
+									"desc": "Entry point and options"
+								},
+								{
+									"name": "window.py",
+									"path": "installer/bootstrapper/window.py",
+									"desc": "Setup window and its states"
+								},
+								{
+									"name": "pages.py",
+									"path": "installer/bootstrapper/pages.py",
+									"desc": "The four screens"
+								},
+								{
+									"name": "core.py",
+									"path": "installer/bootstrapper/core.py",
+									"desc": "Install steps, no Qt"
+								},
+								{
+									"name": "engine.py",
+									"path": "installer/bootstrapper/engine.py",
+									"desc": "Runs the install steps"
+								},
+								{
+									"name": "widgets.py",
+									"path": "installer/bootstrapper/widgets.py",
+									"desc": "Painted pieces of the window"
+								},
+								{
+									"name": "chrome.py",
+									"path": "installer/bootstrapper/chrome.py",
+									"desc": "Frameless window chrome"
+								},
+								{
+									"name": "brand.py",
+									"path": "installer/bootstrapper/brand.py",
+									"desc": "Colours, assets, stylesheet"
+								}
+							]
+						},
+						{
+							"name": "setup_app.py",
+							"path": "installer/setup_app.py",
+							"desc": "Entry point for Poise_Setup.exe"
+						},
+						{
+							"name": "fetch_vbcable.py",
+							"path": "installer/fetch_vbcable.py",
+							"desc": "Stages the VB-Cable driver files"
+						},
+						{
+							"name": "PoiseSetup.spec",
+							"path": "installer/PoiseSetup.spec",
+							"desc": "PyInstaller spec for the setup"
+						},
+						{
+							"name": "windows/vbcable-notice.txt",
+							"path": "installer/windows/vbcable-notice.txt",
+							"desc": "VB-Cable licence notice"
+						}
+					]
+				},
+				{
+					"name": "docs/",
+					"path": "docs/",
+					"desc": "The website, Vite + React",
+					"children": [
+						{
+							"name": "src/",
+							"path": "docs/src/",
+							"desc": "Pages, components, shared themes"
+						},
+						{
+							"name": "scripts/",
+							"path": "docs/scripts/",
+							"desc": "Prerender, README file-tree image"
+						}
+					]
+				},
+				{
+					"name": "aur-bin/PKGBUILD",
+					"path": "aur-bin/PKGBUILD",
+					"desc": "The Arch package"
+				}
+			]
+		},
+		{
+			"title": "Prove",
+			"nodes": [
+				{
+					"name": ".github/",
+					"path": ".github/",
+					"children": [
+						{
+							"name": "workflows/build-linux.yml",
+							"path": ".github/workflows/build-linux.yml",
+							"desc": "Builds the Linux release"
+						},
+						{
+							"name": "workflows/build-windows.yml",
+							"path": ".github/workflows/build-windows.yml",
+							"desc": "Builds the Windows release"
+						},
+						{
+							"name": "workflows/windows-frozen.yml",
+							"path": ".github/workflows/windows-frozen.yml",
+							"desc": "Tests the frozen Windows app"
+						},
+						{
+							"name": "workflows/pulse-ci.yml",
+							"path": ".github/workflows/pulse-ci.yml",
+							"desc": "Pulse and PipeWire integration tests"
+						},
+						{
+							"name": "workflows/deploy.yml",
+							"path": ".github/workflows/deploy.yml",
+							"desc": "Publishes the website"
+						},
+						{
+							"name": "ISSUE_TEMPLATE/ · media/",
+							"path": ".github/ISSUE_TEMPLATE/",
+							"desc": "Issue forms, release screenshots"
+						}
+					]
+				},
+				{
+					"name": "tests/",
+					"path": "tests/",
+					"desc": "62 files, pytest"
+				},
+				{
+					"name": "measurements/",
+					"path": "measurements/",
+					"desc": "Windows latency",
+					"children": [
+						{
+							"name": "windows-latency.md",
+							"path": "measurements/windows-latency.md",
+							"desc": "Method and results"
+						},
+						{
+							"name": "windows-latency-runs.csv",
+							"path": "measurements/windows-latency-runs.csv",
+							"desc": "Every run, analysed"
+						},
+						{
+							"name": "export_runs.py",
+							"path": "measurements/export_runs.py",
+							"desc": "Re-analyses runs into the CSV"
+						}
+					]
+				}
+			]
+		}
+	]
+}

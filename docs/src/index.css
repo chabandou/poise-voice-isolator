@@ -369,6 +369,264 @@ body {
 	animation: install-modal-rise-out 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* ---------------------------------------------------------------------
+   Repo map (components/RepoMap.tsx)
+   --------------------------------------------------------------------- */
+/* The signal path's stops, warm (noisy input) to cool (clean output); the
+   same in every theme, so a stop keeps its colour. */
+:root {
+	--stage-1: #f49aa6;
+	--stage-2: #f5a524;
+	--stage-3: #e8d36a;
+	--stage-4: #35e0a8;
+	--stage-5: #5fd5eb;
+}
+
+.repo-stages {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75rem 1rem;
+	font-family: var(--font-heading);
+	font-size: 0.9rem;
+	font-weight: 600;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+}
+
+.repo-stages__stop {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 0.6rem;
+	color: var(--stage);
+}
+
+/* The rail between stops. */
+.repo-stages__stop:not(:last-child)::after {
+	content: "";
+	flex: 1 1 1.5rem;
+	min-width: 1.5rem;
+	height: 2px;
+	margin-left: 0.4rem;
+	background: var(--color-groove);
+}
+
+.repo-row {
+	display: flex;
+	width: 100%;
+	min-height: 1.95rem;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius: 6px;
+	padding: 0 0.5rem;
+	font-family: var(--font-mono);
+	font-size: 0.82rem;
+	text-align: left;
+	color: color-mix(in srgb, var(--color-ink) 86%, transparent);
+	cursor: pointer;
+	transition: background-color 160ms ease, color 160ms ease;
+}
+
+.repo-row:hover {
+	background-color: var(--color-pill);
+	color: var(--color-ink);
+}
+
+.repo-row:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: -2px;
+	background-color: var(--color-pill);
+}
+
+.repo-row--folder {
+	font-weight: 600;
+	color: var(--color-ink);
+}
+
+.repo-row--support {
+	color: var(--color-muted);
+}
+
+.repo-row__guide {
+	flex: none;
+	white-space: pre;
+	color: color-mix(in srgb, var(--color-muted) 40%, transparent);
+}
+
+.repo-row__name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.repo-row__chevron {
+	flex: none;
+	width: 0;
+	height: 0;
+	border-block: 4px solid transparent;
+	border-left: 5px solid var(--color-muted);
+	transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.repo-row__chevron[data-open] {
+	transform: rotate(90deg);
+}
+
+.repo-row__dot {
+	flex: none;
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	background: var(--stage);
+	transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
+}
+
+.repo-row:hover .repo-row__dot,
+.repo-row:focus-visible .repo-row__dot {
+	transform: scale(1.45);
+	box-shadow: 0 0 10px color-mix(in srgb, var(--stage) 70%, transparent);
+}
+
+/* Folders open and close by height: a one-row grid from 0fr to 1fr. */
+.repo-fold {
+	display: grid;
+	grid-template-rows: 0fr;
+	opacity: 0;
+	transition: grid-template-rows 340ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease;
+}
+
+.repo-fold[data-open] {
+	grid-template-rows: 1fr;
+	opacity: 1;
+}
+
+.repo-fold__inner {
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* The hover card: fixed to the viewport, it glides from row to row while
+   it stays up, and appears in place (snap) when it was hidden. */
+.repo-tip {
+	--lift: 0%;
+	position: fixed;
+	z-index: 70;
+	width: 20rem;
+	max-width: calc(100vw - 24px);
+	padding: 0.9rem 1rem;
+	box-shadow: 0 18px 48px rgb(0 0 0 / 0.45);
+	pointer-events: none;
+	opacity: 0;
+	transform: translateY(calc(var(--lift) + 6px)) scale(0.98);
+	transition:
+		opacity 180ms ease,
+		transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+		left 280ms cubic-bezier(0.22, 1, 0.36, 1),
+		top 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.repo-tip--above {
+	--lift: -100%;
+}
+
+.repo-tip--snap {
+	transition: opacity 180ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.repo-tip[data-visible] {
+	opacity: 1;
+	transform: translateY(var(--lift)) scale(1);
+}
+
+.repo-stage-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-family: var(--font-heading);
+	font-size: 0.78rem;
+	font-weight: 600;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--stage);
+}
+
+.repo-code {
+	overflow-x: auto;
+	border: 1px solid var(--color-edge);
+	border-radius: 10px;
+	background: var(--color-deep);
+	padding: 1rem 1.15rem;
+	font-family: var(--font-mono);
+	font-size: 0.8rem;
+	line-height: 1.75;
+	color: var(--color-ink);
+	tab-size: 4;
+}
+
+.repo-code__line {
+	display: inline-block;
+	min-width: 100%;
+	animation: repo-line-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	animation-delay: calc(var(--line) * 28ms + 140ms);
+}
+
+@keyframes repo-line-in {
+	from {
+		opacity: 0;
+		transform: translateX(-8px);
+	}
+}
+
+.repo-code--loading {
+	display: grid;
+	gap: 0.7rem;
+}
+
+.repo-code--loading span {
+	height: 0.7rem;
+	border-radius: 999px;
+	background: linear-gradient(90deg, var(--color-pill) 0%, var(--color-groove) 50%, var(--color-pill) 100%) 0 0 / 200% 100%;
+	animation: repo-shimmer 1.2s linear infinite;
+}
+
+.repo-code--loading span:nth-child(2) { width: 72%; }
+.repo-code--loading span:nth-child(3) { width: 48%; }
+
+@keyframes repo-shimmer {
+	to { background-position: -200% 0; }
+}
+
+/* Code colours by role, as an editor's language server gives them, drawn
+   from the theme so they follow it: keywords in the accent, names being
+   defined in the secondary colour, types in the light accent. */
+.tok-k { color: var(--color-accent); }
+.tok-f { color: var(--color-secondary); }
+.tok-t { color: var(--color-accent-light); }
+.tok-p { color: var(--color-ink); font-style: italic; }
+.tok-x { color: var(--color-accent); font-style: italic; }
+.tok-s { color: var(--color-success); }
+.tok-c { color: var(--color-muted); font-style: italic; }
+.tok-n,
+.tok-v { color: var(--color-warning); }
+.tok-d { color: var(--color-error); }
+
+@media (prefers-reduced-motion: reduce) {
+	.repo-fold,
+	.repo-tip,
+	.repo-row__chevron,
+	.repo-row__dot {
+		transition-duration: 0ms;
+	}
+
+	.repo-code__line,
+	.repo-code--loading span {
+		animation: none;
+	}
+}
+
 @keyframes install-modal-fade-in {
 	from { opacity: 0; }
 	to { opacity: 1; }

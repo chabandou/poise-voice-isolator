@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="halcyon">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Repo map · Poise</title>
+    <meta
+      name="description"
+      content="Every file in the Poise Voice Isolator repository, what it does, and the part of the audio path it serves. Hover a file for a summary, click it for its outline."
+    />
+    <link rel="canonical" href="https://chabandou.github.io/poise-voice-isolator/repo/" />
+    <meta name="theme-color" content="#0a111e" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Poise" />
+    <meta property="og:url" content="https://chabandou.github.io/poise-voice-isolator/repo/" />
+    <meta property="og:title" content="Repo map · Poise" />
+    <meta property="og:description" content="Every file in the Poise repository, and what it does." />
+    <meta property="og:image" content="https://chabandou.github.io/poise-voice-isolator/banner.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // As in ../index.html: entrance animations only with JS, and the
+      // saved colour theme before first paint.
+      document.documentElement.classList.add('js');
+      try {
+        var saved = localStorage.getItem('poise-theme');
+        if (/^(halcyon|verdant|eclipse|vigil|ember|orchid)$/.test(saved)) {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (e) {}
+    </script>
+    <style>
+      :where(html, body) {
+        background-color: #0a111e;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><!--ssr-outlet--></div>
+    <script type="module" src="/src/repo.tsx"></script>
+  </body>
+</html>

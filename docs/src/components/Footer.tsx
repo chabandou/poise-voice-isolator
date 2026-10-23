@@ -5,16 +5,18 @@ const links = [
 	{ label: 'GitHub', href: REPO_URL },
 	{ label: 'Releases', href: RELEASES_URL },
 	{ label: 'Report an issue', href: ISSUES_URL },
+	// For contributors more than users, so it lives here, not in the header.
+	{ label: 'Repo map', href: `${import.meta.env.BASE_URL}repo/`, internal: true },
 ];
 
 const creditLink = 'text-ink/80 underline-offset-4 transition-colors hover:text-accent hover:underline';
 
-const Footer = () => {
+const Footer = ({ homeHref = '#home' }: { homeHref?: string }) => {
 	return (
 		<footer className="w-full border-t border-white/6 bg-deep py-14">
 			<div className="mx-auto flex max-w-360 flex-col gap-10 px-6 md:px-12">
 				<div className="flex flex-col items-center justify-between gap-6 md:flex-row">
-					<a className="flex items-center gap-2.5" href="#home">
+					<a className="flex items-center gap-2.5" href={homeHref}>
 						<PoiseMark className="h-8 w-8" />
 						<span className="font-heading text-[1.5rem] font-bold leading-none text-ink">Poise</span>
 					</a>
@@ -25,8 +27,7 @@ const Footer = () => {
 								key={link.label}
 								className="transition-colors hover:text-ink"
 								href={link.href}
-								rel="noopener noreferrer"
-								target="_blank"
+								{...(link.internal ? {} : { rel: 'noopener noreferrer', target: '_blank' })}
 							>
 								{link.label}
 							</a>

@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { buildRepoMap } from './scripts/repo-map.mjs'
 
 const BASE = '/poise-voice-isolator/'
 const REPO = 'chabandou/poise-voice-isolator'
@@ -80,10 +83,41 @@ const preloadFonts = (): Plugin => ({
   },
 })
 
+// The repo map's file outlines (src/components/RepoMap.tsx), read from the
+// repository at build time and served as a module the page loads on its
+// first click. Files the map lists that are gone, or source files it does
+// not list yet, show up as build warnings.
+const SNIPPETS_ID = 'virtual:repo-map-snippets'
+const repoMapSnippets = (): Plugin => ({
+  name: 'poise-repo-map',
+  resolveId: (id) => (id === SNIPPETS_ID ? `\0${SNIPPETS_ID}` : undefined),
+  load(id) {
+    if (id !== `\0${SNIPPETS_ID}`) {
+      return
+    }
+    const map = JSON.parse(readFileSync(new URL('./src/repo-map.json', import.meta.url), 'utf8'))
+    const { snippets, warnings } = buildRepoMap(fileURLToPath(new URL('..', import.meta.url)), map)
+    warnings.forEach((warning) => this.warn(`repo map: ${warning}`))
+    return `export default ${JSON.stringify(snippets)}`
+  },
+})
+
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ isSsrBuild }) => ({
   base: BASE,
-  plugins: [react(), tailwindcss(), preloadFonts()],
+  plugins: [react(), tailwindcss(), preloadFonts(), repoMapSnippets()],
+  // Two pages: the landing page and the repo map (/repo/). The SSR build
+  // takes its entry from the command line (src/entry-server.tsx).
+  build: isSsrBuild
+    ? {}
+    : {
+        rollupOptions: {
+          input: {
+            main: fileURLToPath(new URL('./index.html', import.meta.url)),
+            repo: fileURLToPath(new URL('./repo/index.html', import.meta.url)),
+          },
+        },
+      },
   define: {
     __RELEASE__: JSON.stringify(await fetchRelease()),
   },
