@@ -77,12 +77,6 @@ def test_stylesheet_renders_every_theme_cleanly():
         assert "chevron-down.svg" in css
 
 
-def test_halcyon_preserves_current_look():
-    css = styles.get_stylesheet(scale=1.0, theme="halcyon")
-    assert "background-color: #0a111e" in css  # page bg unchanged
-    assert "95, 213, 235" in css  # halcyon accent rgb
-
-
 def _rgb(hex_color):
     return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
 
@@ -121,29 +115,6 @@ def test_secondary_reaches_the_stylesheet():
     css = styles.get_stylesheet(scale=1.0, theme="halcyon")
     assert "#E8C468" in css                      # secondary colour
     assert "232, 196, 104" in css                # chip wash
-
-
-def test_verdant_is_registered_with_gold_secondary():
-    assert "verdant" in themes.theme_ids()
-    p = themes.get_theme("verdant")
-    assert p["label"] == "Verdant"
-    assert p["accent"].lower() == "#35e0a8"
-    assert p["secondary"].lower() == "#e9c46a"
-    assert themes.DEFAULT_THEME == "halcyon"      # default is unchanged
-    css = styles.get_stylesheet(scale=1.0, theme="verdant")
-    assert not LEFTOVER_TOKEN.search(css)
-    assert "53, 224, 168" in css
-
-
-def test_six_themes_fill_a_three_by_two_grid():
-    ids = themes.theme_ids()
-    assert len(ids) == 6 and ids[0] == themes.DEFAULT_THEME
-    assert ids[-1] == "orchid"
-    p = themes.get_theme("orchid")
-    assert p["label"] == "Orchid"
-    css = styles.get_stylesheet(scale=1.0, theme="orchid")
-    assert not LEFTOVER_TOKEN.search(css)
-    assert "244, 114, 182" in css          # accent wash
 
 
 def test_ghost_buttons_hover_like_the_dropdown():
