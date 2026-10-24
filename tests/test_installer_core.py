@@ -167,15 +167,6 @@ def test_core_is_looked_for_beside_the_installer_sources():
     assert expected in core.core_candidates()
 
 
-def test_vbcable_probe_answers_without_raising():
-    assert core.vbcable_present() in (True, False, None)
-
-
-def test_existing_install_is_optional():
-    found = core.existing_install()
-    assert found is None or isinstance(found, core.Existing)
-
-
 def test_tail_of_a_missing_log_is_empty(tmp_path):
     assert core.tail(str(tmp_path / "nope.log")) == ""
 

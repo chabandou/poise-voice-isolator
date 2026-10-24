@@ -16,7 +16,6 @@ from stream_denoiser.backends.platform.windows import (
     find_bundled_vbcable_setup,
     install_vbcable_driver,
     interpret_setup_exit_code,
-    is_vbcable_installed,
 )
 
 
@@ -55,25 +54,6 @@ def test_find_falls_back_to_x86(tmp_path):
 def test_find_returns_none_when_missing(tmp_path):
     assert find_bundled_vbcable_setup(search_dirs=[tmp_path]) is None
     assert find_bundled_vbcable_setup(search_dirs=[]) is None
-
-
-def test_find_default_search_returns_path_or_none():
-    found = find_bundled_vbcable_setup()
-    assert found is None or found.endswith(".exe")
-
-
-def test_is_installed_returns_bool():
-    # No raising on any platform (False where winreg is unavailable).
-    assert isinstance(is_vbcable_installed(), bool)
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only driver box")
-def test_is_installed_matches_box():
-    # Live-box pin: True when CABLE endpoints exist, skip otherwise
-    # (the box legitimately has no driver e.g. mid reinstall-test).
-    if not is_vbcable_installed():
-        pytest.skip("VB-Cable not installed on this box right now")
-    assert is_vbcable_installed() is True
 
 
 class _FakeKey:

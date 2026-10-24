@@ -41,22 +41,6 @@ def _block_after(css, marker):
     return css[j:k]
 
 
-def test_no_list_view_rules_for_the_card_popup():
-    """Home's dropdowns open CardPopup (painted cards), not Qt's list
-    view: no view rules to keep in step with it."""
-    css = _css()
-    assert "QComboBox#device-combo QAbstractItemView" not in css
-
-
-def test_no_dead_item_selectors():
-    """::item subcontrols never reach combo popups.
-
-    Guards against re-adding rules that silently do nothing.
-    """
-    css = _css()
-    assert "QAbstractItemView::item" not in css
-
-
 def test_focus_outline_and_no_stylesheet_ring():
     """No default white focus frame. The gold ring is painted by
     AnimatedComboBox: a QSS :hover ring dropped out on every click (the

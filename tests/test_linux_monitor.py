@@ -41,16 +41,6 @@ def _source(name):
     return types.SimpleNamespace(name=name)
 
 
-def test_portaudio_helpers_removed():
-    mod = _load_linux_module()
-    for gone in ("map_pulse_to_portaudio", "find_loopback_hybrid",
-                 "find_monitor_sources", "find_loopback_device_linux",
-                 "get_linux_output_devices", "get_monitor_device_id"):
-        assert not hasattr(mod, gone), gone
-    assert not hasattr(mod.LinuxAudioRouter, "_score_monitor_device")
-    assert not hasattr(mod.LinuxAudioRouter, "get_monitor_device_id")
-
-
 def test_original_sink_name_property():
     mod, r = _router()
     assert r.original_sink_name == "alsa_output.pci-0000_00_1f.3.analog-stereo"

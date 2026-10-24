@@ -255,7 +255,7 @@ A replacement passed with `--onnx` must match:
 
 <a href="https://chabandou.github.io/poise-voice-isolator/repo/"><img src=".github/media/file-tree.png" alt="Poise file tree: root and core, signal (backends, engines, models), desktop app, terminal and native, ship, prove. Each file is tagged with its stop on the signal path." width="100%"/></a>
 
-**[Explore the interactive map →](https://chabandou.github.io/poise-voice-isolator/repo/)** Hover a file for what it does, click it to look inside.
+**[Explore the interactive map](https://chabandou.github.io/poise-voice-isolator/repo/)**  → Hover a file for what it does, click it to look inside.
 
 <details>
 <summary>The same tree as text</summary>
