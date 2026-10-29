@@ -140,7 +140,18 @@ def test_first_start_uses_defaults(make_app):
         assert isolation.threshold_db == -40.0
         assert isolation.strength_db == -50.0
     run(make_app(), steps)
-    assert not settings_path().exists()  # nothing chosen, nothing written
+    # Nothing chosen, so only the first-launch notice is remembered.
+    assert json.loads(settings_path().read_text()) == {"disclaimer_shown": True}
+
+
+def test_music_disclaimer_shows_on_first_start_only(make_app):
+    shown = []
+
+    async def steps(app, pilot):
+        shown.append(len(app._notifications))
+    run(make_app(), steps)
+    run(make_app(), steps)
+    assert shown == [1, 0]
 
 
 def test_saved_choices_are_restored(make_app):

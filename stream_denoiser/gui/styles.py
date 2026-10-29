@@ -226,8 +226,8 @@ QLabel#about-version {
     color: {secondary};
 }
 
-/* VB-Cable recovery dialog */
-QDialog#vb-dialog {
+/* VB-Cable recovery dialog; message boxes, whose text is the theme's */
+QDialog#vb-dialog, QMessageBox {
     background-color: {bg};
 }
 
@@ -430,7 +430,7 @@ QComboBox#settings-combo::down-arrow {
 /* =================================================================================
    BUTTONS
    ================================================================================= */
-QPushButton#ghost {
+QMessageBox QPushButton, QPushButton#ghost {
     background-color: rgba(148, 163, 184, 0.08);
     border: 1px solid rgba(148, 163, 184, 0.18);
     border-radius: 10px;
@@ -440,11 +440,11 @@ QPushButton#ghost {
     font-size: 13px;
 }
 
-QPushButton#ghost:hover {
+QMessageBox QPushButton:hover, QPushButton#ghost:hover {
     border-color: {secondary};
 }
 
-QPushButton#ghost:pressed {
+QMessageBox QPushButton:pressed, QPushButton#ghost:pressed {
     background-color: rgba({accent_rgb}, {ACCENT_WASH_ALPHA});
 }
 

@@ -108,6 +108,15 @@ class TuiSettings:
         value = self._data.get("colors")
         return dict(value) if isinstance(value, dict) else {}
 
+    @property
+    def disclaimer_shown(self) -> bool:
+        """Whether the first start has said music can pass through."""
+        return self._data.get("disclaimer_shown") is True
+
+    @disclaimer_shown.setter
+    def disclaimer_shown(self, value: bool) -> None:
+        self._set("disclaimer_shown", bool(value))
+
     def _set(self, key: str, value) -> None:
         if self._data.get(key) == value:
             return

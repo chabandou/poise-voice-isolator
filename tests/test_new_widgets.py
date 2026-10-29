@@ -1,4 +1,5 @@
-"""Status-bar stats, model cards, settings rows and the setup summary."""
+"""Status-bar stats, model cards, settings rows, the setup summary and
+the first-launch notice."""
 import os
 import time
 
@@ -304,3 +305,24 @@ def test_pattern_card_pings_stay_off_under_reduced_motion(app, monkeypatch):
     card = PatternCard()
     card.start_pings()
     assert card._ping_at is None
+
+
+def test_notice_covers_its_host_and_closes(app):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QWidget
+    from stream_denoiser.gui.widgets.notice import NoticeOverlay
+    host = QWidget()
+    host.resize(900, 600)
+    host.show()
+    notice = NoticeOverlay(host, "Title", "Some long body text " * 8)
+    notice.open()
+    _pump(app)
+    assert notice.geometry() == host.rect()
+    host.resize(1000, 700)
+    _pump(app)
+    assert notice.geometry() == host.rect()       # follows the window
+    QTest.keyClick(notice.button, Qt.Key.Key_Escape)
+    _pump(app, 0.5)
+    assert not host.findChildren(NoticeOverlay)
+    host.close()

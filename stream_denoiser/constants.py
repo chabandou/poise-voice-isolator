@@ -149,6 +149,12 @@ MSG_RNNOISE_WINDOWS_NOT_FOUND = (
     "Reinstall Poise — rnnoise.dll should sit next to Poise.exe."
 )
 MSG_RNNOISE_LINUX_ONLY = "The RNNoise engine is only supported on Linux and Windows."
+# Shown once on first launch (GUI and TUI) and in the GUI's About.
+MSG_MUSIC_DISCLAIMER = (
+    "Poise can't always completely remove music. Some can pass through, "
+    "especially loud music that's close to speech. The output isn't "
+    "guaranteed to be permissible, so use your own judgement."
+)
 MSG_NO_BACKEND = "No audio backend available"
 MSG_POWERSHELL_UNAVAILABLE = "PowerShell not available - VB Cable switching disabled"
 MSG_DEVICE_SWITCH_ERROR = "Error switching device: {}"

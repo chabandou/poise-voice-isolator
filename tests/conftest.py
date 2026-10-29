@@ -53,6 +53,8 @@ try:
                       "Poise", "VoiceIsolator")
     _seed.setValue("behavior/minimize_to_tray_asked", True)
     _seed.setValue("behavior/minimize_to_tray", True)
+    # No first-launch notice over the test windows.
+    _seed.setValue("behavior/music_disclaimer_shown", True)
     # Reduce motion off, whatever the machine's animation effects (its
     # default follows them, and CI's Windows runner has them off).
     _seed.setValue("appearance/reduce_motion", False)

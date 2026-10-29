@@ -74,6 +74,7 @@ class Settings:
     # Once asked "minimize to tray?" on first close; now marks the
     # one-time "still running" notice as shown (asked users skip it).
     KEY_TRAY_HINT_SHOWN = "behavior/minimize_to_tray_asked"
+    KEY_DISCLAIMER_SHOWN = "behavior/music_disclaimer_shown"
     
     KEY_ONNX_MODEL_PATH = "model/onnx_path"
     KEY_MODEL = "model/name"
@@ -100,6 +101,7 @@ class Settings:
         KEY_DEVICE_SWITCH_DONE: False,
         KEY_MINIMIZE_TO_TRAY: True,
         KEY_TRAY_HINT_SHOWN: False,
+        KEY_DISCLAIMER_SHOWN: False,
         KEY_ONNX_MODEL_PATH: "denoiser_model_df3.onnx",
         KEY_MODEL: "deepfilternet3",
         KEY_THEME: "halcyon",
@@ -287,6 +289,15 @@ class Settings:
     @tray_hint_shown.setter
     def tray_hint_shown(self, value: bool) -> None:
         self.set(self.KEY_TRAY_HINT_SHOWN, value)
+
+    @property
+    def disclaimer_shown(self) -> bool:
+        """Whether the first launch has said music can pass through."""
+        return bool(self.get(self.KEY_DISCLAIMER_SHOWN, False))
+
+    @disclaimer_shown.setter
+    def disclaimer_shown(self, value: bool) -> None:
+        self.set(self.KEY_DISCLAIMER_SHOWN, bool(value))
     
     @property
     def onnx_model_path(self) -> str:

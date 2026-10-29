@@ -31,7 +31,7 @@ from .widgets import (
 )
 from ..audio_host import AudioHost
 from ..constants import DEFAULT_AAD_THRESHOLD_DB, DEFAULT_MODEL, \
-    DEFAULT_SAMPLE_RATE, MODEL_INFO
+    DEFAULT_SAMPLE_RATE, MODEL_INFO, MSG_MUSIC_DISCLAIMER
 from ..logging_config import set_tui_mode, get_log_file_path
 
 # dB per key press.
@@ -307,6 +307,10 @@ class PoiseApp(App):
         self._show_log()
         for problem in self._color_problems:
             self.note(f"tui.json: {problem}", "warning")
+        if not self.settings.disclaimer_shown:
+            self.settings.disclaimer_shown = True
+            self.notify(MSG_MUSIC_DISCLAIMER, title="Before you start",
+                        severity="warning", timeout=20)
 
         try:
             self.audio.launch()

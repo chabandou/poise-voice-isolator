@@ -36,6 +36,7 @@ from .. import __version__
 from ..constants import (
     MSG_PROCESSING_STARTED, MSG_PROCESSING_STOPPED,
     MSG_DEVICE_SWITCHING, MSG_DEVICE_SWITCHING_FIRST_TIME,
+    MSG_MUSIC_DISCLAIMER,
 )
 from .worker import AudioWorker
 from . import updater as upd
@@ -84,6 +85,7 @@ QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's "no maximum" for widget sizes
 # (its lattice takes ~180 ms), then the content arrives one piece at a
 # time: the dial's card, its ring sweeping on as it lands, the cards below.
 WINDOW_FADE_MS = 220
+DISCLAIMER_DELAY_MS = 700  # first launch's notice (widgets/notice.py)
 HOME_PREPARE_MS = 240      # after show: draw the card's first paint
 HOME_BEAT_MS = 120         # ...and rest this long after it
 HOME_RISE_MS = 520         # each piece's rise
@@ -784,6 +786,11 @@ class MainWindow(QMainWindow):
         tagline = QLabel("Real-time voice isolation. Runs 100% on-device.")
         tagline.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(tagline)
+        disclaimer = QLabel(MSG_MUSIC_DISCLAIMER)
+        disclaimer.setObjectName("card-subtitle")
+        disclaimer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        disclaimer.setWordWrap(True)
+        layout.addWidget(disclaimer)
         layout.addSpacing(12)
 
         credits = QLabel()
@@ -911,6 +918,10 @@ class MainWindow(QMainWindow):
         if self._shown_once:
             return
         self._shown_once = True
+        if not self.settings.disclaimer_shown:
+            self.settings.disclaimer_shown = True
+            # After Home's entrance, so the card isn't covering it mid-motion.
+            QTimer.singleShot(DISCLAIMER_DELAY_MS, self._show_disclaimer)
         try:
             from .animations import motion_ok
             from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
@@ -931,6 +942,12 @@ class MainWindow(QMainWindow):
                 self._hold_home()
         except Exception:
             pass
+
+    def _show_disclaimer(self) -> None:
+        """First launch only: music can pass through (also in About)."""
+        from .widgets.notice import NoticeOverlay
+        NoticeOverlay(self.centralWidget(), "Before you start",
+                      MSG_MUSIC_DISCLAIMER, "I understand").open()
 
     def _home_parts(self):
         return [self._stage] + self._home_cards
