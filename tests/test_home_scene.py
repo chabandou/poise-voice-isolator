@@ -272,6 +272,7 @@ seed = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
                  "Poise", "VoiceIsolator")
 seed.setValue("behavior/minimize_to_tray_asked", True)
 seed.setValue("behavior/minimize_to_tray", True)
+seed.setValue("behavior/music_disclaimer_shown", True)
 seed.setValue("appearance/reduce_motion", False)
 seed.setValue("appearance/theme", "vigil")
 seed.sync()
