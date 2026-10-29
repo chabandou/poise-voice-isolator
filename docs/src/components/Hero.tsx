@@ -27,7 +27,7 @@ const Hero = () => {
 
 			<div className="relative z-10 mx-auto flex w-full max-w-5xl flex-col items-center px-6 text-center">
 				<p {...revealOnLoad(460)} className="mb-7 max-w-2xl text-balance text-[1.02rem] leading-[1.6] text-muted md:mb-8 md:text-[1.15rem]">
-					System-wide AI that helps you avoid haram audio effortlessly. Pure clarity from chaos.
+					System-wide AI that helps you avoid haram audio effortlessly.
 				</p>
 
 				<div className="flex w-full flex-col items-center justify-center gap-4 sm:w-auto sm:flex-row" {...revealOnLoad(560)}>
