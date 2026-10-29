@@ -59,10 +59,6 @@ const Grid = () => {
 						</div>
 					))}
 				</div>
-
-				<p className="mx-auto mt-10 max-w-3xl text-center text-[0.92rem] leading-[1.6] text-muted" {...reveal(0)}>
-					Poise can’t always completely remove music. In certain scenarios some can pass through, especially loud music that’s close to speech. We can’t guarantee that the output audio is permissible, use your own judgement.
-				</p>
 			</div>
 		</section>
 	);

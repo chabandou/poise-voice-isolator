@@ -7,7 +7,7 @@
 
 [![Windows](https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/chabandou/poise-voice-isolator/releases)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/chabandou/poise-voice-isolator/releases)
-[![Android](https://img.shields.io/badge/Android%20(SAMSUNG)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/chabandou/poise-android/releases)
+[![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/chabandou/poise-android/releases)
 
 </div>
 
@@ -58,7 +58,7 @@ Poise sits between your apps and your speakers. It takes the system mix (YouTube
 - **Free.** MIT licensed, no subscription.
 
 > [!NOTE]
-> On Android, Poise lives in a separate app for Samsung devices: [poise-android](https://github.com/chabandou/poise-android).
+> On Android, Poise lives in a separate app: [poise-android](https://github.com/chabandou/poise-android).
 
 ## Install
 

@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getLenis } from '../smoothScroll';
-import { AndroidLogo, ArrowRight, ArrowUpRight, LinuxLogo, WindowsLogo, X, type Icon } from '../icons';
+import { AndroidLogo, ArrowRight, ArrowUpRight, Info, LinuxLogo, WindowsLogo, X, type Icon } from '../icons';
 import { RELEASE, RELEASES_URL, REPO_URL } from '../release';
 import { reveal } from '../reveal';
 
 type InstallGuide = {
 	name: string;
 	Icon: Icon;
-	disclaimer?: string;
 	label: string;
 	intro: string;
 	note?: ReactNode;
@@ -86,12 +85,11 @@ poise`,
 	{
 		name: "Android",
 		Icon: AndroidLogo,
-		disclaimer: "Samsung only",
 		label: "companion app",
-		intro: "Android support is Samsung-only for now. The install flow lives in the dedicated Android project.",
+		intro: "The install flow lives in the dedicated Android project.",
 		steps: [
 			"Open the Poise Android installation guide.",
-			"Follow the Samsung-specific install steps there.",
+			"Follow the install steps there.",
 		],
 		links: [
 			{ label: "Android installation", url: "https://github.com/chabandou/poise-android#installation", primary: true },
@@ -195,17 +193,21 @@ const FinalCTA = () => {
 								</span>
 								<h3 className="font-heading text-[2rem] font-bold leading-none text-ink">{option.name}</h3>
 								<p className="mt-2 font-mono text-[0.75rem] text-muted">{option.label}</p>
-								{option.disclaimer && (
-									<span className="mt-3 rounded-full border border-secondary/40 bg-secondary/12 px-3 py-0.5 font-mono text-[0.72rem] text-secondary">
-										{option.disclaimer}
-									</span>
-								)}
 								<span className="mt-6 inline-flex items-center gap-1.5 text-[0.95rem] font-semibold text-accent">
 									Install steps
 									<ArrowRight className="transition-transform duration-200 group-hover:translate-x-1" size={16} />
 								</span>
 							</button>
 						))}
+					</div>
+
+					<div className="mx-auto mt-10 flex max-w-3xl items-start gap-4 rounded-xl border border-secondary/25 bg-secondary/8 p-5 text-left" {...reveal(150)} role="note">
+						<span className="icon-chip h-10 w-10 shrink-0 rounded-[10px]">
+							<Info size={20} />
+						</span>
+						<p className="text-[0.95rem] leading-[1.65] text-ink/90">
+							<span className="font-semibold text-ink">Some music can pass through.</span> Poise can’t always completely remove music. In certain scenarios some can pass through, especially loud music that’s close to speech. We can’t guarantee that the output audio is permissible, use your own judgement.
+						</p>
 					</div>
 
 					<p className="mt-12 text-center text-[0.94rem] text-muted" {...reveal(200, 'fade')}>
