@@ -51,7 +51,7 @@
 
 Poise sits between your apps and your speakers. It takes the system mix (YouTube, streams, podcasts), runs it through a neural speech model, and plays back only the voices. Turn it on once and forget it.
 
-- **Strips music, keeps speech.** DeepFilterNet3 removes instrumentals and background noise while leaving voices intact. A halal-friendly way to watch and listen to online content.
+- **Strips (or massively reduces) music, keeps speech.** DeepFilterNet3 removes instrumentals and background noise while leaving voices intact. A halal-friendly way to watch and listen to online content.
 - **Stays in sync.** The delay is fixed and reported to the audio server, so video players hold the picture to match: 76 ms end to end on Linux.
 - **Light on the machine.** Silence skips the model entirely. Inference runs at ~0.12× real time on a laptop CPU, or ~0.04× with GTCRN.
 - **Private by construction.** Everything runs on your machine. No cloud, no account, no telemetry.
@@ -94,6 +94,9 @@ Then run `poise` to open the terminal UI. All three models are built in.
 <br/>
 <img src=".github/media/1.5.0/linux-tui.png" alt="Poise terminal UI on Linux: input and voice scopes, isolation strength, output device and events" width="100%"/>
 </details>
+
+> [!IMPORTANT]
+> Poise can’t always completely remove music. In certain scenarios some can pass through, especially loud music that’s close to speech. We can’t guarantee that the output audio is permissible, use your own judgement.
 
 ## Models
 
