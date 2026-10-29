@@ -206,7 +206,7 @@ const FinalCTA = () => {
 							<Info size={20} />
 						</span>
 						<p className="text-[0.95rem] leading-[1.65] text-ink/90">
-							<span className="font-semibold text-ink">Some music can pass through.</span> Poise can’t always completely remove music. In certain scenarios some can pass through, especially loud music that’s close to speech. We can’t guarantee that the output audio is permissible, use your own judgement.
+							<span className="font-semibold text-ink">Some music can still pass through.</span> Poise can’t always completely remove music. In certain scenarios some can pass through, especially loud music that’s close to speech. We can’t guarantee that the output audio is permissible, use your own judgement.
 						</p>
 					</div>
 
