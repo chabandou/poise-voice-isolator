@@ -106,6 +106,15 @@ print('DIRTY' if (flags is not None and flags[1] and flags[2]) else 'CLEAN')
 fi
 echo
 
+# libpython ships with its debug info (~23 MB, ~6.5 MB of the compressed
+# binary) and Nuitka bundles it as is. strip writes a new file, so the
+# interpreter running this script is unaffected.
+LIBPYTHON=$(python -c "import os, sysconfig as s; print(os.path.join(s.get_config_var('LIBDIR'), 'libpython' + s.get_config_var('LDVERSION') + '.so.1.0'))")
+[ -f "$LIBPYTHON" ] || { echo "❌ Error: $LIBPYTHON not found"; exit 1; }
+strip --strip-unneeded "$LIBPYTHON"
+echo "✓ libpython stripped ($(du -h "$LIBPYTHON" | cut -f1))"
+echo
+
 # PipeWire node (libpoise_pw.so): Poise as a sink inside the PipeWire graph
 # with a fixed delay. Built against the system libpipewire headers (not the
 # conda env's); without them the binary still works on pulse-simple.
@@ -152,6 +161,8 @@ python -m nuitka \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
     --nofollow-import-to=sounddevice,pyaudio,pyaudiowpatch \
     --nofollow-import-to=scipy \
+    --nofollow-import-to=markdown_it,numpy.f2py,numpy.distutils \
+    --python-flag=no_docstrings \
     --product-version="$VERSION" \
     --onefile-tempdir-spec="{CACHE_DIR}/poise/onefile/{VERSION}" \
     --remove-output \
