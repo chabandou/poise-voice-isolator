@@ -135,6 +135,11 @@ echo
 # Clean previous build
 rm -rf dist/__main__.* dist/poise
 
+# Unpacks to ~/.cache/poise/onefile/<version>, kept between runs: the
+# default, a fresh folder in /tmp, sits in RAM where /tmp is tmpfs
+# (~300 MB for as long as Poise runs). poise_tui.py prunes old versions.
+VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+
 # Build using --python-flag=-m to properly handle __main__.py as module
 echo "Building with Nuitka (this takes several minutes)..."
 python -m nuitka \
@@ -147,6 +152,8 @@ python -m nuitka \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
     --nofollow-import-to=sounddevice,pyaudio,pyaudiowpatch \
     --nofollow-import-to=scipy \
+    --product-version="$VERSION" \
+    --onefile-tempdir-spec="{CACHE_DIR}/poise/onefile/{VERSION}" \
     --remove-output \
     --assume-yes-for-downloads \
     --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
