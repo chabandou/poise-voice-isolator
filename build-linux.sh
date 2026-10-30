@@ -32,7 +32,7 @@ echo "Installing build dependencies..."
 # footer key text and can't render transparent filler. A bare `textual`
 # requirement would keep whatever stale version the env already has.
 # nuitka[onefile] brings zstandard, which compresses the onefile (~4x).
-pip install -q "nuitka[onefile]" ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate scipy
+pip install -q "nuitka[onefile]" ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate
 
 # Install ccache if not present (speeds up rebuilds)
 if ! command -v ccache &> /dev/null; then
@@ -146,7 +146,7 @@ python -m nuitka \
     --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
     --nofollow-import-to=sounddevice,pyaudio,pyaudiowpatch \
-    --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
+    --nofollow-import-to=scipy \
     --remove-output \
     --assume-yes-for-downloads \
     --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \

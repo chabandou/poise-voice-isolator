@@ -32,7 +32,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libpulse0
       - name: Install test deps
         # Runtime deps minus the GUI: stream_denoiser/__init__ pulls in the
-        # resampler (scipy, samplerate) and the engines (onnxruntime).
+        # resampler (samplerate) and the engines (onnxruntime).
         run: |
           grep -v -i pyqt6 requirements.txt > /tmp/requirements-ci.txt
           pip install -r /tmp/requirements-ci.txt pytest pulsectl
@@ -54,7 +54,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-scipy python3-pytest
+            pulseaudio pulseaudio-utils libpulse0 python3 python3-pip python3-numpy python3-pytest
           test -f /usr/lib/x86_64-linux-gnu/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)
       - name: Compile the PipeWire node (check only)
@@ -93,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
-          dnf install -y pipewire pipewire-pulseaudio wireplumber dbus-daemon pulseaudio-utils pulseaudio-libs python3 python3-pip python3-numpy python3-scipy python3-pytest \
+          dnf install -y pipewire pipewire-pulseaudio wireplumber dbus-daemon pulseaudio-utils pulseaudio-libs python3 python3-pip python3-numpy python3-pytest \
             gcc make pkgconf-pkg-config pipewire-devel procps-ng
           test -f /usr/lib64/libpulse-simple.so.0 || \
             (echo "libpulse-simple missing" && exit 1)

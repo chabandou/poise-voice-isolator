@@ -47,7 +47,7 @@ jobs:
           # nuitka[onefile] brings zstandard: without it the onefile is stored
           # uncompressed (1.5.0's first build: 314 MB instead of ~75).
           pip install -r requirements.txt "nuitka[onefile]" ordered-set
-          pip list | grep -iE "nuitka|onnxruntime|sounddevice|textual|pulp|pulsectl|samplerate|scipy"
+          pip list | grep -iE "nuitka|onnxruntime|sounddevice|textual|pulp|pulsectl|samplerate"
 
       - name: Check model files
         run: |
@@ -94,7 +94,7 @@ jobs:
             --nofollow-import-to=pytest,setuptools,pip,wheel,distutils \
             --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
             --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
-            --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
+            --nofollow-import-to=scipy \
             --remove-output \
             --assume-yes-for-downloads \
             --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
