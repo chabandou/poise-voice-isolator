@@ -47,7 +47,7 @@ jobs:
           # nuitka[onefile] brings zstandard: without it the onefile is stored
           # uncompressed (1.5.0's first build: 314 MB instead of ~75).
           pip install -r requirements.txt "nuitka[onefile]" ordered-set
-          pip list | grep -iE "nuitka|onnxruntime|sounddevice|textual|pulp|pulsectl|samplerate|scipy"
+          pip list | grep -iE "nuitka|onnxruntime|sounddevice|textual|pulp|pulsectl|samplerate"
 
       - name: Check model files
         run: |
@@ -75,6 +75,15 @@ jobs:
             echo "Library clean, no patching needed"
           fi
 
+      - name: Strip libpython
+        # Its debug info: ~23 MB, ~6.5 MB of the compressed binary (see
+        # build-linux.sh).
+        run: |
+          LIBPYTHON=$(python -c "import os, sysconfig as s; print(os.path.join(s.get_config_var('LIBDIR'), 'libpython' + s.get_config_var('LDVERSION') + '.so.1.0'))")
+          test -f "$LIBPYTHON" || { echo "$LIBPYTHON not found"; exit 1; }
+          strip --strip-unneeded "$LIBPYTHON"
+          du -h "$LIBPYTHON"
+
       - name: Build RNNoise (bundled librnnoise.so)
         run: bash build-rnnoise-dll.sh linux
 
@@ -86,6 +95,9 @@ jobs:
       - name: Build poise binary (Nuitka)
         run: |
           rm -rf dist/__main__.* dist/poise
+          # Unpacks to ~/.cache/poise/onefile/<version>, not RAM-backed
+          # /tmp (see build-linux.sh).
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           python -m nuitka \
             --standalone \
             --onefile \
@@ -94,7 +106,11 @@ jobs:
             --nofollow-import-to=pytest,setuptools,pip,wheel,distutils \
             --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
             --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
-            --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
+            --nofollow-import-to=scipy \
+            --nofollow-import-to=markdown_it,numpy.f2py,numpy.distutils \
+            --python-flag=no_docstrings \
+            --product-version="$VERSION" \
+            --onefile-tempdir-spec="{CACHE_DIR}/poise/onefile/{VERSION}" \
             --remove-output \
             --assume-yes-for-downloads \
             --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \

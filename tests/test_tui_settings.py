@@ -5,6 +5,9 @@ audio process, engine loading and Pulse replaced by stand-ins.
 """
 import asyncio
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -410,3 +413,36 @@ def test_colors_follow_tui_json_while_running(make_app):
         await pilot.pause()
     run(make_app(), steps)
     assert TuiSettings().colors == {"border": "#abcdef"}
+
+
+_TUI_RUN = """
+import asyncio, os, sys, tempfile
+sys.path.insert(0, {root!r})
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="poise-test-config-")
+from stream_denoiser.backends.platform import linux
+from stream_denoiser.tui import app as app_mod
+linux.list_pulseaudio_sinks = lambda: []
+linux.get_default_sink_name = lambda: None
+app_mod.AudioHost.launch = lambda self: None
+app_mod.PoiseApp._setup_logging = lambda self: None
+app_mod.PoiseApp._setup_cleanup_handlers = lambda self: None
+async def main():
+    async with app_mod.PoiseApp().run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+asyncio.run(main())
+print("heavy:", ",".join(m for m in ("numpy", "onnxruntime")
+                         if m in sys.modules))
+"""
+
+
+def test_the_tui_process_loads_no_numpy():
+    """The engine loads in the audio process only (as the GUI's does,
+    test_gui_no_numpy): checking the model here would otherwise keep
+    numpy and ONNX Runtime in the UI too. A fresh interpreter, as this
+    one has numpy loaded."""
+    root = str(Path(__file__).resolve().parent.parent)
+    run = subprocess.run([sys.executable, "-c", _TUI_RUN.format(root=root)],
+                         capture_output=True, text=True, timeout=120)
+    lines = [l for l in run.stdout.splitlines() if l.startswith("heavy:")]
+    assert run.returncode == 0 and lines, run.stderr[-2000:]
+    assert lines[-1] == "heavy: ", lines[-1]

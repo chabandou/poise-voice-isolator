@@ -11,11 +11,17 @@ through ``put_frame()``; ctypes releases the GIL while the thread waits.
 
 ``DelayCore`` is the exchange alone, driven by hand; the tests use it to
 check timing exactly.
-"""
-import ctypes
-from typing import Dict, Optional
 
-import numpy as np
+numpy is imported where it is used: the UI process loads this module
+(through pipewire_node) to check the node can run, and stays free of it.
+"""
+from __future__ import annotations
+
+import ctypes
+from typing import TYPE_CHECKING, Dict, Optional
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Order of poise_core_get_stats() (enum poise_stat in poise_core.h).
 STAT_NAMES = (
@@ -55,6 +61,7 @@ def bind(lib, sigs: dict) -> None:
 
 
 def _f32(a: np.ndarray, n: int) -> np.ndarray:
+    import numpy as np
     a = np.ascontiguousarray(a, dtype=np.float32)
     if a.ndim != 1 or a.shape[0] != n:
         raise ValueError(f"expected {n} float32 samples, got shape {a.shape}")
@@ -73,6 +80,7 @@ class CoreOps:
 
         Returns its index, WAIT_TIMEOUT, or WAIT_STOPPED.
         """
+        import numpy as np
         if out.dtype != np.float32 or not out.flags.c_contiguous \
                 or out.shape != (self.frame,):
             raise ValueError("out must be a C-contiguous float32 frame")
@@ -122,6 +130,7 @@ class DelayCore(CoreOps):
 
     def cycle(self, inp: Optional[np.ndarray], n_out: int) -> np.ndarray:
         """One cycle: append ``inp`` (mono, may be None), output n_out."""
+        import numpy as np
         out = np.zeros(int(n_out), dtype=np.float32)
         if inp is None:
             in_ptr, n_in = None, 0

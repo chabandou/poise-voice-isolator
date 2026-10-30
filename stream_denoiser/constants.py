@@ -76,18 +76,23 @@ MODEL_INFO = {
         "card_blurb": "Best isolation · medium CPU load.",
         # Performance panel: processing pipeline (independent).
         "blurb": "Frequency domain (STFT) · ONNX Runtime",
+        # The engine's required_frame_size at 48 kHz, for the UI to show
+        # without loading the engine (test_engines keeps them equal).
+        "frame_size": 512,
     },
     MODEL_GTCRN: {
         "label": "GTCRN",
         "picker_blurb": "Lower quality isolation · Lightest CPU load",
         "card_blurb": "Lower quality isolation · Lightest CPU load.",
         "blurb": "Frequency domain (STFT, 16 kHz) · ONNX Runtime",
+        "frame_size": 768,
     },
     MODEL_RNNOISE: {
         "label": "RNNoise",
         "picker_blurb": "Lowest quality isolation · Lighter CPU load",
         "card_blurb": "Lowest quality isolation · Lighter CPU load.",
         "blurb": "Frequency domain (Bark bands) · native librnnoise",
+        "frame_size": 480,
     },
 }
 

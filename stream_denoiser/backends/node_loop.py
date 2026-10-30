@@ -10,8 +10,6 @@ own "sync:" lines through the log_sync / log_events hooks.
 """
 import time
 
-import numpy as np
-
 from ..logging_config import get_logger
 from ._loop_util import SYNC_LOG_INTERVAL_SEC, fast_gil_handoff, ms, \
     stop_requested
@@ -66,6 +64,8 @@ def worker_loop(node, processor, should_stop, on_stats,
             one line per event since the last check.
         error: Raised with the node's message when it reports an error.
     """
+    import numpy as np  # here, not above: the UI imports this module
+
     buf = np.empty(node.frame, dtype=np.float32)
     last_stats = last_sync = last_event = time.time()
     seen = node.stats()

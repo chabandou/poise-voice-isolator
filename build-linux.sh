@@ -32,7 +32,7 @@ echo "Installing build dependencies..."
 # footer key text and can't render transparent filler. A bare `textual`
 # requirement would keep whatever stale version the env already has.
 # nuitka[onefile] brings zstandard, which compresses the onefile (~4x).
-pip install -q "nuitka[onefile]" ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate scipy
+pip install -q "nuitka[onefile]" ordered-set numpy onnxruntime "textual>=8.2.8" pulsectl samplerate
 
 # Install ccache if not present (speeds up rebuilds)
 if ! command -v ccache &> /dev/null; then
@@ -106,6 +106,15 @@ print('DIRTY' if (flags is not None and flags[1] and flags[2]) else 'CLEAN')
 fi
 echo
 
+# libpython ships with its debug info (~23 MB, ~6.5 MB of the compressed
+# binary) and Nuitka bundles it as is. strip writes a new file, so the
+# interpreter running this script is unaffected.
+LIBPYTHON=$(python -c "import os, sysconfig as s; print(os.path.join(s.get_config_var('LIBDIR'), 'libpython' + s.get_config_var('LDVERSION') + '.so.1.0'))")
+[ -f "$LIBPYTHON" ] || { echo "❌ Error: $LIBPYTHON not found"; exit 1; }
+strip --strip-unneeded "$LIBPYTHON"
+echo "✓ libpython stripped ($(du -h "$LIBPYTHON" | cut -f1))"
+echo
+
 # PipeWire node (libpoise_pw.so): Poise as a sink inside the PipeWire graph
 # with a fixed delay. Built against the system libpipewire headers (not the
 # conda env's); without them the binary still works on pulse-simple.
@@ -135,6 +144,11 @@ echo
 # Clean previous build
 rm -rf dist/__main__.* dist/poise
 
+# Unpacks to ~/.cache/poise/onefile/<version>, kept between runs: the
+# default, a fresh folder in /tmp, sits in RAM where /tmp is tmpfs
+# (~300 MB for as long as Poise runs). poise_tui.py prunes old versions.
+VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+
 # Build using --python-flag=-m to properly handle __main__.py as module
 echo "Building with Nuitka (this takes several minutes)..."
 python -m nuitka \
@@ -146,7 +160,11 @@ python -m nuitka \
     --nofollow-import-to=torch,tensorflow,keras,matplotlib,pandas,IPython \
     --nofollow-import-to=PyQt6,PyQt5,tkinter,PIL,cv2 \
     --nofollow-import-to=sounddevice,pyaudio,pyaudiowpatch \
-    --nofollow-import-to=scipy.io,scipy.optimize,scipy.stats \
+    --nofollow-import-to=scipy \
+    --nofollow-import-to=markdown_it,numpy.f2py,numpy.distutils \
+    --python-flag=no_docstrings \
+    --product-version="$VERSION" \
+    --onefile-tempdir-spec="{CACHE_DIR}/poise/onefile/{VERSION}" \
     --remove-output \
     --assume-yes-for-downloads \
     --include-data-files=stream_denoiser/models/denoiser_model_df3.onnx=stream_denoiser/models/denoiser_model_df3.onnx \
