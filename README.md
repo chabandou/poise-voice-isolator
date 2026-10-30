@@ -102,11 +102,11 @@ Then run `poise` to open the terminal UI. All three models are built in.
 
 Switch with `m` in the TUI, the **Model** card in the app, or `--model` on the command line.
 
-| Model | Engine delay | Load (RTF) | Best for |
-|:--|:--:|:--:|:--|
-| **DeepFilterNet3** *(default)* | 32 ms | ~0.12 | Voice isolation from music and noise |
-| **GTCRN** | 18 ms | ~0.04 | Noisy speech on weak CPUs, lowest delay |
-| **RNNoise** | 20 ms | ~0.08 | Steady noise: fans, hiss, hum |
+| Model | Engine delay | Load (RTF) |
+|:--|:--:|:--:|
+| **DeepFilterNet3** *(default)* | 32 ms | ~0.12 |
+| **GTCRN** | 18 ms | ~0.04 |
+| **RNNoise** | 20 ms | ~0.08 |
 
 <sub>RTF = processing time ÷ audio time, measured on a Ryzen 5 4500U laptop on AC. Below 1.0 keeps up with real time.</sub>
 
