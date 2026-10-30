@@ -4,8 +4,10 @@ import numpy as np
 import pytest
 
 from stream_denoiser.constants import (
+    ALL_MODELS,
     DEFAULT_FRAME_SIZE,
     DEFAULT_MODEL,
+    MODEL_INFO,
     MODEL_DEEPFILTERNET3,
     MODEL_GTCRN,
     MODEL_RNNOISE,
@@ -32,6 +34,18 @@ def test_factory_rnnoise_type_or_skip():
         assert isinstance(engine, RNNoiseEngine)
         assert engine.name == MODEL_RNNOISE
         assert engine.required_frame_size == DEFAULT_FRAME_SIZE
+    finally:
+        engine.close()
+
+
+@pytest.mark.parametrize("model", ALL_MODELS)
+def test_model_info_frame_size_is_the_engines(model):
+    """The TUI shows MODEL_INFO's frame size without loading the engine."""
+    if model not in available_models():
+        pytest.skip(f"{model} not available here")
+    engine = create_engine(model)
+    try:
+        assert engine.required_frame_size == MODEL_INFO[model]["frame_size"]
     finally:
         engine.close()
 

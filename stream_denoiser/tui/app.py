@@ -449,29 +449,29 @@ class PoiseApp(App):
         return DEFAULT_MODEL
 
     def _load_model(self) -> None:
-        """Validate the selected denoising engine is available."""
-        label = MODEL_INFO.get(self.model, {}).get("label", self.model)
-        try:
-            from ..engines import create_engine
-            from ..constants import DEFAULT_FRAME_SIZE
-            engine = create_engine(self.model)
-            frame_size = engine.required_frame_size or DEFAULT_FRAME_SIZE
-            engine.close()
+        """Check the selected model can run here (its files or library).
+
+        The engine itself loads in the audio process: building one here
+        too would keep numpy and ONNX Runtime in the UI for good.
+        """
+        from ..engines import model_unavailable_reason
+        info = MODEL_INFO.get(self.model)
+        label = info["label"] if info else self.model
+        reason = (model_unavailable_reason(self.model) if info
+                  else "unknown model")
+        if reason is None:
             self.engine = True  # marker: engine validated
-            self._show_model(self.model, frame_size)
+            self._show_model(self.model, info["frame_size"])
             self.note(label, "success", tag="ready")
             logging.getLogger("stream_denoiser").info(
-                "engine ready: model=%s frame_size=%s", self.model, frame_size
-            )
-        except Exception as e:
+                "engine ready: model=%s frame_size=%s",
+                self.model, info["frame_size"])
+        else:
             self.engine = None
             self._show_model(self.model)
-            # One line on screen, the rest in the log.
-            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
-            self.note(f"{label} failed to load: {first_line}", "error")
-            _logger = logging.getLogger("stream_denoiser")
-            _logger.warning(f"Model load failed: {self.model}: {first_line}")
-            _logger.debug(f"Model load failed: {e!r}")
+            self.note(f"{label} failed to load: {reason}", "error")
+            logging.getLogger("stream_denoiser").warning(
+                "Model load failed: %s: %s", self.model, reason)
 
     def _show_model(self, model_id: str, frame_size=None) -> None:
         """Model name in box 1 and box 2 (idle too)."""
