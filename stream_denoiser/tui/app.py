@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import logging
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -185,16 +186,30 @@ class PoiseApp(App):
         """
         Emergency cleanup for when the app is terminated abruptly.
         Restores original audio sink and removes the virtual null sink.
+        On macOS it ends the audio process, whose session destroys the
+        Core Audio tap it created: a tap outliving its reader keeps the
+        whole Mac muted (plan C1).
         """
         if self._cleanup_done:
             return
         self._cleanup_done = True
 
-        # End the audio process (its session restores the routing it set)
+        # End the audio process (its session restores the routing it set,
+        # and on macOS destroys the tap)
         try:
             self.audio.shutdown(timeout=1.0)
         except Exception:
             pass
+
+        if sys.platform == "darwin" and self.audio.alive:
+            # shutdown() terminates a process that will not go; if even
+            # that did not land, the tap may still be muting the Mac.
+            # Nothing here can force it, so leave the one line the log and
+            # the doctor check (T9) need.
+            logging.getLogger("stream_denoiser").warning(
+                "audio process %s survived shutdown: its Core Audio tap may "
+                "still be muting the Mac until the process exits",
+                self.audio.pid)
 
         # Restore audio routing
         if self.linux_router:

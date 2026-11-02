@@ -2,7 +2,9 @@
 Command-Line Interface for Stream Denoiser
 
 Main entry point and argument parsing for the real-time audio denoiser.
-Supports both Windows (VB Cable) and Linux (PulseAudio via pulse-simple).
+Windows: VB Cable and the native WASAPI path (or PortAudio); Linux:
+PulseAudio via pulse-simple or the PipeWire node; macOS: the Core Audio
+tap (backends/coreaudio_backend).
 """
 import os
 import sys
@@ -16,6 +18,7 @@ from .engines import create_engine, available_models, DEFAULT_DF3_ONNX
 from .engines.base import DenoiseEngine
 
 from .constants import (
+    BACKEND_ENV,
     DEFAULT_AAD_THRESHOLD_DB,
     DEVICE_SWITCH_INIT_DELAY_SEC,
     MSG_POWERSHELL_UNAVAILABLE,
@@ -24,11 +27,12 @@ from .constants import (
     MODEL_DEEPFILTERNET3,
     MODEL_GTCRN,
     LINUX_BACKENDS,
+    MACOS_BACKENDS,
     PW_NODE_DESCRIPTION,
     PW_NODE_NAME,
     WINDOWS_BACKENDS,
 )
-from .platform_utils import is_windows, is_linux, get_vb_cable_switcher
+from .platform_utils import is_windows, is_linux, is_macos, get_vb_cable_switcher
 from .device_utils import list_audio_devices, find_loopback_device
 from .backend_detection import (
     USE_SOUNDDEVICE,
@@ -46,8 +50,10 @@ def _interrupt_on_termination_signals() -> None:
     no ``finally`` runs: on Linux the Poise_Capture null sink stays loaded
     and stays the default sink (system audio goes silent). Raised as
     KeyboardInterrupt they take the Ctrl+C path instead: the audio loop
-    stops and ``process_system_audio_realtime`` restores the routing.
-    Repeats are ignored so a second signal can't cut that cleanup short.
+    stops and ``process_system_audio_realtime`` restores the routing. On
+    macOS the same path destroys the Core Audio tap, which is what unmutes
+    the Mac (backends/coreaudio_backend, plan C1). Repeats are ignored so
+    a second signal can't cut that cleanup short.
     """
     sigs = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP")
             if hasattr(signal, n)]
@@ -89,14 +95,56 @@ def process_system_audio_realtime(engine: DenoiseEngine,
         use_vb_cable: Whether to automatically switch devices (VB Cable on Windows, null sink on Linux)
         vb_cable_name: Custom name for VB Cable device (auto-detected if None)
         source: Pulse source name for capture (Linux only)
-        sink: Pulse sink name for playback (Linux only)
+        sink: Pulse sink name for playback (Linux only); macOS: the output
+            device's name or UID
         backend: Linux backend: "auto" (default; PipeWire node when
             available), "pipewire" or "pulse"; Windows: "auto" (native
-            WASAPI path when available), "wasapi" or "portaudio". None
-            reads POISE_BACKEND.
+            WASAPI path when available), "wasapi" or "portaudio"; macOS:
+            "auto" or "coreaudio", the one path there is. None reads
+            POISE_BACKEND. main() resolves macOS's "auto" to "coreaudio"
+            before calling, so a bare ``poise-cli`` takes the tap.
     """
     config = {"aad_enabled": enable_aad, "aad_threshold_db": aad_threshold_db,
               "atten_lim_db": atten_lim_db}
+
+    if _coreaudio_requested(backend):
+        # macOS: one Core Audio process tap carries all system audio and the
+        # result plays to one output device — there is no capture device to
+        # name and nothing to switch. Reached by an explicit "coreaudio",
+        # which is what main() resolves the platform's "auto" to (see
+        # _coreaudio_requested).
+        from .backends.platform.macos import (
+            find_output_device, require_core_audio_tap_support)
+        # The floor first: an older Mac gets a sentence, not a loader error.
+        require_core_audio_tap_support()
+        if input_device is not None or output_device is not None:
+            raise ValueError(
+                f"Numeric --input-device {input_device} / --output-device "
+                f"{output_device} are not supported on macOS: Poise taps all "
+                "system audio and plays to the output device. Name one with "
+                "--sink (see --list-devices).")
+        if source:
+            raise ValueError(
+                f"--source {source!r} is a PulseAudio source, and macOS has "
+                "no capture device to name: the tap carries every app's "
+                "audio. Only the output device is a choice (--sink, see "
+                "--list-devices).")
+        from .backends.choice import macos_backend_preference
+        from .backends.coreaudio_backend import select_coreaudio_backend
+        chosen, reason = select_coreaudio_backend(
+            macos_backend_preference(backend))
+        _logger.info("macOS backend: %s (%s)", chosen, reason)
+        output = None
+        if sink:
+            # Resolved here so a mistyped device lists the ones that exist
+            # instead of failing inside the node; the node gets the UID.
+            device = find_output_device(sink)
+            _logger.info('output device: "%s" (uid %s), nominal %d Hz',
+                         device.name, device.uid, device.nominal_rate)
+            output = device.uid
+        config.update(backend=chosen, output_device=output)
+        _run_session(engine, config)
+        return
 
     if is_linux():
         # Linux: pulse-simple path (names, never indices).
@@ -222,9 +270,22 @@ def _run_session(engine: DenoiseEngine, config: dict,
     print_final_stats(processor.get_stats())
 
 
+def _coreaudio_requested(backend: Optional[str]) -> bool:
+    """Whether this run asks for the macOS Core Audio tap.
+
+    True for an explicit ``--backend coreaudio`` / ``POISE_BACKEND=coreaudio``.
+    macOS's ``auto`` is resolved to that value by main() before the session
+    is built, so a bare ``poise-cli`` on a Mac takes this path; a caller
+    that names a backend still gets the backend it named.
+    """
+    value = (backend or os.environ.get(BACKEND_ENV) or "auto").strip().lower()
+    return value == "coreaudio"
+
+
 def _print_started(config: dict, processor):
     """The session's on_started: what runs where, and how to stop it."""
-    paths = {"pipewire": " (PipeWire node)", "wasapi": " (native WASAPI)"}
+    paths = {"pipewire": " (PipeWire node)", "wasapi": " (native WASAPI)",
+             "coreaudio": " (Core Audio tap)"}
 
     def started(backend: str, source, sink) -> None:
         _logger.info("Using %s backend", backend)
@@ -242,6 +303,15 @@ def _print_started(config: dict, processor):
         elif backend == "wasapi":
             print(f"Input device: {source or 'default'}")
             print(f"Output device: {sink or 'default'}")
+        elif backend == "coreaudio":
+            try:
+                from .backends.platform.macos import find_output_device
+                output = (find_output_device(sink).name if sink else "default")
+            except ValueError:
+                output = sink or "default"
+            print(f"Output device: {output}")
+            print("Tapping all system audio: the apps Poise reads are muted "
+                  "while it runs, and unmuted when it stops")
         else:
             for kind, device in (("Input", source), ("Output", sink)):
                 print(f"{kind} device: {sd.query_devices(device)['name']} "
@@ -288,6 +358,9 @@ Examples:
   python -m stream_denoiser --input-device 2 --output-device 1
   python -m stream_denoiser --source Poise_Capture.monitor --sink alsa_output.pci-0000_00_1f.3.analog-stereo
 
+  # macOS: pick the output device (everything is tapped; no source to name):
+  python -m stream_denoiser --sink "MacBook Pro Speakers"
+
   # Use VB Cable (automatically switches default playback device):
   python -m stream_denoiser (VB Cable switching enabled by default)
 
@@ -311,22 +384,29 @@ Examples:
                              'default: denoiser_model_df3.onnx; a '
                              '<stem>_states.npz sibling is loaded too)')
     parser.add_argument('--input-device', type=int, default=None,
-                        help='Input device ID (Windows only; Linux uses --source)')
+                        help='Input device ID (Windows only; Linux uses '
+                             '--source; macOS has no capture device to '
+                             'choose)')
     parser.add_argument('--output-device', type=int, default=None,
-                        help='Output device ID (Windows only; Linux uses --sink)')
+                        help='Output device ID (Windows only; Linux and '
+                             'macOS use --sink)')
     parser.add_argument('--source', type=str, default=None,
                         help='Pulse source name for capture (Linux only, '
-                             'default: Poise_Capture.monitor)')
+                             'default: Poise_Capture.monitor; macOS taps all '
+                             'system audio, so there is no source to name)')
     parser.add_argument('--sink', type=str, default=None,
-                        help='Pulse sink name for playback (Linux only, '
-                             'default: original hardware sink)')
+                        help='Linux: Pulse sink name for playback (default: '
+                             'original hardware sink); macOS: output device '
+                             'name or UID (see --list-devices)')
     parser.add_argument('--backend', type=str, default=None,
                         choices=list(dict.fromkeys(LINUX_BACKENDS
-                                                   + WINDOWS_BACKENDS)),
+                                                   + WINDOWS_BACKENDS
+                                                   + MACOS_BACKENDS)),
                         help='Audio backend: auto (default) runs Poise as a '
                              'PipeWire node (Linux) or on the native WASAPI '
                              'path (Windows) when available, else '
-                             'pulse-simple / PortAudio; also POISE_BACKEND')
+                             'pulse-simple / PortAudio; macOS always runs '
+                             'the Core Audio tap; also POISE_BACKEND')
     parser.add_argument('--no-aad', action='store_true',
                         help='Disable Audio Activity detection')
     parser.add_argument('--aad-threshold', type=float, default=DEFAULT_AAD_THRESHOLD_DB,
@@ -436,6 +516,10 @@ Examples:
             sys.exit(1)
 
     if args.list_devices:
+        if is_macos():
+            from .backends.platform.macos import devices_report
+            print(devices_report())
+            sys.exit(0)
         if is_linux():
             from .backends.platform.linux import (
                 list_pulseaudio_sources_formatted,
@@ -492,9 +576,28 @@ Examples:
 
         sys.exit(0)
 
+    # macOS: what is missing in a sentence, before the engine loads a model
+    # or anything touches the dylib (an older Mac cannot work at all).
+    if is_macos():
+        from .backends.platform.macos import (
+            MacOSUnsupported, require_core_audio_tap_support)
+        try:
+            require_core_audio_tap_support()
+        except MacOSUnsupported as e:
+            _logger.error(str(e))
+            sys.exit(1)
+
     _interrupt_on_termination_signals()
 
     try:
+        # macOS's "auto" is the Core Audio tap: the one path a Mac has.
+        # Resolved here because the CLI owns the platform's default; the
+        # session and the audio process get a backend they can dispatch.
+        if is_macos():
+            from .backends.choice import macos_backend_preference
+            if macos_backend_preference(args.backend) == "auto":
+                args.backend = "coreaudio"
+
         # Create denoising engine
         try:
             engine = create_engine(args.model, onnx_path=args.onnx,

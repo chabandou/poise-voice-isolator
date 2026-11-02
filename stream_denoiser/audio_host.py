@@ -471,12 +471,21 @@ class _Control:
 
     @contextmanager
     def signals(self):
-        """SIGTERM/SIGHUP end the session cleanly (routing restored)."""
+        """SIGTERM/SIGHUP end the session cleanly (routing restored).
+
+        On macOS the Core Audio tap belongs to this process, so a Ctrl-C
+        that reaches it too (this process shares the UI's terminal process
+        group) must end the session here as well: killing it instead would
+        leave the tap muting the Mac (plan C1).
+        """
         def handler(signum, frame):
             self.stop = self.quit = True
 
+        names = ["SIGTERM", "SIGHUP"]
+        if sys.platform == "darwin":
+            names.append("SIGINT")
         previous = {}
-        for name in ("SIGTERM", "SIGHUP"):
+        for name in names:
             sig = getattr(signal, name, None)
             if sig is not None:
                 previous[sig] = signal.signal(sig, handler)

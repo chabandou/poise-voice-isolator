@@ -51,7 +51,37 @@ WIN_RENDER_FILL_SAMPLES = 0
 # Windows backend: "auto" (native path when available, else PortAudio),
 # "wasapi" or "portaudio". Override with POISE_BACKEND or --backend.
 WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
-BACKEND_ENV = "POISE_BACKEND"     # picks the backend on Linux and Windows
+
+# macOS native audio path (backends/coreaudio_backend.py): one Core Audio
+# process tap carries every app's audio and the result plays to the
+# output device, through libpoise_coreaudio.dylib — the same fixed-delay
+# core as the PipeWire and WASAPI nodes. Runtime floor is macOS 14.2
+# (backends/platform/macos.py): process taps did not exist before it.
+# Largest IOProc cycle (samples at 48 kHz) the delay is sized for; a
+# larger cycle with sound in it raises the delay and is counted.
+MAC_QUANTUM = 512
+# Time the inference thread gets per frame beyond the cycle itself
+# (samples, 256 = 5.3 ms); a frame later than this plays unprocessed.
+# Sized by measurement, not inherited from the Windows 21 ms: T2 measured
+# DF3 at RTF 0.031-0.035 on this host (frame p95 0.396 ms against the
+# 10.67 ms frame period) and T4's hardware run used 256 samples
+# successfully, the same evidence that pinned
+# WIN_PROCESS_MARGIN_SAMPLES = 256 above. Override with
+# POISE_MAC_MARGIN_MS (milliseconds), which _loop_util.margin_samples
+# resolves.
+MAC_MARGIN_SAMPLES = 256
+# Crossfade between processed and unprocessed audio (samples).
+MAC_FADE_SAMPLES = PW_FADE_SAMPLES
+# Milliseconds that override MAC_MARGIN_SAMPLES (see _loop_util.margin_samples).
+POISE_MAC_MARGIN_MS = "POISE_MAC_MARGIN_MS"
+# backends/coreaudio_backend.py still carries its own copies of the three
+# (QUANTUM / MARGIN_SAMPLES / FADE_SAMPLES / MARGIN_ENV, T6's file); they
+# hold these values. Moving it onto these names is an import swap there.
+# macOS backend: "auto" (the Core Audio tap; the platform has no second
+# path to choose between) or "coreaudio". Override with POISE_BACKEND or
+# --backend.
+MACOS_BACKENDS = ("auto", "coreaudio")
+BACKEND_ENV = "POISE_BACKEND"     # picks the backend on every platform
 DEFAULT_FRAME_SIZE = 480
 
 # Model / engine selection
