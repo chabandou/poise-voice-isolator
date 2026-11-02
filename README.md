@@ -80,9 +80,19 @@ driver required.
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
 cd poise-voice-isolator
-python3.12 -m venv .venv && .venv/bin/pip install -e .
+
+# A 3.10-3.12 interpreter (numpy<2 caps the range). If a version manager pins
+# a different default, its shim refuses `python3.12` even when 3.12 is
+# installed: create the venv with the interpreter explicitly instead.
+python3.12 -m venv .venv
+# mise:  mise x python@3.12 -- python -m venv .venv
+# uv:    uv venv --python 3.12 .venv
+# brew:  /opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv
+# pyenv: ~/.pyenv/versions/3.12.*/bin/python -m venv .venv
+
+.venv/bin/pip install -e .
 make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise_coreaudio.dylib
-.venv/bin/python -m stream_denoiser     # or: .venv/bin/poise  (terminal UI)
+.venv/bin/poise                         # terminal UI; or: .venv/bin/python -m stream_denoiser
 ```
 
 Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
