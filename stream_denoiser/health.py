@@ -704,28 +704,25 @@ def check_macos_capture() -> CheckResult:
 
     heard = ("no audio frames at all" if state == "no-audio"
              else f"{frames} frames, every one below the silence floor")
-    if output.playing:
-        return CheckResult(
-            name="capture", ok=False,
-            detail=(f"the tap is capturing zeros while {output.name} is "
-                    f"playing ({heard}). A denied or stale System Audio "
-                    "Recording grant looks exactly like this and raises no "
-                    "error at all"),
-            fix=_grant_fix())
-    if output.playing is None:
-        return CheckResult(
-            name="capture", ok=True,
-            detail=(f"the tap delivered silence ({heard}) and the HAL could "
-                    "not say whether the output device was playing, so this "
-                    "is inconclusive: play something and run --doctor again"),
-            fix=("Sound on the tap next time means the grant is fine.\n" +
-                 _grant_fix()))
+    # Silence on the tap has two indistinguishable causes, and the HAL cannot
+    # separate them: kAudioDevicePropertyDeviceIsRunningSomewhere is true
+    # whenever any client holds the device open, so it reads "playing" on a
+    # quiet Mac too (measured: True with nothing playing). Blaming the grant
+    # on that signal would send a user to Settings for no reason, and
+    # clearing the grant as healthy would hide the failure this check exists
+    # for. So name both causes and let the operator decide, and only claim
+    # "ok" when there is positive evidence that the tap works.
     return CheckResult(
-        name="capture", ok=True,
-        detail=(f"the tap delivered silence ({heard}) and nothing was "
-                f"playing through {output.name}, so there was nothing to "
-                "hear. Play something (music, a video) and run --doctor "
-                "again to check the grant"))
+        name="capture", ok=False,
+        detail=(f"the tap delivered silence ({heard}) with {output.name} "
+                + ("open by some client" if output.playing
+                   else "not reported as playing")
+                + ": either nothing was playing, or the System Audio "
+                "Recording grant is denied or stale. A denial raises no "
+                "error at all"),
+        fix=("Play something (music, a video) and run --doctor again.\n"
+             "If the tap is still silent while it plays, the grant is the "
+             "cause:\n" + _grant_fix()))
 
 
 def check_macos_taps() -> CheckResult:

@@ -76,8 +76,9 @@ static void sem_close_(poise_sem *s)
 	semaphore_destroy(mach_task_self(), *s);
 }
 
-/* A trap, no user-space lock: 0.5 us worst case with a mutex holder of
- * 100 ms on the same machine (measurements/mac-wake.md P2/P4). */
+/* A trap, no user-space lock: p99 0.625 us, max 1.0 us with a thread holding
+ * the same mutex for 100 ms on the same machine (measurements/mac-wake.md
+ * P4). */
 static void sem_post_(poise_sem *s)
 {
 	semaphore_signal(*s);

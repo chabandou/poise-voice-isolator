@@ -152,9 +152,10 @@ not on the audio path.
 `semaphore_signal` on the realtime publish, `semaphore_timedwait` in the worker,
 `semaphore_destroy` in `poise_core_free`) for the `#if defined(__APPLE__)` branch of
 `native/core/poise_core.c`. It is the only candidate measured here that keeps both
-properties the core depends on — a post that takes no user-space lock (P2/P4: 0.5 µs
-worst case even with a 100 ms mutex holder on the same machine) and a counting wake
-(P1-C: 48/48 lost for the lock-free condvar). `dispatch_semaphore_*` was rejected
+properties the core depends on — a post that takes no user-space lock (P4: p99 0.625 µs,
+max 1.0 µs, with a 100 ms mutex holder on the same machine) and a counting wake
+(P1-C: every wake lost, 50/50 in the mach build's log and 49/49 in the condvar build's,
+for the lock-free condvar). `dispatch_semaphore_*` was rejected
 before measuring: it routes signal/wait through libdispatch's own locks and QoS
 machinery, which is the failure mode P4 just demonstrated, and `sem_open` +
 `sem_trywait` polling burns CPU whenever the graph is idle.

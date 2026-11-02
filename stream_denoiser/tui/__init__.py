@@ -13,7 +13,8 @@ def main(argv=None):
     import argparse
     import sys
     import os
-    from ..constants import ALL_MODELS, DEFAULT_MODEL, LINUX_BACKENDS
+    from ..constants import (ALL_MODELS, DEFAULT_MODEL, LINUX_BACKENDS,
+                             MACOS_BACKENDS, WINDOWS_BACKENDS)
     from ..logging_config import (
         add_log_args,
         announce_log_path,
@@ -26,17 +27,24 @@ def main(argv=None):
                         choices=list(ALL_MODELS),
                         help=f'Denoising engine for this session (default: '
                              f'the last one picked, else {DEFAULT_MODEL})')
+    # Every platform's names are accepted; the session dispatch decides
+    # which one runs, exactly as the headless CLI does.
     parser.add_argument('--backend', type=str, default=None,
-                        choices=list(LINUX_BACKENDS),
-                        help='Audio backend: auto (default) runs Poise as a '
-                             'PipeWire node when available, else pulse-simple; '
-                             'also POISE_BACKEND')
+                        choices=sorted(set(LINUX_BACKENDS) | set(WINDOWS_BACKENDS)
+                                       | set(MACOS_BACKENDS)),
+                        help='Audio backend: auto (the default) picks the '
+                             "platform's native one (PipeWire on Linux, WASAPI "
+                             'on Windows, the Core Audio tap on macOS); also '
+                             'POISE_BACKEND')
     parser.add_argument('--doctor', action='store_true',
-                        help='Run startup health checks (Linux issues) and exit')
+                        help='Run startup health checks for this platform and '
+                             'exit')
     parser.add_argument('--fix-execstack', action='store_true',
-                        help='Clear the ONNX Runtime executable-stack flag with patchelf and exit')
+                        help='Clear the ONNX Runtime executable-stack flag with '
+                             'patchelf and exit (Linux only)')
     parser.add_argument('--reset-audio', action='store_true',
-                        help='Restore the real default sink and unload leftover Poise null sinks')
+                        help='Restore the real default audio device after a '
+                             'crash (Linux sink / macOS tap+aggregate)')
     add_log_args(parser)
     args, _ = parser.parse_known_args(argv)
     # Set up file logging before the fullscreen TUI takes over stdout.
@@ -49,8 +57,12 @@ def main(argv=None):
     # One-shot maintenance commands (no TUI needed). The binary IS the TUI,
     # so these must work here and not fall through to app.run().
     if args.doctor:
-        from ..health import run_doctor, format_doctor
-        ok, results = run_doctor()
+        if sys.platform == "darwin":
+            from ..health import run_macos_doctor as _doctor
+        else:
+            from ..health import run_doctor as _doctor
+        from ..health import format_doctor
+        ok, results = _doctor()
         print(format_doctor(results))
         sys.exit(0 if ok else 1)
     if args.fix_execstack:

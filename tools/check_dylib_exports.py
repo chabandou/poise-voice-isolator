@@ -271,9 +271,9 @@ def main(argv=None):
               "and the Python side have drifted apart", file=sys.stderr)
         return 1
 
-    print(f"{args.dylib}: {len(expected)} poise_* exports, all accounted for "
-          f"({len(core)} bound by delay_core, {len(declared)} declared in "
-          f"{node_header}), no main")
+    print(f"{args.dylib}: {len(expected)} required poise_* names verified "
+          f"({len(exported)} exported, all declared: {len(core)} bound by "
+          f"delay_core, {len(declared)} declared in {node_header}), no main")
     return 0
 
 

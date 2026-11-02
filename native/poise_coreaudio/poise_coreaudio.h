@@ -89,8 +89,8 @@ poise_ca *poise_ca_new(const char *output_device, uint32_t frame,
  * from poise_core_wait_frame() -- call poise_core_stop() and join it first:
  * this cannot join a thread it does not own, and on macOS the free path also
  * destroys the Mach semaphore a parked waiter would be sitting on.
- * poise_ca_teardown() is the idempotent one; callers that need "close twice"
- * should NULL their own handle after this, as WasapiNode.close() does. */
+ * Callers that need "close twice" must NULL their own handle after this, as
+ * CoreAudioNode.close() does (backends/coreaudio_node.py). */
 void poise_ca_destroy(poise_ca *n);
 
 /* The core, for the inference thread (delay_core.CoreOps binds poise_core_*). */

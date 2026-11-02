@@ -252,7 +252,7 @@ pip install -e ".[gui]"     # desktop app: PyQt6
 
 | Run | Command |
 |:--|:--|
-| Terminal UI (Linux) | `poise` · `python -m stream_denoiser.tui` |
+| Terminal UI (Linux, macOS) | `poise` · `python -m stream_denoiser.tui` |
 | Desktop app (Windows) | `python -m stream_denoiser.gui` |
 | Headless CLI | `poise-cli` · `python -m stream_denoiser` |
 | Tests | `pytest` (live-audio tests are marked `integration`) |
@@ -262,11 +262,12 @@ pip install -e ".[gui]"     # desktop app: PyQt6
 
 ### Native audio paths
 
-Both compile the same fixed-delay core, `native/core/poise_core.c`. Without them Poise falls back to the pulse-simple loop (Linux) or PortAudio streams (Windows).
+All three compile the same fixed-delay core, `native/core/poise_core.c`. Without them Poise falls back to the pulse-simple loop (Linux), PortAudio streams (Windows), and on macOS there is no fallback: the tap path is the only one.
 
 ```bash
 make -C native/poise_pw        # Linux:   stream_denoiser/native/libpoise_pw.so (needs PipeWire headers)
 make -C native/poise_wasapi    # Windows: stream_denoiser/native/poise_wasapi.dll (mingw-w64)
+make -C native/poise_coreaudio # macOS:   stream_denoiser/native/libpoise_coreaudio.dylib (Xcode CLT)
 ```
 
 > [!TIP]
@@ -349,11 +350,13 @@ stream_denoiser/
 │   ├── pulse_simple.py      # ctypes binding for libpulse-simple
 │   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
 │   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
-│   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by both native nodes
-│   ├── node_loop.py         # Inference thread for either native node
+│   ├── coreaudio_backend.py # macOS: Core Audio tap path (default)
+│   ├── coreaudio_node.py    # ctypes binding for libpoise_coreaudio.dylib (native/poise_coreaudio)
+│   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by all three native nodes
+│   ├── node_loop.py         # Inference thread for any native node
 │   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
 │   ├── _loop_util.py        # Helpers the loops share
-│   └── platform/            # linux.py (PulseAudio), windows.py (WASAPI, VB-Cable switching)
+│   └── platform/            # linux.py (PulseAudio), windows.py (WASAPI, VB-Cable), macos.py (Core Audio HAL)
 ├── engines/                 # Denoise engines
 │   ├── base.py              # DenoiseEngine base class
 │   ├── availability.py      # Which models can run here
@@ -364,6 +367,7 @@ stream_denoiser/
 │   └── rnnoise_lib.py       # ctypes binding for the RNNoise library
 ├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
 ├── native/                  # Prebuilt libraries: poise_wasapi, rnnoise (.so and .dll)
+│                            # (libpoise_coreaudio.dylib and libpoise_pw.so are built, not committed)
 ├── gui/                     # Desktop GUI (PyQt6)
 │   ├── main_window.py
 │   ├── worker.py            # QThread audio worker, signals to the GUI
@@ -375,7 +379,7 @@ stream_denoiser/
     ├── styles.tcss          # TUI stylesheet
     └── widgets/             # Device list, signal, isolation and events panels, model picker
 
-native/                      # C sources: core/ (shared delay), poise_pw/, poise_wasapi/, latmeter/
+native/                      # C sources: core/ (shared delay), poise_pw/, poise_wasapi/, poise_coreaudio/, latmeter/
 installer/                   # Windows setup app (bootstrapper/), VB-Cable fetch
 docs/                        # Website (Vite + React); scripts/render-file-tree.mjs draws the image above
 ```
@@ -391,8 +395,8 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 |:--|:--|
 | `--model {deepfilternet3,gtcrn,rnnoise}` | Engine (default `deepfilternet3`) |
 | `--onnx PATH` | Custom DeepFilterNet3 model file |
-| `--backend` | `auto`, `pipewire`, `pulse` (Linux) · `wasapi`, `portaudio` (Windows) |
-| `--source` / `--sink` | Pulse capture source / playback sink (Linux) |
+| `--backend` | `auto`, `pipewire`, `pulse` (Linux) · `wasapi`, `portaudio` (Windows) · `coreaudio` (macOS) |
+| `--source` / `--sink` | Pulse capture source / playback sink (Linux); playback device name or uid (macOS: `--sink` only — there is no capture device to choose) |
 | `--input-device` / `--output-device` | Device IDs (Windows) |
 | `--list-devices` | List devices and exit |
 | `--no-aad` | Process silence too |
@@ -400,7 +404,8 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 | `--atten-lim-db DB` | Reduction strength (default −60) |
 | `--no-vb-cable` | Leave the default device alone; route apps yourself |
 | `--vb-cable-name NAME` | VB-Cable device name, if not auto-detected |
-| `--doctor` · `--reset-audio` · `--fix-execstack` | Linux repair tools |
+| `--doctor` · `--reset-audio` | Startup checks and audio recovery, per platform |
+| `--fix-execstack` | Linux repair tool (ONNX Runtime `execstack` flag) |
 
 </details>
 
@@ -410,7 +415,7 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 | Variable | Effect |
 |:--|:--|
 | `POISE_BACKEND` | Same as `--backend` |
-| `POISE_PW_MARGIN_MS` · `POISE_WIN_MARGIN_MS` | Per-frame deadline margin; adds to the delay |
+| `POISE_PW_MARGIN_MS` · `POISE_WIN_MARGIN_MS` · `POISE_MAC_MARGIN_MS` | Per-frame deadline margin; adds to the delay |
 | `POISE_ONNX_THREADS` | Inference threads (default 2 on Linux, 1 on Windows) |
 | `POISE_SKIP_HEALTH=1` | Skip the startup pre-flight |
 | `POISE_LOG_LEVEL` · `POISE_LOG_DIR` · `POISE_DISABLE_FILE_LOG=1` | Logging |

@@ -32,6 +32,7 @@ from ..constants import (
 )
 from ..logging_config import get_logger, get_log_file_path
 from ._loop_util import margin_samples, ms, stop_requested
+from .platform.macos import CORE_AUDIO_TAP_FLOOR
 from .coreaudio_node import (
     NODE_RATE,
     CoreAudioError,
@@ -52,8 +53,9 @@ RATE = NODE_RATE
 QUANTUM = MAC_QUANTUM
 MARGIN_SAMPLES = MAC_MARGIN_SAMPLES
 FADE_SAMPLES = MAC_FADE_SAMPLES
-# First macOS with Core Audio process taps.
-OS_FLOOR = (14, 2)
+# First macOS with Core Audio process taps. The source of truth is the HAL
+# module's constant; this alias keeps one floor in the tree.
+OS_FLOOR = CORE_AUDIO_TAP_FLOOR
 
 
 class CoreAudioStartError(CoreAudioError):
