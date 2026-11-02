@@ -75,7 +75,7 @@ where = ["."]
 include = ["stream_denoiser*"]
 
 [tool.setuptools.package-data]
-stream_denoiser = ["models/*.onnx", "models/*.npz", "tui/*.tcss", "gui/assets/*", "gui/assets/fonts/*", "gui/assets/icons/*", "gui/assets/seal/*", "native/*.dll", "native/*.so"]
+stream_denoiser = ["models/*.onnx", "models/*.npz", "tui/*.tcss", "gui/assets/*", "gui/assets/fonts/*", "gui/assets/icons/*", "gui/assets/seal/*", "native/*.dll", "native/*.so", "native/*.dylib"]
 
 [tool.pytest.ini_options]
 markers = [

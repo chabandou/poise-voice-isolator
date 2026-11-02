@@ -72,6 +72,34 @@ Download **`Poise_Setup.exe`** from the [latest release](https://github.com/chab
 > [!TIP]
 > Setup bundles and silently installs the [VB-Cable](https://vb-audio.com/Cable/) driver when it is missing (reboot if asked). VB-Cable is donationware by VB-Audio; consider supporting them. Portable runs offer a one-click **Install VB-Cable** from the copy beside `Poise.exe`.
 
+### macOS
+
+macOS 14.2 or newer, Apple silicon. There is no packaged build yet: build it from source, no audio
+driver required.
+
+```bash
+git clone https://github.com/chabandou/poise-voice-isolator.git
+cd poise-voice-isolator
+python3.12 -m venv .venv && .venv/bin/pip install -e .
+make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise_coreaudio.dylib
+.venv/bin/python -m stream_denoiser     # or: .venv/bin/poise  (terminal UI)
+```
+
+Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
+Windows there is nothing to install. The apps it captures are muted while it runs and unmuted when it
+stops, exactly like the other platforms.
+
+macOS asks once for **System Audio Recording** (System Settings → Privacy & Security → Screen & System
+Audio Recording → "System Audio Recording Only"). Grant it to whatever launches Poise — the terminal,
+if you start it from a shell. A denial is silent rather than an error, so `poise --doctor` reports
+which state the tap is in and what to do. A development build signed ad-hoc re-asks after every
+rebuild; `tccutil reset AudioCapture <bundle-id>` re-arms the prompt.
+
+> [!NOTE]
+> DeepFilterNet3 and GTCRN are available; RNNoise is Linux/Windows only. The audio is not delayed for
+> the picture on macOS: expect ~84 ms with DeepFilterNet3 (~70 ms with GTCRN) between the video and
+> the sound. GTCRN plus `POISE_MAC_MARGIN_MS` is the lever if that is too much.
+
 ### Linux
 
 Arch Linux, from the [AUR](https://aur.archlinux.org/packages/poise-bin):
@@ -107,6 +135,10 @@ Switch with `m` in the TUI, the **Model** card in the app, or `--model` on the c
 | **DeepFilterNet3** *(default)* | 32 ms | ~0.12 |
 | **GTCRN** | 18 ms | ~0.04 |
 | **RNNoise** | 20 ms | ~0.08 |
+
+macOS has no RNNoise build (Linux and Windows only), and runs faster than the laptop the table was
+measured on: DeepFilterNet3 at RTF **0.03** and GTCRN at **0.015** on an M2 Pro, both with
+`measurements/mac-engine-rtf.md` as the evidence.
 
 <sub>RTF = processing time ÷ audio time, measured on a Ryzen 5 4500U laptop on AC. Below 1.0 keeps up with real time.</sub>
 
