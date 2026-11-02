@@ -202,14 +202,15 @@ def test_unknown_backend_is_an_error():
 
 @pytest.fixture
 def linux(monkeypatch):
-    if "pulsectl" not in sys.modules:
-        try:
-            import pulsectl  # noqa: F401
-        except ImportError:
-            stub = types.ModuleType("pulsectl")
-            stub._is_stub = True
-            stub.PulseError = type("PulseError", (Exception,), {})
-            sys.modules["pulsectl"] = stub
+    """The Linux router module, with the three Pulse-level lookups
+    ``pulse_endpoints`` makes replaced: no pulsectl (not installed off a
+    PulseAudio machine) and no server are involved.
+
+    Nothing is put in sys.modules here: an earlier version installed a
+    pulsectl stub with no ``Pulse`` and left it there, so a later test that
+    did run the real router got an AttributeError from its own cleanup
+    (test_tui_settings.py::test_strength_and_threshold...).
+    """
     from stream_denoiser.backends.platform import linux as mod
     monkeypatch.setattr(mod, "wait_for_source", lambda name: name)
     monkeypatch.setattr(mod, "get_default_sink_name", lambda: "default_hw")

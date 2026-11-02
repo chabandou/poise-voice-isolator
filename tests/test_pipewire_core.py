@@ -1,5 +1,5 @@
-"""Timing of the fixed-delay core (libpoise_pw.so; on Windows the same
-core inside poise_wasapi.dll).
+"""Timing of the fixed-delay core (libpoise_pw.so; the same core inside
+poise_wasapi.dll on Windows and libpoise_coreaudio.dylib on macOS).
 
 Cycles are driven by hand, so no PipeWire server is needed. The "engine"
 in most tests is a pure delay of ENGINE samples: its output then equals
@@ -21,9 +21,19 @@ from stream_denoiser.backends.pipewire_node import (
 
 
 def _core_library():
+    """The native library exporting the poise_core API this file drives.
+
+    One core, three carriers: libpoise_pw.so on Linux, poise_wasapi.dll on
+    Windows, libpoise_coreaudio.dylib on macOS (a Mac has no PipeWire node,
+    so its .so is never the candidate there). The dylib is a built, not
+    committed, artefact like the .so: absent, this file skips.
+    """
     if sys.platform == "win32":
         from stream_denoiser.backends import wasapi_node
         return wasapi_node.load_library()
+    if sys.platform == "darwin":
+        from stream_denoiser.backends import coreaudio_node
+        return coreaudio_node.load_library()
     return load_library()
 
 

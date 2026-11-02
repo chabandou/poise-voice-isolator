@@ -15,6 +15,10 @@ on:
     workflows:
       - Build Windows installer
       - Build Linux binary
+      # A macOS release build (.app + dmg) would be listed here too. It is
+      # its own workflow and a separate PR (T12): pulse-ci.yml's macos-unit
+      # and native-dylib jobs build and test the Core Audio node, they do
+      # not package it.
     types:
       - completed
   # Safety net for releases or assets added by hand.

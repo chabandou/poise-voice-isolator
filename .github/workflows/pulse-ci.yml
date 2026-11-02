@@ -8,6 +8,7 @@ on:
       - 'native/**'
       - 'tests/**'
       - 'tools/check_dll_exports.py'
+      - 'tools/check_dylib_exports.py'
       - 'requirements.txt'
       - 'pyproject.toml'
       - 'build-linux.sh'
@@ -181,6 +182,81 @@ jobs:
         run: |
           python -m pytest tests/test_wasapi_integration.py tests/test_volume_mirror.py             tests/test_vbcable_install.py -v -rs | tee "$RUNNER_TEMP/hardware.log"
           ! grep -q SKIPPED "$RUNNER_TEMP/hardware.log"
+
+  macos-unit:
+    # The Core Audio node (native/poise_coreaudio) and the Python side that
+    # binds it, on the platform they ship on: the macOS counterpart of the
+    # windows job. The runner has no audio device and cannot grant TCC
+    # (System Audio Recording), so anything hardware-bound skips: the
+    # integration-marked live-tap test needs POISE_COREAUDIO_LIVE=1 plus the
+    # grant and an output device, so the tap path can only be exercised on
+    # hardware, never here. The rest of tests/ runs.
+    #
+    # Runs on every PR (the pull_request trigger has no path filter: a
+    # skipped required check blocks the PR forever). It is not a required
+    # check in itself: making the new macOS jobs required is branch
+    # protection, a maintainer decision to raise in the PR body (PLAN R9).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # numpy<2 caps the range (requirements.txt), which is what 3.12
+          # has wheels for: the version the port was developed and tested on.
+          python-version: '3.12'
+      - name: Install test deps
+        run: pip install -r requirements.txt pytest
+      - name: Build the Core Audio node
+        # The dylib is built, never committed (native/poise_coreaudio/
+        # .gitignore): coreaudio_node.load_library() and the core timing
+        # tests look for it under stream_denoiser/native/.
+        run: |
+          make -C native/poise_coreaudio
+          test -f stream_denoiser/native/libpoise_coreaudio.dylib || \
+            (echo "libpoise_coreaudio.dylib was not built" && exit 1)
+      - name: The dylib loads and its stat counts match what Python binds
+        # Fails loudly instead of skipping: without this, a drifted library
+        # would make the core suites skip and leave the job green with the
+        # timing tests never run (the skip reasons are printed by -rs below).
+        # Only calls poise_ca_stat_count/poise_core_stat_count, so it cannot
+        # prompt for TCC.
+        run: |
+          python -c "from stream_denoiser.backends import coreaudio_node as n; n.load_library(); print('node library loaded')"
+      - name: Run tests
+        # -rs prints the reason for each skip. The integration-marked
+        # live-tap test must skip cleanly (no audio device, no TCC grant):
+        # the tap path is hardware-only, so that skip is the expected result
+        # here.
+        run: python -m pytest -q -rs
+      - name: The core suites ran against the built library
+        # The two skip reasons that would otherwise hide a broken build.
+        run: |
+          python -m pytest tests/test_pipewire_core.py tests/test_coreaudio_backend.py -q -rs \
+            | tee "$RUNNER_TEMP/core.log"
+          ! grep -q "native core unavailable\|native node not built" "$RUNNER_TEMP/core.log"
+
+  native-dylib:
+    # stream_denoiser/native/libpoise_coreaudio.dylib is built, never
+    # committed, so there is no committed copy to go stale. Build it from the
+    # sources and check its exports against the names Python binds
+    # (tools/check_dylib_exports.py: delay_core.core_signatures() and
+    # poise_coreaudio.h): a change to native/core/poise_core.h or to the
+    # node's API cannot land without the Python side still binding cleanly.
+    # The macOS counterpart of native-dll; like it, this needs no audio
+    # device.
+    runs-on: macos-14
+    # Takes seconds; a wedged toolchain would otherwise hold it for 6 h.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build libpoise_coreaudio.dylib from the sources
+        run: make -C native/poise_coreaudio dylib
+      - name: Check its exports
+        # ctypes bindings only: importing delay_core needs no dependencies.
+        run: python tools/check_dylib_exports.py stream_denoiser/native/libpoise_coreaudio.dylib
 
   native-dll:
     # stream_denoiser/native/poise_wasapi.dll is built by hand and committed.

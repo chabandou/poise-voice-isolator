@@ -139,7 +139,12 @@ def run_session(processor, config: dict, should_stop=None,
     if backend in MACOS_BACKENDS and sys.platform == "darwin":
         _run_macos(processor, config, loop, started)
         return {}
-    if backend in WINDOWS_BACKENDS and not sys.platform.startswith("linux"):
+    # Wasapi/portaudio are Windows backends. The old guard was
+    # ``not sys.platform.startswith("linux")``, which let ``--backend wasapi``
+    # on macOS fall into the Windows path (readable failure via
+    # WasapiUnavailable, but the wrong branch). Negative, so the tests that
+    # pin ``sys`` to run another platform's dispatch still work.
+    if backend in WINDOWS_BACKENDS and sys.platform == "win32":
         _run_windows(processor, config, backend, loop, started,
                      wasapi_margin, wasapi_pause_gc)
         return {}
