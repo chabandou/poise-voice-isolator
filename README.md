@@ -136,7 +136,7 @@ Both rewrite scripts rebuild their file from the original (checked by SHA-256) a
 
 ## Troubleshooting
 
-On Linux, start with the built-in doctor. It checks the audio server and the PipeWire node and says what to do (a quick version also runs at every start):
+On Linux, start with the built-in doctor. It checks the audio server and the PipeWire node and says what to do (a quick version also runs at every start). On macOS it checks the Core Audio tap, the System Audio Recording grant and the log file instead:
 
 ```bash
 poise --doctor
@@ -152,6 +152,34 @@ poise --reset-audio
 ```
 
 **Windows:** Poise needs VB-Cable. If **CABLE Output** is missing from your recording devices, run `Poise_Setup.exe` again, or use **Install VB-Cable** in the error dialog.
+
+</details>
+
+<details>
+<summary><b>No sound at all on the Mac</b></summary>
+
+Poise mutes the apps it reads while it runs, so a Poise that is still holding its tap keeps the whole Mac silent. Quit Poise (in the TUI, `space` then `q`); if the Mac is still silent, restart the audio daemon:
+
+```bash
+sudo killall coreaudiod
+```
+
+`poise --doctor` says whether a Poise tap or aggregate is still registered, and `poise --reset-audio` explains what restores audio on macOS and what only the app that owns the tap can do.
+
+</details>
+
+<details>
+<summary><b>Silence, or Poise says it is capturing nothing</b></summary>
+
+On macOS a missing **Screen & System Audio Recording** grant is not an error: the tap captures silence, or delivers nothing at all. `poise --doctor` opens the tap for a second and says which of the two it is.
+
+The grant belongs to the app that runs Poise. Started from a shell that is your terminal (Terminal, iTerm, Ghostty, …), not Poise, so the terminal has to be switched on in **System Settings → Privacy & Security → Screen & System Audio Recording**, in the "System Audio Recording Only" section. A switch that already reads ON can be stale after a rebuild; re-arm it and allow again:
+
+```bash
+tccutil reset AudioCapture <bundle-id>
+```
+
+The log at `~/Library/Logs/Poise/poise.log` has the session's own answer: its `sync:` lines say `capture=signal`, `capture=silent` or `capture=no-audio`.
 
 </details>
 

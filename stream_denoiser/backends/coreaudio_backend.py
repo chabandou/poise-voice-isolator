@@ -22,7 +22,14 @@ import time
 from typing import Callable, Dict, Optional, Tuple
 
 from ..audio_gc import gc_paused
-from ..constants import DEFAULT_SAMPLE_RATE, STATS_PRINT_INTERVAL_SEC
+from ..constants import (
+    DEFAULT_SAMPLE_RATE,
+    MAC_FADE_SAMPLES,
+    MAC_MARGIN_SAMPLES,
+    MAC_QUANTUM,
+    POISE_MAC_MARGIN_MS,
+    STATS_PRINT_INTERVAL_SEC,
+)
 from ..logging_config import get_logger, get_log_file_path
 from ._loop_util import margin_samples, ms, stop_requested
 from .coreaudio_node import (
@@ -36,20 +43,15 @@ from .node_loop import log_core_events, worker_loop
 
 _logger = get_logger(__name__)
 
-MARGIN_ENV = "POISE_MAC_MARGIN_MS"
-# The rate the node's streams carry (plan C2): 48 kHz, or the device is
-# refused. T7 moves these three to constants.py as MAC_*.
+# The values live in constants.py with the rest of the platform groups
+# (PW_*/WIN_*); these are aliases so nothing reads a second source. T5 sizes
+# MAC_MARGIN_SAMPLES from its soak, and that edit must be the one that counts.
+MARGIN_ENV = POISE_MAC_MARGIN_MS
+# The rate the node's streams carry (plan C2): 48 kHz, or the device is refused.
 RATE = NODE_RATE
-# Graph cycle the delay is sized for (samples); a larger IOProc cycle with
-# sound in it raises the delay and is counted.
-QUANTUM = 512
-# Time the inference thread gets per frame beyond the cycle itself
-# (samples, 256 = 5.3 ms), sized by T2's measured RTF; a frame later than
-# this plays unprocessed. Override with POISE_MAC_MARGIN_MS. T7 ships the
-# value T5 proves.
-MARGIN_SAMPLES = 256
-# Crossfade between processed and unprocessed audio (samples).
-FADE_SAMPLES = 64
+QUANTUM = MAC_QUANTUM
+MARGIN_SAMPLES = MAC_MARGIN_SAMPLES
+FADE_SAMPLES = MAC_FADE_SAMPLES
 # First macOS with Core Audio process taps.
 OS_FLOOR = (14, 2)
 

@@ -426,13 +426,16 @@ Examples:
     parser.add_argument('--vb-cable-name', type=str, default=None,
                         help='Custom name for VB Cable device (auto-detected if not specified)')
     parser.add_argument('--tui', action='store_true',
-                        help='Launch terminal UI (Linux only)')
+                        help='Launch the terminal UI (Linux and macOS)')
     parser.add_argument('--doctor', action='store_true',
-                        help='Run startup health checks (Linux issues) and exit')
+                        help='Run startup health checks (Linux: audio server '
+                             'and node; macOS: permission, tap, log) and exit')
     parser.add_argument('--fix-execstack', action='store_true',
                         help='Clear the ONNX Runtime executable-stack flag with patchelf and exit')
     parser.add_argument('--reset-audio', action='store_true',
-                        help='Restore the real default sink and unload leftover Poise null sinks (Linux only)')
+                        help='Restore the real default sink and unload leftover '
+                             'Poise null sinks (Linux); on macOS, say what to do '
+                             'instead')
     parser.add_argument('--no-health-check', action='store_true',
                         help='Skip the startup health pre-flight (or set POISE_SKIP_HEALTH=1)')
     from .logging_config import add_log_args
@@ -443,8 +446,8 @@ Examples:
     tui_model = args.model
     args.model = args.model or DEFAULT_MODEL
 
-    # File logging first (Linux only inside ensure_file_logging) so health
-    # checks, engine creation, and routing decisions are all captured.
+    # File logging first (Linux and macOS inside ensure_file_logging) so
+    # health checks, engine creation, and routing decisions are all captured.
     # The path is announced so users (and remote support) can find it even
     # when the TUI takes over the console or a fallback dir was used.
     from .logging_config import (
@@ -466,8 +469,12 @@ Examples:
 
     # One-shot maintenance commands (no audio needed)
     if args.doctor:
-        from .health import run_doctor, format_doctor
-        ok, results = run_doctor()
+        if is_macos():
+            from .health import run_macos_doctor as _doctor
+        else:
+            from .health import run_doctor as _doctor
+        from .health import format_doctor
+        ok, results = _doctor()
         print(format_doctor(results))
         sys.exit(0 if ok else 1)
     if args.fix_execstack:
@@ -500,10 +507,11 @@ Examples:
                     _logger.error(pulse_check.fix)
                 sys.exit(1)
 
-    # Launch TUI if requested (Linux only)
+    # Launch TUI if requested (Linux and macOS; the GUI is the Windows UI)
     if args.tui:
-        if not is_linux():
-            _logger.error("TUI is only available on Linux. Use the GUI on Windows.")
+        if not (is_linux() or is_macos()):
+            _logger.error("TUI is only available on Linux and macOS. "
+                          "Use the GUI on Windows.")
             sys.exit(1)
         try:
             from .tui import PoiseApp

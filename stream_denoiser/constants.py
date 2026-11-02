@@ -74,9 +74,9 @@ MAC_MARGIN_SAMPLES = 256
 MAC_FADE_SAMPLES = PW_FADE_SAMPLES
 # Milliseconds that override MAC_MARGIN_SAMPLES (see _loop_util.margin_samples).
 POISE_MAC_MARGIN_MS = "POISE_MAC_MARGIN_MS"
-# backends/coreaudio_backend.py still carries its own copies of the three
-# (QUANTUM / MARGIN_SAMPLES / FADE_SAMPLES / MARGIN_ENV, T6's file); they
-# hold these values. Moving it onto these names is an import swap there.
+# backends/coreaudio_backend.py imports all four and keeps only local
+# aliases (QUANTUM / MARGIN_SAMPLES / FADE_SAMPLES / MARGIN_ENV), so this is
+# the single source: T5's re-sizing of MAC_MARGIN_SAMPLES takes effect.
 # macOS backend: "auto" (the Core Audio tap; the platform has no second
 # path to choose between) or "coreaudio". Override with POISE_BACKEND or
 # --backend.

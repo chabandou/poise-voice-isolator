@@ -10,7 +10,9 @@ device, box 4 recent events; the number keys focus them.
 import asyncio
 import atexit
 import logging
+import platform
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,6 +36,7 @@ from ..audio_host import AudioHost
 from ..constants import DEFAULT_AAD_THRESHOLD_DB, DEFAULT_MODEL, \
     DEFAULT_SAMPLE_RATE, MODEL_INFO, MSG_MUSIC_DISCLAIMER
 from ..logging_config import set_tui_mode, get_log_file_path
+from ..platform_utils import is_macos
 
 # dB per key press.
 STRENGTH_STEP_DB = 5.0
@@ -117,7 +120,7 @@ class PoiseApp(App):
         self._setup_cleanup_handlers()
 
     def _setup_logging(self) -> None:
-        """File logging on Linux; no console output under the TUI.
+        """File logging on Linux and macOS; no console output under the TUI.
 
         The events box shows the app's notes (``note()``) and, from mount,
         its log cleaned up to one short line per record (log_events.py);
@@ -126,12 +129,12 @@ class PoiseApp(App):
         import logging
         import sys
 
-        # Enable file logging first (Linux only; no-op elsewhere) so the
-        # shared file handler exists before console output is suppressed.
-        # Entry points (poise_tui.py / cli.py) already set this up and
-        # announced the path; this is a no-op safety net for direct
+        # Enable file logging first (Linux and macOS; no-op elsewhere) so
+        # the shared file handler exists before console output is
+        # suppressed. Entry points (poise_tui.py / cli.py) already set this
+        # up and announced the path; this is a no-op safety net for direct
         # PoiseApp() use.
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") or sys.platform == "darwin":
             from ..logging_config import setup_file_logging_from_env
             setup_file_logging_from_env()
 
@@ -389,6 +392,12 @@ class PoiseApp(App):
 
     def _expected_backend(self) -> Optional[str]:
         """The backend a start would pick now (shown while idle)."""
+        if is_macos():
+            try:
+                from ..backends.coreaudio_backend import coreaudio_status
+                return "coreaudio" if coreaudio_status()[0] else None
+            except Exception:
+                return None
         try:
             from ..backends.pipewire_backend import (
                 linux_backend_preference, select_linux_backend)
@@ -423,7 +432,17 @@ class PoiseApp(App):
 
     @staticmethod
     def _cpu_model() -> str:
-        """Best-effort CPU model string (Linux /proc/cpuinfo)."""
+        """Best-effort CPU model string (/proc/cpuinfo, sysctl on macOS)."""
+        if sys.platform == "darwin":
+            try:
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True, text=True, timeout=2)
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                pass
+            return platform.machine() or "unknown"
         try:
             with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
                 for line in f:
@@ -437,7 +456,8 @@ class PoiseApp(App):
         """Write a one-time session header to the file log."""
         import logging
         import sys
-        if not sys.platform.startswith("linux"):
+        if not (sys.platform.startswith("linux")
+                or sys.platform == "darwin"):
             return
         logger = logging.getLogger("stream_denoiser")
         path = get_log_file_path()
@@ -609,53 +629,14 @@ class PoiseApp(App):
         isolation = self.query_one(IsolationPanel)
         output_device = device_list.selected_device
 
-        # Backend: the PipeWire node when available (fixed delay; it routes
-        # itself from the audio process), else pulse-simple through the
-        # null sink set up here.
-        try:
-            from ..backends.pipewire_backend import (
-                linux_backend_preference, select_linux_backend)
-            self.backend, reason = select_linux_backend(
-                linux_backend_preference())
-        except Exception as e:
-            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
-            logging.getLogger("stream_denoiser").error(
-                "Cannot start: %s", e)
-            self.note(f"cannot start: {first_line}", "error")
-            return
-        logging.getLogger("stream_denoiser").info(
-            "backend: %s (%s)", self.backend, reason)
+        # One config per platform: PulseAudio/PipeWire on Linux, the Core
+        # Audio tap on macOS (one path there, and nothing to route).
+        config, routed = (self._core_audio_config(isolation, output_device)
+                          if is_macos()
+                          else self._linux_config(isolation, output_device))
+        if config is None:
+            return  # the reason is already on screen
 
-        if self.backend == "pipewire":
-            self.linux_router = None
-            routed = "routed via the Poise node"
-        else:
-            routed = None
-            try:
-                from ..backends.platform.linux import LinuxAudioRouter
-                self.linux_router = LinuxAudioRouter(auto_switch=True)
-                if self.linux_router.get_monitor_source_name():
-                    routed = "routed via the Poise sink"
-                else:
-                    self.note("using the default capture", "warning")
-            except ImportError:
-                self.note("Linux router not available", "warning")
-
-        # Start the session in the audio process. Linux input is always
-        # 48000 Hz; the audio process resolves pulse-simple's source and
-        # sink (waiting for the null sink's monitor to appear).
-        router = self.linux_router
-        config = {
-            "model": self.model,
-            "backend": self.backend,
-            "output_device": output_device or None,
-            "aad_threshold_db": isolation.threshold_db,
-            "atten_lim_db": isolation.strength_db,
-            "routed": router is not None,
-            "monitor_source": (router.get_monitor_source_name()
-                               if router else None),
-            "fallback_sink": router.original_sink_name if router else None,
-        }
         self.start_time = time.time()
         self._last_perf_log = 0.0
         self._audio_error = None
@@ -682,6 +663,88 @@ class PoiseApp(App):
         self.note("session started")
         if routed:
             self.note(routed, "success")
+
+    def _linux_config(self, isolation, output_device):
+        """The audio process's config for Linux: (config, routed) or None.
+
+        Backend: the PipeWire node when available (fixed delay; it routes
+        itself from the audio process), else pulse-simple through the null
+        sink set up here. Linux input is always 48000 Hz; the audio process
+        resolves pulse-simple's source and sink (waiting for the null sink's
+        monitor to appear).
+        """
+        try:
+            from ..backends.pipewire_backend import (
+                linux_backend_preference, select_linux_backend)
+            self.backend, reason = select_linux_backend(
+                linux_backend_preference())
+        except Exception as e:
+            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
+            logging.getLogger("stream_denoiser").error(
+                "Cannot start: %s", e)
+            self.note(f"cannot start: {first_line}", "error")
+            return None, None
+        logging.getLogger("stream_denoiser").info(
+            "backend: %s (%s)", self.backend, reason)
+
+        if self.backend == "pipewire":
+            self.linux_router = None
+            routed = "routed via the Poise node"
+        else:
+            routed = None
+            try:
+                from ..backends.platform.linux import LinuxAudioRouter
+                self.linux_router = LinuxAudioRouter(auto_switch=True)
+                if self.linux_router.get_monitor_source_name():
+                    routed = "routed via the Poise sink"
+                else:
+                    self.note("using the default capture", "warning")
+            except ImportError:
+                self.note("Linux router not available", "warning")
+
+        router = self.linux_router
+        return {
+            "model": self.model,
+            "backend": self.backend,
+            "output_device": output_device or None,
+            "aad_threshold_db": isolation.threshold_db,
+            "atten_lim_db": isolation.strength_db,
+            "routed": router is not None,
+            "monitor_source": (router.get_monitor_source_name()
+                               if router else None),
+            "fallback_sink": router.original_sink_name if router else None,
+        }, routed
+
+    def _core_audio_config(self, isolation, output_device):
+        """The audio process's config for macOS: (config, routed) or None.
+
+        One Core Audio tap carries every app's audio and the result plays to
+        one output device, so there is nothing to route and no capture
+        device to name (plan C2b). The device goes to the audio process as
+        the name the list showed: the native node matches a name or a UID
+        and says so when nothing matches.
+        """
+        try:
+            from ..backends.choice import macos_backend_preference
+            from ..backends.coreaudio_backend import select_coreaudio_backend
+            self.backend, reason = select_coreaudio_backend(
+                macos_backend_preference())
+        except Exception as e:
+            first_line = str(e).splitlines()[0] if str(e) else type(e).__name__
+            logging.getLogger("stream_denoiser").error(
+                "Cannot start: %s", e)
+            self.note(f"cannot start: {first_line}", "error")
+            return None, None
+        logging.getLogger("stream_denoiser").info(
+            "backend: %s (%s)", self.backend, reason)
+        self.linux_router = None
+        return {
+            "model": self.model,
+            "backend": self.backend,
+            "output_device": output_device or None,
+            "aad_threshold_db": isolation.threshold_db,
+            "atten_lim_db": isolation.strength_db,
+        }, None
 
     def _stop_processing(self) -> None:
         """Stop audio processing."""
