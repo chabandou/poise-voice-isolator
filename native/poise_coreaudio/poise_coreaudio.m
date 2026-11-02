@@ -8,22 +8,24 @@
  *                            |  one tap stream, mixdown to stereo
  *                 private aggregate: tap = input, real output device = output
  *                            |  and clock master; explicit 48 kHz Float32
- *                            |  non-interleaved stream format on both sides
+ *                            |  stream format on both sides
  *                     one IOProc (THREAD_TIME_CONSTRAINT_POLICY)
  *                            |
- *                capture ring -> WAV (the spike) / poise_core (T4)
+ *                 poise_core (native/core/): capture in, delayed output out
  *                            |
- *              passthrough: the same buffers go to the output buffers
+ *              Python inference thread (node_loop -> DF3 / GTCRN)
  *
  * Why the format is set, not negotiated: Core Audio has no AUTOCONVERTPCM
  * (poise_wasapi.c asks WASAPI for it); the aggregate's stream format is what
  * the IOProc sees, and the HAL resamples the physical device to it. So the
- * node always runs at 48 kHz, and a device that will not take that format is
- * refused rather than run at another rate (plan C2).
+ * node always runs at one rate, and a device that will not take that format is
+ * refused rather than run at another rate (plan C2). The HAL hands back
+ * interleaved buffers even when asked for non-interleaved, so the IOProc
+ * discovers the layout from the buffer list (measurements/mac-tap-spike.md (c)).
  *
  * Why the tap must not outlive the process: with MutedWhenTapped, the tap
  * silences every app's audio while it is being read. It is destroyed on the
- * normal path, on SIGINT/SIGTERM and from atexit (plan C1).
+ * normal path (poise_ca_destroy), by the 250 ms watchdog (C1) and from atexit.
  *
  * The mute is released by AudioDeviceStop(): MutedWhenTapped mutes only while
  * the tap is read, so the order here is stop the device, destroy the IOProc,
@@ -31,6 +33,11 @@
  * aggregate pointing at a dead object (the HAL refuses), and the aggregate
  * cannot be destroyed while its device runs, so this is the only order that
  * always ends with no tap and no silence.
+ *
+ * What the node does not do: it runs no inference. The IOProc pushes capture
+ * into the core and plays back what the core gives it, so a frame the worker
+ * has not delivered in time plays unprocessed (dry) at the same delay instead
+ * of arriving late (see poise_core.h).
  */
 #import <Foundation/Foundation.h>
 
@@ -55,27 +62,30 @@
 
 #include "poise_coreaudio.h"
 
-#define TAP_NAME "Poise Tap Spike"
-#define AGGREGATE_NAME "Poise Tap Spike"
-#define SCRATCH_FRAMES 8192u      /* largest callback handled in one go */
-#define RING_SECONDS 4u           /* capture ring depth */
-#define WRITER_TICK_MS 50u
-#define TCC_WAIT_SECONDS 180u
+#define TAP_NAME "Poise Tap"
+#define AGGREGATE_NAME "Poise Tap"
+#define SCRATCH_FRAMES 8192u     /* largest cycle handled in one go */
+#define TCC_WAIT_SECONDS 180u    /* the grant prompt needs a person */
 #define TCC_RETRY_MS 3000u
+#define WATCHDOG_MS 250u         /* C1: no callback this long = stop and unmute */
+#define WATCHDOG_TICK_MS 50u
+#define STARTUP_CALLBACK_MS 3000u
+/* Peak below which captured audio counts as silence (about -100 dBFS), the
+ * same floor poise_core.c uses. */
+#define SILENCE 1e-5f
 
-static volatile sig_atomic_t g_stop;
-
-struct poise_mac_atomic_counters {
+struct poise_ca_counters {
+	_Atomic uint64_t callbacks;
 	_Atomic uint64_t input_frames;
 	_Atomic uint64_t output_frames;
-	_Atomic uint64_t callbacks;
 	_Atomic uint64_t quantum_min;
-	_Atomic uint64_t quantum_max;
-	_Atomic uint64_t dropped_frames;
+	_Atomic uint64_t dropped;
 	_Atomic uint64_t overloads;
+	_Atomic uint64_t quiet_frames;
+	_Atomic int saw_signal;
 	_Atomic int rt_policy_set;
-	/* Clocks: the tap's time stamp is in the tap's clock domain, the output's in
-	 * the output device's. Their rates differ, which is what drift means here. */
+	/* Clocks: the tap's time stamp is in the tap's clock domain, the output's
+	 * in the output device's (C3). */
 	_Atomic int64_t first_in_time;
 	_Atomic int64_t last_in_time;
 	_Atomic int64_t first_out_time;
@@ -85,29 +95,7 @@ struct poise_mac_atomic_counters {
 	_Atomic int has_time;
 };
 
-struct poise_ring {
-	float *frames; /* interleaved stereo */
-	uint64_t capacity;
-	_Atomic uint64_t head; /* frames pushed */
-	_Atomic uint64_t tail; /* frames popped */
-};
-
-struct poise_wav {
-	FILE *f;
-	unsigned rate;
-	unsigned channels;
-	enum poise_mac_sample_format fmt;
-	uint64_t frames;
-	float peak;
-	double energy;
-	float *tail; /* the last second, for the feedback probe */
-	uint64_t tail_pos;
-	uint64_t tail_filled;
-	double tail_energy;
-};
-
-struct poise_mac_session {
-	struct poise_mac_session_config cfg;
+struct poise_ca {
 	AudioObjectID tap_id;
 	AudioObjectID aggregate_id;
 	AudioObjectID output_device;
@@ -120,25 +108,45 @@ struct poise_mac_session {
 	double device_nominal_rate;
 	UInt32 drift_compensation;
 	char clock_uid[256];
-	int tap_format_settable;
-	int started;
-	int policy_verified;          /* THREAD_TIME_CONSTRAINT_POLICY read back */
+	char device_name[256];
+	uint32_t rate;
+	int tap_mute;
+
+	poise_core *core;
+	float *scratch; /* mono, SCRATCH_FRAMES */
+
+	struct poise_ca_counters c;
+
+	/* C1: teardown is serialised with the watchdog and poise_ca_destroy. The
+	 * realtime callback never takes this lock. */
+	pthread_mutex_t lock;
+	int stopped;
+	char err[512];
+	_Atomic int failed;
+	_Atomic uint64_t last_callback_ms;
+	pthread_t monitor;
+	_Atomic int monitor_stop;
+	int monitor_started;
+
+	/* RT policy, read back once on the IOProc thread. */
+	int policy_verified;
 	uint32_t policy_period;
 	uint32_t policy_computation;
 	uint32_t policy_constraint;
 	uint32_t policy_preemptible;
 	uint32_t time_flags_in;
 	uint32_t time_flags_out;
-	struct poise_mac_atomic_counters c;
-	struct poise_ring ring;
-	struct poise_wav wav;
-	pthread_t writer;
-	_Atomic int writer_stop;
-	float *scratch;
 };
 
-
 /* ---------------------------------------------------------------- helpers */
+
+static uint64_t monotonic_ms_(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000ull + (uint64_t)t.tv_nsec / 1000000ull;
+}
 
 static const char *fourcc(OSStatus st, char buf[8])
 {
@@ -245,27 +253,6 @@ static int device_has_output(const AudioObjectID dev)
 	return hal_data_size(dev, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput) > 0;
 }
 
-static const char *transport_name(UInt32 transport, char buf[8])
-{
-	switch (transport) {
-	case kAudioDeviceTransportTypeBuiltIn: return "built-in";
-	case kAudioDeviceTransportTypeUSB: return "usb";
-	case kAudioDeviceTransportTypeBluetooth: return "bluetooth";
-	case kAudioDeviceTransportTypeBluetoothLE: return "bluetooth-le";
-	case kAudioDeviceTransportTypeHDMI: return "hdmi";
-	case kAudioDeviceTransportTypeDisplayPort: return "displayport";
-	case kAudioDeviceTransportTypeAirPlay: return "airplay";
-	case kAudioDeviceTransportTypeAVB: return "avb";
-	case kAudioDeviceTransportTypeAggregate: return "aggregate";
-	case kAudioDeviceTransportTypeVirtual: return "virtual";
-	default: break;
-	}
-	snprintf(buf, 8, "%c%c%c%c",
-	         (char)((transport >> 24) & 0xff), (char)((transport >> 16) & 0xff),
-	         (char)((transport >> 8) & 0xff), (char)(transport & 0xff));
-	return buf;
-}
-
 static AudioObjectID find_output_device(const char *want)
 {
 	if (!want || !*want)
@@ -358,263 +345,7 @@ static void print_asbd(const char *what, const AudioStreamBasicDescription *f)
 	       name, (unsigned)f->mFormatFlags, (unsigned)f->mBytesPerFrame);
 }
 
-/* ------------------------------------------------------------------- ring */
-
-static void ring_init(struct poise_ring *r, unsigned rate, unsigned seconds)
-{
-	r->capacity = (uint64_t)rate * seconds;
-	r->frames = calloc((size_t)r->capacity * POISE_COREAUDIO_CHANNELS, sizeof(float));
-	atomic_store(&r->head, 0);
-	atomic_store(&r->tail, 0);
-}
-
-static void ring_free(struct poise_ring *r)
-{
-	free(r->frames);
-	r->frames = NULL;
-}
-
-static uint64_t ring_space(const struct poise_ring *r)
-{
-	uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed);
-	uint64_t tail = atomic_load_explicit(&r->tail, memory_order_acquire);
-	return r->capacity - (head - tail);
-}
-
-static void ring_push(struct poise_ring *r, const float *src, uint32_t frames,
-                      _Atomic uint64_t *dropped)
-{
-	if (!r->frames)
-		return;
-	uint64_t space = ring_space(r);
-	uint32_t take = frames;
-	if (take > space) {
-		atomic_fetch_add(dropped, frames - space);
-		take = (uint32_t)space;
-	}
-	uint64_t head = atomic_load_explicit(&r->head, memory_order_relaxed);
-	for (uint32_t i = 0; i < take; i++) {
-		uint64_t at = (head + i) % r->capacity;
-		r->frames[at * 2 + 0] = src[i * 2 + 0];
-		r->frames[at * 2 + 1] = src[i * 2 + 1];
-	}
-	atomic_store_explicit(&r->head, head + take, memory_order_release);
-}
-
-static uint32_t ring_pop(struct poise_ring *r, float *dst, uint32_t frames)
-{
-	if (!r->frames)
-		return 0;
-	uint64_t head = atomic_load_explicit(&r->head, memory_order_acquire);
-	uint64_t tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
-	uint64_t used = head - tail;
-	uint32_t take = frames;
-	if (take > used)
-		take = (uint32_t)used;
-	for (uint32_t i = 0; i < take; i++) {
-		uint64_t at = (tail + i) % r->capacity;
-		dst[i * 2 + 0] = r->frames[at * 2 + 0];
-		dst[i * 2 + 1] = r->frames[at * 2 + 1];
-	}
-	atomic_store_explicit(&r->tail, tail + take, memory_order_release);
-	return take;
-}
-
-/* -------------------------------------------------------------------- WAV */
-
-static void put16(FILE *f, uint16_t v)
-{
-	fputc(v & 0xff, f);
-	fputc((v >> 8) & 0xff, f);
-}
-
-static void put32(FILE *f, uint32_t v)
-{
-	put16(f, v & 0xffff);
-	put16(f, (v >> 16) & 0xffff);
-}
-
-static void wav_header(FILE *f, unsigned rate, unsigned channels,
-                       enum poise_mac_sample_format fmt, uint64_t frames)
-{
-	unsigned bits = (fmt == POISE_MAC_F32) ? 32 : 16;
-	unsigned align = channels * bits / 8;
-	uint64_t data = frames * align;
-	if (data > 0xffffffffu)
-		data = 0xffffffffu;
-	fseek(f, 0, SEEK_SET);
-	fwrite("RIFF", 1, 4, f);
-	put32(f, (uint32_t)(36 + data));
-	fwrite("WAVE", 1, 4, f);
-	fwrite("fmt ", 1, 4, f);
-	put32(f, 16);
-	put16(f, (fmt == POISE_MAC_F32) ? 3 : 1); /* WAVE_FORMAT_IEEE_FLOAT / PCM */
-	put16(f, channels);
-	put32(f, rate);
-	put32(f, rate * align);
-	put16(f, align);
-	put16(f, bits);
-	fwrite("data", 1, 4, f);
-	put32(f, (uint32_t)data);
-	fflush(f);
-}
-
-static int wav_open(struct poise_wav *w, const char *path, unsigned rate,
-                    enum poise_mac_sample_format fmt)
-{
-	memset(w, 0, sizeof(*w));
-	w->rate = rate;
-	w->channels = POISE_COREAUDIO_CHANNELS;
-	w->fmt = fmt;
-	w->tail = calloc((size_t)rate * w->channels, sizeof(float));
-	/* No path: a meter-only instance. The levels below are what the run
-	 * summary and the silence warning report, so they must be measured
-	 * whether or not a WAV was asked for. */
-	if (!path)
-		return 1;
-	w->f = fopen(path, "wb+");
-	if (!w->f) {
-		fprintf(stderr, "poise: cannot write %s: %s\n", path, strerror(errno));
-		free(w->tail);
-		w->tail = NULL;
-		return 0;
-	}
-	wav_header(w->f, rate, w->channels, fmt, 0);
-	return 1;
-}
-
-static void wav_write(struct poise_wav *w, const float *src, uint32_t frames)
-{
-	if (!frames)
-		return;
-	size_t samples = (size_t)frames * w->channels;
-	for (size_t i = 0; i < samples; i++) {
-		float x = src[i];
-		float ax = fabsf(x);
-		if (ax > w->peak)
-			w->peak = ax;
-		w->energy += (double)x * x;
-		if (w->tail) {
-			double old = w->tail[w->tail_pos];
-			w->tail_energy += (double)x * x - old * old;
-			w->tail[w->tail_pos] = x;
-			w->tail_pos = (w->tail_pos + 1) % ((size_t)w->rate * w->channels);
-			if (w->tail_filled < (uint64_t)w->rate * w->channels)
-				w->tail_filled++;
-		}
-	}
-	w->frames += frames;
-	if (!w->f)
-		return; /* meter only: nothing to write */
-	if (w->fmt == POISE_MAC_F32) {
-		fwrite(src, sizeof(float), samples, w->f);
-	} else {
-		static int16_t *pcm;
-		static size_t pcm_cap;
-		if (pcm_cap < samples) {
-			free(pcm);
-			pcm_cap = samples * 2;
-			pcm = malloc(pcm_cap * sizeof(int16_t));
-		}
-		for (size_t i = 0; i < samples; i++) {
-			float x = src[i];
-			if (x > 1.0f)
-				x = 1.0f;
-			if (x < -1.0f)
-				x = -1.0f;
-			pcm[i] = (int16_t)lrintf(x * 32767.0f);
-		}
-		fwrite(pcm, sizeof(int16_t), samples, w->f);
-	}
-}
-
-static void wav_close(struct poise_wav *w)
-{
-	if (!w->f)
-		return;
-	wav_header(w->f, w->rate, w->channels, w->fmt, w->frames);
-	fclose(w->f);
-	w->f = NULL;
-	free(w->tail);
-	w->tail = NULL;
-}
-
 /* ---------------------------------------------------------- buffer layouts */
-
-/* Copies one chunk of a Core Audio buffer list into interleaved stereo. Returns
- * 0 for a layout this spike does not handle (2x mono or 1x stereo only). */
-static int abl_read(const AudioBufferList *abl, float *dst, uint32_t frames,
-                    uint64_t offset)
-{
-	if (!abl || abl->mNumberBuffers == 0)
-		return 0;
-	/* Never write past the buffer the HAL handed us: truncate instead. */
-	for (UInt32 i = 0; i < abl->mNumberBuffers; i++) {
-		uint32_t ch = abl->mBuffers[i].mNumberChannels
-		                  ? abl->mBuffers[i].mNumberChannels : 1;
-		uint64_t cap = (uint64_t)abl->mBuffers[i].mDataByteSize /
-		               (sizeof(float) * ch);
-		if ((uint64_t)offset >= cap)
-			return 0;
-		if ((uint64_t)offset + frames > cap)
-			frames = (uint32_t)(cap - (uint64_t)offset);
-	}
-	if (!frames)
-		return 0;
-	if (abl->mNumberBuffers == 1 && abl->mBuffers[0].mNumberChannels == 2) {
-		const float *src = (const float *)abl->mBuffers[0].mData + offset * 2;
-		memcpy(dst, src, (size_t)frames * 2 * sizeof(float));
-		return 1;
-	}
-	if (abl->mNumberBuffers >= 2 && abl->mBuffers[0].mNumberChannels == 1 &&
-	    abl->mBuffers[1].mNumberChannels == 1) {
-		const float *l = (const float *)abl->mBuffers[0].mData + offset;
-		const float *r = (const float *)abl->mBuffers[1].mData + offset;
-		for (uint32_t i = 0; i < frames; i++) {
-			dst[i * 2 + 0] = l[i];
-			dst[i * 2 + 1] = r[i];
-		}
-		return 1;
-	}
-	if (abl->mNumberBuffers == 1 && abl->mBuffers[0].mNumberChannels == 1) {
-		const float *m = (const float *)abl->mBuffers[0].mData + offset;
-		for (uint32_t i = 0; i < frames; i++) {
-			dst[i * 2 + 0] = m[i];
-			dst[i * 2 + 1] = m[i];
-		}
-		return 1;
-	}
-	return 0;
-}
-
-static int abl_write(AudioBufferList *abl, const float *src, uint32_t frames,
-                     uint64_t offset)
-{
-	if (!abl || abl->mNumberBuffers == 0)
-		return 0;
-	if (abl->mNumberBuffers == 1 && abl->mBuffers[0].mNumberChannels == 2) {
-		float *dst = (float *)abl->mBuffers[0].mData + offset * 2;
-		memcpy(dst, src, (size_t)frames * 2 * sizeof(float));
-		return 1;
-	}
-	if (abl->mNumberBuffers >= 2 && abl->mBuffers[0].mNumberChannels == 1 &&
-	    abl->mBuffers[1].mNumberChannels == 1) {
-		float *l = (float *)abl->mBuffers[0].mData + offset;
-		float *r = (float *)abl->mBuffers[1].mData + offset;
-		for (uint32_t i = 0; i < frames; i++) {
-			l[i] = src[i * 2 + 0];
-			r[i] = src[i * 2 + 1];
-		}
-		return 1;
-	}
-	if (abl->mNumberBuffers == 1 && abl->mBuffers[0].mNumberChannels == 1) {
-		float *m = (float *)abl->mBuffers[0].mData + offset;
-		for (uint32_t i = 0; i < frames; i++)
-			m[i] = 0.5f * (src[i * 2 + 0] + src[i * 2 + 1]);
-		return 1;
-	}
-	return 0;
-}
 
 static uint32_t abl_frames(const AudioBufferList *abl)
 {
@@ -632,14 +363,91 @@ static uint32_t abl_frames(const AudioBufferList *abl)
 	return frames;
 }
 
+/* Truncate a chunk to what every buffer of the list can actually hold: the HAL
+ * hands out buffers shorter than the cycle around device start/stop, and
+ * writing past mDataByteSize would corrupt the callback's stack (plan C2). */
+static uint32_t abl_clamp(const AudioBufferList *abl, uint32_t frames, uint64_t offset)
+{
+	if (!abl || abl->mNumberBuffers == 0)
+		return 0;
+	for (UInt32 i = 0; i < abl->mNumberBuffers; i++) {
+		uint32_t ch = abl->mBuffers[i].mNumberChannels
+		                  ? abl->mBuffers[i].mNumberChannels : 1;
+		uint64_t cap = (uint64_t)abl->mBuffers[i].mDataByteSize / (sizeof(float) * ch);
+		if ((uint64_t)offset >= cap)
+			return 0;
+		if ((uint64_t)offset + frames > cap)
+			frames = (uint32_t)(cap - (uint64_t)offset);
+	}
+	return frames;
+}
+
+/* A chunk of any of the layouts the HAL gives us (interleaved stereo, two mono
+ * buffers, one mono buffer) averaged to mono. Returns the frames read, 0 for a
+ * layout or a size that cannot be read. */
+static uint32_t abl_read_mono(const AudioBufferList *abl, float *dst,
+                              uint32_t frames, uint64_t offset)
+{
+	uint32_t total_ch = 0;
+
+	frames = abl_clamp(abl, frames, offset);
+	if (!frames)
+		return 0;
+	memset(dst, 0, (size_t)frames * sizeof(float));
+	for (UInt32 b = 0; b < abl->mNumberBuffers; b++) {
+		uint32_t ch = abl->mBuffers[b].mNumberChannels
+		                  ? abl->mBuffers[b].mNumberChannels : 1;
+		const float *src = (const float *)abl->mBuffers[b].mData;
+		if (!src)
+			return 0;
+		src += offset * ch;
+		for (uint32_t i = 0; i < frames; i++) {
+			for (uint32_t k = 0; k < ch; k++)
+				dst[i] += src[i * ch + k];
+		}
+		total_ch += ch;
+	}
+	if (!total_ch)
+		return 0;
+	if (total_ch > 1) {
+		float scale = 1.0f / (float)total_ch;
+		for (uint32_t i = 0; i < frames; i++)
+			dst[i] *= scale;
+	}
+	return frames;
+}
+
+/* The same mono signal into every channel of every buffer. Returns the frames
+ * written, 0 if the layout cannot be written. */
+static uint32_t abl_write_mono(AudioBufferList *abl, const float *src,
+                               uint32_t frames, uint64_t offset)
+{
+	frames = abl_clamp(abl, frames, offset);
+	if (!frames)
+		return 0;
+	for (UInt32 b = 0; b < abl->mNumberBuffers; b++) {
+		uint32_t ch = abl->mBuffers[b].mNumberChannels
+		                  ? abl->mBuffers[b].mNumberChannels : 1;
+		float *dst = (float *)abl->mBuffers[b].mData;
+		if (!dst)
+			return 0;
+		dst += offset * ch;
+		for (uint32_t i = 0; i < frames; i++) {
+			for (uint32_t k = 0; k < ch; k++)
+				dst[i * ch + k] = src[i];
+		}
+	}
+	return frames;
+}
+
 /* ---------------------------------------------------------------- IOProc */
 
 /* The analogue of the Windows MMCSS "Pro Audio" path: ask for a time-constraint
  * thread sized to one callback. Set once, from the first callback, because
  * Core Audio has no thread-start hook. */
-static void set_realtime_policy(struct poise_mac_session *s, uint32_t frames)
+static void set_realtime_policy(struct poise_ca *n, uint32_t frames)
 {
-	double rate = s->cfg.rate;
+	double rate = n->rate;
 	if (!frames || rate <= 0)
 		return;
 	mach_timebase_info_data_t tb;
@@ -655,11 +463,31 @@ static void set_realtime_policy(struct poise_mac_session *s, uint32_t frames)
 	                                     (thread_policy_t)&p,
 	                                     THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 	if (kr == KERN_SUCCESS) {
-		atomic_store(&s->c.rt_policy_set, 1);
+		atomic_store(&n->c.rt_policy_set, 1);
 	} else {
 		fprintf(stderr, "poise: thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY): kr=%d\n",
 		        (int)kr);
 	}
+}
+
+/* C2b: a denied System Audio Recording grant arrives as zeros, never as an
+ * error, so capture health is measured energy, not a return code. */
+static void meter_capture(struct poise_ca *n, const float *mono, uint32_t frames)
+{
+	uint32_t quiet = 0;
+	int loud = 0;
+
+	for (uint32_t i = 0; i < frames; i++) {
+		float x = mono[i];
+		if (x > SILENCE || x < -SILENCE)
+			loud = 1;
+		else
+			quiet++;
+	}
+	if (loud)
+		atomic_store(&n->c.saw_signal, 1);
+	if (quiet)
+		atomic_fetch_add(&n->c.quiet_frames, quiet);
 }
 
 static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now,
@@ -667,16 +495,17 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now,
                        AudioBufferList *outOutputData, const AudioTimeStamp *inOutputTime,
                        void *ctx)
 {
-	struct poise_mac_session *s = ctx;
+	struct poise_ca *n = ctx;
 	(void)dev;
 	(void)now;
 
 	uint32_t in_frames = abl_frames(inInputData);
 	uint32_t out_frames = abl_frames(outOutputData);
 
-	uint64_t call = atomic_fetch_add(&s->c.callbacks, 1);
+	uint64_t call = atomic_fetch_add(&n->c.callbacks, 1);
+	atomic_store(&n->last_callback_ms, monotonic_ms_());
 	if (call == 0 && in_frames)
-		set_realtime_policy(s, in_frames);
+		set_realtime_policy(n, in_frames);
 	if (call == 1) {
 		/* Read the policy back once, to prove it took rather than trusting the
 		 * return value. */
@@ -686,112 +515,103 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now,
 		kern_return_t kr = thread_policy_get(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
 		                                     (thread_policy_t)&got, &count, &get_default);
 		if (kr == KERN_SUCCESS) {
-			s->policy_period = got.period;
-			s->policy_computation = got.computation;
-			s->policy_constraint = got.constraint;
-			s->policy_preemptible = got.preemptible;
-			s->policy_verified = 1;
+			n->policy_period = got.period;
+			n->policy_computation = got.computation;
+			n->policy_constraint = got.constraint;
+			n->policy_preemptible = got.preemptible;
+			n->policy_verified = 1;
 		}
 	}
-	atomic_fetch_add(&s->c.input_frames, in_frames);
-	atomic_fetch_add(&s->c.output_frames, out_frames);
 	if (in_frames) {
-		uint64_t min = atomic_load(&s->c.quantum_min);
+		uint64_t min = atomic_load(&n->c.quantum_min);
 		if (!min || in_frames < min)
-			atomic_store(&s->c.quantum_min, in_frames);
-		if (in_frames > atomic_load(&s->c.quantum_max))
-			atomic_store(&s->c.quantum_max, in_frames);
+			atomic_store(&n->c.quantum_min, in_frames);
 	}
 
-	/* Clock domains: the tap's time stamp is the tap's clock, the output's is
-	 * the output device's. Their rates differ; that is the drift (probe (d)). */
+	/* Clock domains (C3): the tap's time stamp is the tap's clock, the output's
+	 * is the output device's. Their difference is the playout leg's latency. */
 	if (inInputTime && inOutputTime) {
 		int64_t in_t = (int64_t)llround(inInputTime->mSampleTime);
 		int64_t out_t = (int64_t)llround(inOutputTime->mSampleTime);
-		if (!atomic_load(&s->c.has_time)) {
-			s->time_flags_in = inInputTime->mFlags;
-			s->time_flags_out = inOutputTime->mFlags;
-			atomic_store(&s->c.first_in_time, in_t);
-			atomic_store(&s->c.first_out_time, out_t);
-			atomic_store(&s->c.delta_min, out_t - in_t);
-			atomic_store(&s->c.delta_max, out_t - in_t);
-			atomic_store(&s->c.has_time, 1);
+		if (!atomic_load(&n->c.has_time)) {
+			n->time_flags_in = inInputTime->mFlags;
+			n->time_flags_out = inOutputTime->mFlags;
+			atomic_store(&n->c.first_in_time, in_t);
+			atomic_store(&n->c.first_out_time, out_t);
+			atomic_store(&n->c.delta_min, out_t - in_t);
+			atomic_store(&n->c.delta_max, out_t - in_t);
+			atomic_store(&n->c.has_time, 1);
 		}
-		atomic_store(&s->c.last_in_time, in_t);
-		atomic_store(&s->c.last_out_time, out_t);
-		if (out_t - in_t < atomic_load(&s->c.delta_min))
-			atomic_store(&s->c.delta_min, out_t - in_t);
-		if (out_t - in_t > atomic_load(&s->c.delta_max))
-			atomic_store(&s->c.delta_max, out_t - in_t);
+		atomic_store(&n->c.last_in_time, in_t);
+		atomic_store(&n->c.last_out_time, out_t);
+		if (out_t - in_t < atomic_load(&n->c.delta_min))
+			atomic_store(&n->c.delta_min, out_t - in_t);
+		if (out_t - in_t > atomic_load(&n->c.delta_max))
+			atomic_store(&n->c.delta_max, out_t - in_t);
 	}
 
-	uint32_t frames = in_frames;
-	if (frames > SCRATCH_FRAMES) {
-		atomic_fetch_add(&s->c.overloads, 1);
-		frames = SCRATCH_FRAMES;
-	}
-	for (uint32_t done = 0; done < frames;) {
-		uint32_t chunk = frames - done;
-		if (chunk > 1024)
-			chunk = 1024;
-		if (!abl_read(inInputData, s->scratch, chunk, done)) {
-			atomic_fetch_add(&s->c.overloads, 1);
+	/* (a) the tap's buffers -> (b) the core's input history. */
+	for (uint32_t done = 0; done < in_frames;) {
+		uint32_t chunk = in_frames - done;
+		uint32_t got;
+
+		if (chunk > SCRATCH_FRAMES)
+			chunk = SCRATCH_FRAMES;
+		got = abl_read_mono(inInputData, n->scratch, chunk, done);
+		if (!got) {
+			atomic_fetch_add(&n->c.dropped, chunk);
 			break;
 		}
-		ring_push(&s->ring, s->scratch, chunk, &s->c.dropped_frames);
-		/* The output buffer can be SHORTER than what the tap delivered (a
-		 * device start/stop transition, or a device whose output quantum is
-		 * smaller than the tap's). Writing in_frames there would run past the
-		 * HAL's buffer inside the realtime callback. */
-		if (s->cfg.passthrough && outOutputData && done < out_frames) {
-			uint32_t room = out_frames - done;
-			abl_write(outOutputData, s->scratch,
-			          chunk < room ? chunk : room, done);
+		meter_capture(n, n->scratch, got);
+		poise_core_input(n->core, (const float *const[]){ n->scratch }, 1, got);
+		atomic_fetch_add(&n->c.input_frames, got);
+		done += got;
+		if (got < chunk) {
+			atomic_fetch_add(&n->c.dropped, chunk - got);
+			break;
 		}
-		done += chunk;
 	}
-	/* With pass-through the output must be filled for the whole callback even
-	 * if the tap delivered less. */
-	if (s->cfg.passthrough && outOutputData && out_frames > frames) {
-		uint32_t from = frames;
-		while (from < out_frames) {
-			uint32_t chunk = out_frames - from;
-			if (chunk > SCRATCH_FRAMES)
-				chunk = SCRATCH_FRAMES;
-			memset(s->scratch, 0, (size_t)chunk * 2 * sizeof(float));
-			abl_write(outOutputData, s->scratch, chunk, from);
-			from += chunk;
+
+	/* (c) the core's delayed output -> the aggregate's output buffers. The
+	 * output buffer can be SHORTER than what the tap delivered (a device
+	 * start/stop transition, or an output quantum smaller than the tap's), so
+	 * what does not fit is counted rather than written. */
+	for (uint32_t done = 0; done < out_frames;) {
+		uint32_t chunk = out_frames - done;
+		uint32_t wrote;
+
+		if (chunk > SCRATCH_FRAMES)
+			chunk = SCRATCH_FRAMES;
+		/* Clamp to what the HAL's buffer can actually take BEFORE asking the
+		 * core for it: poise_core_output() commits the frame (advances out_pos
+		 * and records the wet/dry decision), so pulling a chunk we then fail
+		 * to write would drop those samples from the output timeline AND
+		 * shorten the fixed delay by chunk - wrote. */
+		chunk = (uint32_t)abl_clamp(outOutputData, chunk, done);
+		if (!chunk) {
+			atomic_fetch_add(&n->c.overloads, 1);
+			break;
 		}
+		poise_core_output(n->core, (float *const[]){ n->scratch }, 1, chunk);
+		wrote = abl_write_mono(outOutputData, n->scratch, chunk, done);
+		if (wrote < chunk) {
+			atomic_fetch_add(&n->c.overloads, 1);
+			atomic_fetch_add(&n->c.output_frames, wrote);
+			break;
+		}
+		atomic_fetch_add(&n->c.output_frames, wrote);
+		done += wrote;
 	}
 	return noErr;
 }
 
-static void *writer_thread(void *arg)
-{
-	struct poise_mac_session *s = arg;
-	float buf[1024 * 2];
-	uint32_t n;
-	for (;;) {
-		while ((n = ring_pop(&s->ring, buf, 1024)) > 0)
-			wav_write(&s->wav, buf, n);
-		if (atomic_load(&s->writer_stop) &&
-		    atomic_load(&s->ring.head) == atomic_load(&s->ring.tail))
-			break;
-		struct timespec ts;
-		ts.tv_sec = 0;
-		ts.tv_nsec = WRITER_TICK_MS * 1000000L;
-		nanosleep(&ts, NULL);
-	}
-	return NULL;
-}
-
 /* --------------------------------------------------------------- the tap */
 
-static OSStatus create_tap(struct poise_mac_session *s, AudioObjectID *tap)
+static OSStatus create_tap(struct poise_ca *n, AudioObjectID *tap)
 {
 	/* Poise's own process is excluded so the node never re-captures its own
 	 * output: the aggregate writes the same audio it reads, so including self
-	 * would close a loop (plan probe (e)). */
+	 * would close a loop (measurements/mac-tap-spike.md (e)). */
 	AudioObjectID self = 0;
 	pid_t pid = getpid();
 	UInt32 size = sizeof(self);
@@ -807,15 +627,11 @@ static OSStatus create_tap(struct poise_mac_session *s, AudioObjectID *tap)
 	NSArray<NSNumber *> *exclude = self ? @[ @(self) ] : @[];
 	CATapDescription *desc = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:exclude];
 	desc.name = @TAP_NAME;
-	desc.muteBehavior = CATapMutedWhenTapped;
+	desc.muteBehavior = n->tap_mute ? CATapMutedWhenTapped : CATapUnmuted;
 	desc.privateTap = NO;
 	desc.mixdown = YES;
 	desc.mono = NO;
 	desc.exclusive = YES;
-	if (s->cfg.verbose) {
-		printf("poise: tap: stereo mixdown, exclude self pid %d (process object %u), "
-		       "muteBehavior=MutedWhenTapped, private=no\n", (int)pid, (unsigned)self);
-	}
 	st = AudioHardwareCreateProcessTap(desc, tap);
 	if (st != noErr)
 		report_status("AudioHardwareCreateProcessTap", st);
@@ -829,10 +645,10 @@ static void tap_uid(AudioObjectID tap, char *buf, size_t n)
 
 /* ------------------------------------------------------------- aggregate */
 
-static OSStatus set_stream_formats(struct poise_mac_session *s, AudioObjectPropertyScope scope,
+static OSStatus set_stream_formats(struct poise_ca *n, AudioObjectPropertyScope scope,
                                    AudioStreamBasicDescription *readback, const char *what)
 {
-	UInt32 size = hal_data_size(s->aggregate_id, kAudioDevicePropertyStreams, scope);
+	UInt32 size = hal_data_size(n->aggregate_id, kAudioDevicePropertyStreams, scope);
 	if (!size) {
 		report_status(what, kAudioHardwareBadObjectError);
 		return kAudioHardwareBadObjectError;
@@ -840,7 +656,7 @@ static OSStatus set_stream_formats(struct poise_mac_session *s, AudioObjectPrope
 	AudioStreamID *streams = calloc(1, size);
 	if (!streams)
 		return kAudioHardwareUnspecifiedError;
-	if (hal_get(s->aggregate_id, kAudioDevicePropertyStreams, scope, streams, &size) != noErr) {
+	if (hal_get(n->aggregate_id, kAudioDevicePropertyStreams, scope, streams, &size) != noErr) {
 		free(streams);
 		return kAudioHardwareUnspecifiedError;
 	}
@@ -849,7 +665,7 @@ static OSStatus set_stream_formats(struct poise_mac_session *s, AudioObjectPrope
 	OSStatus st;
 	for (UInt32 i = 0; i < count; i++) {
 		st = hal_set(streams[i], kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal,
-		             &s->requested, sizeof(s->requested));
+		             &n->requested, sizeof(n->requested));
 		if (st != noErr) {
 			char line[128];
 			snprintf(line, sizeof(line), "%s stream %u: set virtual format", what, (unsigned)i);
@@ -868,22 +684,22 @@ static OSStatus set_stream_formats(struct poise_mac_session *s, AudioObjectPrope
 	return result;
 }
 
-static OSStatus create_aggregate(struct poise_mac_session *s, const char *tapuid)
+static OSStatus create_aggregate(struct poise_ca *n, const char *tapuid)
 {
 	char outuid[256] = "";
-	hal_get_string(s->output_device, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal,
+	hal_get_string(n->output_device, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal,
 	               outuid, sizeof(outuid));
 	if (!outuid[0]) {
 		fprintf(stderr, "poise: output device has no UID\n");
 		return kAudioHardwareBadObjectError;
 	}
 
-	NSString *aggUID = [NSString stringWithFormat:@"dev.poise.spike.%@", [[NSUUID UUID] UUIDString]];
+	NSString *aggUID = [NSString stringWithFormat:@"dev.poise.node.%@", [[NSUUID UUID] UUIDString]];
 	NSDictionary *subDevice = @{ @kAudioSubDeviceUIDKey : @(outuid) };
 	NSDictionary *tapEntry = @{
 		@kAudioSubTapUIDKey : @(tapuid),
-		/* Per-sub-tap drift compensation: the tap's clock and the output device's
-		 * clock are not the same clock, so the HAL must resample one of them. */
+		/* The tap's clock and the output device's clock are not the same clock,
+		 * so the HAL must resample one of them (C3). */
 		@kAudioSubTapDriftCompensationKey : @(1),
 		@kAudioSubTapDriftCompensationQualityKey : @(kAudioAggregateDriftCompensationHighQuality),
 	};
@@ -899,7 +715,7 @@ static OSStatus create_aggregate(struct poise_mac_session *s, const char *tapuid
 		@kAudioAggregateDeviceTapAutoStartKey : @YES,
 	};
 	OSStatus st = AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)desc,
-	                                                 &s->aggregate_id);
+	                                                 &n->aggregate_id);
 	if (st != noErr) {
 		report_status("AudioHardwareCreateAggregateDevice", st);
 		/* The clock-device key is the one the API is least forgiving about; retry
@@ -907,7 +723,7 @@ static OSStatus create_aggregate(struct poise_mac_session *s, const char *tapuid
 		NSMutableDictionary *retry = [desc mutableCopy];
 		[retry removeObjectForKey:@kAudioAggregateDeviceClockDeviceKey];
 		st = AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)retry,
-		                                        &s->aggregate_id);
+		                                        &n->aggregate_id);
 		if (st != noErr) {
 			report_status("AudioHardwareCreateAggregateDevice (no clock key)", st);
 			return st;
@@ -917,7 +733,7 @@ static OSStatus create_aggregate(struct poise_mac_session *s, const char *tapuid
 	return noErr;
 }
 
-static void read_back_aggregate(struct poise_mac_session *s)
+static void read_back_aggregate(struct poise_ca *n)
 {
 	/* Clock master, as the HAL sees it. */
 	CFStringRef clock = NULL;
@@ -925,33 +741,20 @@ static void read_back_aggregate(struct poise_mac_session *s)
 	AudioObjectPropertyAddress a = { kAudioAggregateDevicePropertyClockDevice,
 	                                 kAudioObjectPropertyScopeGlobal,
 	                                 kAudioObjectPropertyElementMain };
-	if (AudioObjectGetPropertyData(s->aggregate_id, &a, 0, NULL, &size, &clock) == noErr && clock) {
-		cfstring_copy(clock, s->clock_uid, sizeof(s->clock_uid));
+	if (AudioObjectGetPropertyData(n->aggregate_id, &a, 0, NULL, &size, &clock) == noErr && clock) {
+		cfstring_copy(clock, n->clock_uid, sizeof(n->clock_uid));
 		CFRelease(clock);
 	}
 
-	/* Composition, as the HAL built it: shows whether the tap survived. */
-	if (s->cfg.verbose) {
-		CFDictionaryRef comp = NULL;
-		UInt32 csize = sizeof(comp);
-		AudioObjectPropertyAddress ca = { kAudioAggregateDevicePropertyComposition,
-		                                  kAudioObjectPropertyScopeGlobal,
-		                                  kAudioObjectPropertyElementMain };
-		if (AudioObjectGetPropertyData(s->aggregate_id, &ca, 0, NULL, &csize, &comp) == noErr && comp) {
-			printf("poise: aggregate composition: %s\n",
-			       [[(__bridge NSDictionary *)comp description] UTF8String]);
-			CFRelease(comp);
-		}
-	}
-
-	/* Per-sub-tap drift compensation, as read back. */
+	/* Per-sub-tap drift compensation, as read back (C3). Not readable from a
+	 * client process on macOS 27; the value stays 0 then. */
 	AudioObjectID *subtaps = NULL;
 	size = 0;
 	a.mSelector = kAudioAggregateDevicePropertySubTapList;
-	if (AudioObjectGetPropertyDataSize(s->aggregate_id, &a, 0, NULL, &size) == noErr && size) {
+	if (AudioObjectGetPropertyDataSize(n->aggregate_id, &a, 0, NULL, &size) == noErr && size) {
 		subtaps = calloc(1, size);
 		if (subtaps &&
-		    AudioObjectGetPropertyData(s->aggregate_id, &a, 0, NULL, &size, subtaps) == noErr) {
+		    AudioObjectGetPropertyData(n->aggregate_id, &a, 0, NULL, &size, subtaps) == noErr) {
 			UInt32 count = size / sizeof(AudioObjectID);
 			for (UInt32 i = 0; i < count; i++) {
 				UInt32 value = 0;
@@ -959,74 +762,275 @@ static void read_back_aggregate(struct poise_mac_session *s)
 				AudioObjectPropertyAddress d = { kAudioSubTapPropertyDriftCompensation,
 				                                 kAudioObjectPropertyScopeGlobal,
 				                                 kAudioObjectPropertyElementMain };
-				OSStatus dst = AudioObjectGetPropertyData(subtaps[i], &d, 0, NULL, &vsize, &value);
-				if (dst == noErr) {
-					s->drift_compensation = value;
-				} else if (s->cfg.verbose) {
-					char what[128];
-					snprintf(what, sizeof(what), "sub-tap %u: read kAudioSubTapPropertyDriftCompensation",
-					         (unsigned)i);
-					report_status(what, dst);
-				}
-				if (s->cfg.verbose) {
-					UInt32 quality = 0;
-					UInt32 qsize = sizeof(quality);
-					AudioObjectPropertyAddress q = { kAudioSubTapPropertyDriftCompensationQuality,
-					                                 kAudioObjectPropertyScopeGlobal,
-					                                 kAudioObjectPropertyElementMain };
-					OSStatus qst = AudioObjectGetPropertyData(subtaps[i], &q, 0, NULL, &qsize, &quality);
-					printf("poise: sub-tap %u drift compensation %u (quality read st=%d value=%u)\n",
-					       (unsigned)i, (unsigned)value, (int)qst, (unsigned)quality);
-				}
+				if (AudioObjectGetPropertyData(subtaps[i], &d, 0, NULL, &vsize, &value) == noErr)
+					n->drift_compensation = value;
 			}
 		}
 		free(subtaps);
 	}
 }
 
-/* --------------------------------------------------------------- session */
+/* ------------------------------------------------------------- C1 teardown */
 
-void poise_mac_request_stop(void)
+/* Stop the device (this is what unmutes the Mac), destroy the IOProc, the
+ * aggregate and the tap, in that order. Idempotent. */
+static void teardown(struct poise_ca *n)
 {
-	g_stop = 1;
+	pthread_mutex_lock(&n->lock);
+	if (!n->stopped) {
+		n->stopped = 1;
+		if (n->aggregate_id && n->proc_id) {
+			AudioDeviceStop(n->aggregate_id, n->proc_id);
+			AudioDeviceDestroyIOProcID(n->aggregate_id, n->proc_id);
+			n->proc_id = 0;
+		}
+		if (n->aggregate_id) {
+			AudioHardwareDestroyAggregateDevice(n->aggregate_id);
+			n->aggregate_id = 0;
+		}
+		if (n->tap_id) {
+			AudioHardwareDestroyProcessTap(n->tap_id);
+			n->tap_id = 0;
+		}
+	}
+	pthread_mutex_unlock(&n->lock);
 }
 
-struct poise_mac_session *poise_mac_session_start(const struct poise_mac_session_config *cfg,
-                                                  char *err, size_t err_size)
+static void fail_with(struct poise_ca *n, const char *msg)
 {
-	struct poise_mac_session *s = calloc(1, sizeof(*s));
-	if (!s) {
-		snprintf(err, err_size, "out of memory");
+	pthread_mutex_lock(&n->lock);
+	if (!n->err[0])
+		snprintf(n->err, sizeof(n->err), "%s", msg);
+	pthread_mutex_unlock(&n->lock);
+	atomic_store(&n->failed, 1);
+}
+
+/* C1: a tap that stops being read keeps the whole Mac silent, so a device that
+ * stops calling back must not leave one behind. The first callback is
+ * poise_ca_new()'s business (a missing grant looks exactly like this). */
+static void *watchdog_thread(void *arg)
+{
+	struct poise_ca *n = arg;
+
+	for (;;) {
+		struct timespec ts = { 0, WATCHDOG_TICK_MS * 1000000L };
+
+		nanosleep(&ts, NULL);
+		if (atomic_load(&n->monitor_stop))
+			break;
+		uint64_t last = atomic_load(&n->last_callback_ms);
+		if (!last)
+			continue;
+		if (monotonic_ms_() - last <= WATCHDOG_MS)
+			continue;
+		fail_with(n, "poise stopped and audio was restored: the audio device "
+		             "stopped calling back for 250 ms");
+		teardown(n);
+		break;
+	}
+	return NULL;
+}
+
+/* Every live node, for the atexit safety net: a tap that outlives the process
+ * mutes the whole Mac until it is destroyed. */
+#define MAX_NODES 8
+static struct poise_ca *g_nodes[MAX_NODES];
+static pthread_mutex_t g_nodes_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_atexit_armed;
+
+static void destroy_node(struct poise_ca *n);
+
+static void on_exit(void)
+{
+	struct poise_ca *live[MAX_NODES];
+
+	pthread_mutex_lock(&g_nodes_lock);
+	memcpy(live, g_nodes, sizeof(live));
+	memset(g_nodes, 0, sizeof(g_nodes));
+	pthread_mutex_unlock(&g_nodes_lock);
+	for (int i = 0; i < MAX_NODES; i++) {
+		if (live[i])
+			destroy_node(live[i]);
+	}
+}
+
+static void register_node(struct poise_ca *n)
+{
+	pthread_mutex_lock(&g_nodes_lock);
+	for (int i = 0; i < MAX_NODES; i++) {
+		if (!g_nodes[i]) {
+			g_nodes[i] = n;
+			break;
+		}
+	}
+	if (!g_atexit_armed) {
+		g_atexit_armed = 1;
+		atexit(on_exit);
+	}
+	pthread_mutex_unlock(&g_nodes_lock);
+}
+
+static void unregister_node(struct poise_ca *n)
+{
+	pthread_mutex_lock(&g_nodes_lock);
+	for (int i = 0; i < MAX_NODES; i++) {
+		if (g_nodes[i] == n)
+			g_nodes[i] = NULL;
+	}
+	pthread_mutex_unlock(&g_nodes_lock);
+}
+
+/* --------------------------------------------------------------- the node */
+
+static void free_node(struct poise_ca *n)
+{
+	atomic_store(&n->monitor_stop, 1);
+	if (n->monitor_started)
+		pthread_join(n->monitor, NULL);
+	teardown(n);
+	if (n->core) {
+		poise_core_stop(n->core);
+		poise_core_free(n->core);
+		n->core = NULL;
+	}
+	free(n->scratch);
+	n->scratch = NULL;
+	pthread_mutex_destroy(&n->lock);
+	free(n);
+}
+
+static void destroy_node(struct poise_ca *n)
+{
+	unregister_node(n);
+	free_node(n);
+}
+
+void poise_ca_destroy(struct poise_ca *n)
+{
+	if (n)
+		destroy_node(n);
+}
+
+poise_core *poise_ca_core(struct poise_ca *n)
+{
+	return n ? n->core : NULL;
+}
+
+uint32_t poise_ca_frame(struct poise_ca *n)
+{
+	return n && n->core ? poise_core_frame(n->core) : 0;
+}
+
+uint64_t poise_ca_delay_samples(struct poise_ca *n)
+{
+	return n && n->core ? poise_core_delay(n->core) : 0;
+}
+
+uint64_t poise_ca_io_latency_samples(struct poise_ca *n)
+{
+	int64_t delta;
+
+	if (!n || !atomic_load(&n->c.has_time))
+		return 0;
+	delta = atomic_load(&n->c.delta_max);
+	return delta > 0 ? (uint64_t)delta : 0;
+}
+
+int poise_ca_status(struct poise_ca *n, char *err, size_t errlen)
+{
+	if (!n || !atomic_load(&n->failed))
+		return 0;
+	if (err && errlen) {
+		pthread_mutex_lock(&n->lock);
+		snprintf(err, errlen, "%s", n->err);
+		pthread_mutex_unlock(&n->lock);
+	}
+	return 1;
+}
+
+void poise_ca_get_stats(struct poise_ca *n, uint64_t *out, uint32_t n_stats)
+{
+	uint64_t core[POISE_STAT_COUNT];
+	uint64_t v[POISE_CA_STAT_COUNT];
+	uint32_t i;
+
+	if (!n || !out)
+		return;
+	memset(core, 0, sizeof(core));
+	if (n->core)
+		poise_core_get_stats(n->core, core, POISE_STAT_COUNT);
+	v[POISE_CA_CALLBACKS] = atomic_load(&n->c.callbacks);
+	v[POISE_CA_INPUT_FRAMES] = atomic_load(&n->c.input_frames);
+	v[POISE_CA_OUTPUT_FRAMES] = atomic_load(&n->c.output_frames);
+	v[POISE_CA_FRAMES_WET] = core[POISE_STAT_FRAMES_WET];
+	v[POISE_CA_FRAMES_DRY] = core[POISE_STAT_FRAMES_DRY];
+	v[POISE_CA_FRAMES_SKIPPED] = core[POISE_STAT_FRAMES_SKIPPED];
+	v[POISE_CA_FRAMES_LATE] = core[POISE_STAT_FRAMES_LATE];
+	v[POISE_CA_DELAY_CHANGES] = core[POISE_STAT_DELAY_CHANGES];
+	v[POISE_CA_RESYNCS] = core[POISE_STAT_RESYNCS];
+	v[POISE_CA_INPUT_GAPS] = core[POISE_STAT_INPUT_GAPS];
+	v[POISE_CA_QUANTUM_MAX] = core[POISE_STAT_QUANTUM_MAX];
+	v[POISE_CA_DELAY_SAMPLES] = core[POISE_STAT_DELAY];
+	v[POISE_CA_DROPPED] = atomic_load(&n->c.dropped);
+	v[POISE_CA_OVERLOADS] = atomic_load(&n->c.overloads);
+	v[POISE_CA_RESTARTS] = 0;    /* T5 fills these with the C4 listeners */
+	v[POISE_CA_TAP_ALIVE] = 1;
+	v[POISE_CA_QUIET_FRAMES] = atomic_load(&n->c.quiet_frames);
+	v[POISE_CA_SAW_SIGNAL] = (uint64_t)atomic_load(&n->c.saw_signal);
+	v[POISE_CA_DRIFT_SAMPLES] = (uint64_t)(int64_t)(atomic_load(&n->c.input_frames) -
+	                                                atomic_load(&n->c.output_frames));
+	v[POISE_CA_TIME_DELTA_MIN] = (uint64_t)atomic_load(&n->c.delta_min);
+	v[POISE_CA_TIME_DELTA_MAX] = (uint64_t)atomic_load(&n->c.delta_max);
+	v[POISE_CA_RT_POLICY] = (uint64_t)atomic_load(&n->c.rt_policy_set);
+	for (i = 0; i < n_stats && i < POISE_CA_STAT_COUNT; i++)
+		out[i] = v[i];
+}
+
+uint32_t poise_ca_stat_count(void)
+{
+	return POISE_CA_STAT_COUNT;
+}
+
+struct poise_ca *poise_ca_new(const char *output_device, uint32_t frame,
+                              uint32_t engine_latency, uint32_t quantum, uint32_t margin,
+                              uint32_t fade, float dry_gain, uint32_t rate, int tap_mute,
+                              char *err, size_t errlen)
+{
+	struct poise_ca *n = calloc(1, sizeof(*n));
+	if (!n) {
+		snprintf(err, errlen, "out of memory");
 		return NULL;
 	}
-	s->cfg = *cfg;
-	s->requested = make_format(cfg->rate);
-	s->output_device = find_output_device(cfg->output_device);
-	if (!s->output_device) {
-		snprintf(err, err_size, "no output device matches \"%s\"",
-		         cfg->output_device ? cfg->output_device : "default");
+	pthread_mutex_init(&n->lock, NULL);
+	n->rate = rate ? rate : POISE_COREAUDIO_RATE;
+	n->tap_mute = tap_mute;
+	n->requested = make_format(n->rate);
+
+	n->output_device = find_output_device(output_device);
+	if (!n->output_device) {
+		snprintf(err, errlen, "no output device matches \"%s\"",
+		         output_device ? output_device : "default");
 		goto fail;
 	}
+	hal_get_string(n->output_device, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
+	               n->device_name, sizeof(n->device_name));
 	{
-		char name[256] = "";
 		char uid[256] = "";
-		hal_get_string(s->output_device, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
-		               name, sizeof(name));
-		hal_get_string(s->output_device, kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal,
-		               uid, sizeof(uid));
-		UInt32 size = sizeof(s->device_nominal_rate);
-		hal_get(s->output_device, kAudioDevicePropertyNominalSampleRate,
-		        kAudioObjectPropertyScopeGlobal, &s->device_nominal_rate, &size);
+		hal_get_string(n->output_device, kAudioDevicePropertyDeviceUID,
+		               kAudioObjectPropertyScopeGlobal, uid, sizeof(uid));
+		UInt32 size = sizeof(n->device_nominal_rate);
+		hal_get(n->output_device, kAudioDevicePropertyNominalSampleRate,
+		        kAudioObjectPropertyScopeGlobal, &n->device_nominal_rate, &size);
 		AudioStreamID first = 0;
 		UInt32 fsize = sizeof(first);
-		if (hal_get(s->output_device, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
+		if (hal_get(n->output_device, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
 		            &first, &fsize) == noErr && fsize) {
-			UInt32 sz = sizeof(s->device_format);
+			UInt32 sz = sizeof(n->device_format);
 			hal_get(first, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal,
-			        &s->device_format, &sz);
+			        &n->device_format, &sz);
 		}
-		printf("poise: output device: \"%s\" (uid %s), nominal %.0f Hz\n", name, uid,
-		       s->device_nominal_rate);
+		printf("poise: output device: \"%s\" (uid %s), nominal %.0f Hz\n", n->device_name, uid,
+		       n->device_nominal_rate);
 	}
 
 	/* The tap. A missing TCC grant makes this fail; the prompt needs a human, so
@@ -1034,11 +1038,11 @@ struct poise_mac_session *poise_mac_session_start(const struct poise_mac_session
 	OSStatus st;
 	unsigned waited_ms = 0;
 	for (;;) {
-		st = create_tap(s, &s->tap_id);
+		st = create_tap(n, &n->tap_id);
 		if (st == noErr)
 			break;
 		if (waited_ms >= TCC_WAIT_SECONDS * 1000u) {
-			snprintf(err, err_size,
+			snprintf(err, errlen,
 			         "AudioHardwareCreateProcessTap failed: OSStatus %d '%s' after waiting %u s "
 			         "for the System Audio Recording grant",
 			         (int)st, fourcc(st, (char[8]){ 0 }), TCC_WAIT_SECONDS);
@@ -1050,238 +1054,394 @@ struct poise_mac_session *poise_mac_session_start(const struct poise_mac_session
 		struct timespec ts = { 0, TCC_RETRY_MS * 1000000L };
 		nanosleep(&ts, NULL);
 		waited_ms += TCC_RETRY_MS;
-		if (g_stop) {
-			snprintf(err, err_size, "stopped while waiting for the tap");
-			goto fail;
-		}
 	}
 
 	{
 		char uid[256] = "";
-		tap_uid(s->tap_id, uid, sizeof(uid));
-		UInt32 size = sizeof(s->tap_format);
-		if (hal_get(s->tap_id, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
-		            &s->tap_format, &size) != noErr)
-			memset(&s->tap_format, 0, sizeof(s->tap_format));
-		if (cfg->verbose)
-			printf("poise: tap object %u, uid %s\n", (unsigned)s->tap_id, uid);
+		UInt32 size = sizeof(n->tap_format);
+		tap_uid(n->tap_id, uid, sizeof(uid));
+		if (hal_get(n->tap_id, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
+		            &n->tap_format, &size) != noErr)
+			memset(&n->tap_format, 0, sizeof(n->tap_format));
 
 		/* Ask the tap for the node's format too; it is advisory (the aggregate
 		 * stream format is what the IOProc gets), so a refusal is only a note. */
-		st = hal_set(s->tap_id, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
-		             &s->requested, sizeof(s->requested));
-		s->tap_format_settable = (st == noErr);
+		st = hal_set(n->tap_id, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal,
+		             &n->requested, sizeof(n->requested));
 		if (st != noErr)
 			report_status("tap: set kAudioTapPropertyFormat (advisory)", st);
 
-		/* Read the description back: this is the evidence that the tap really
-		 * excludes Poise's own process (probe (e)). */
-		if (cfg->verbose) {
+		/* Read the description back: the evidence that the tap really excludes
+		 * Poise's own process (measurements/mac-tap-spike.md (e)). */
+		{
 			CFTypeRef back = NULL;
 			UInt32 bsize = sizeof(back);
 			AudioObjectPropertyAddress ba = { kAudioTapPropertyDescription,
 			                                  kAudioObjectPropertyScopeGlobal,
 			                                  kAudioObjectPropertyElementMain };
-			if (AudioObjectGetPropertyData(s->tap_id, &ba, 0, NULL, &bsize, &back) == noErr && back) {
+			if (AudioObjectGetPropertyData(n->tap_id, &ba, 0, NULL, &bsize, &back) == noErr && back) {
 				CATapDescription *d = (__bridge CATapDescription *)back;
 				NSMutableString *procs = [NSMutableString string];
-				for (NSNumber *n in d.processes)
-					[procs appendFormat:@"%u ", n.unsignedIntValue];
-				printf("poise: tap description read back: name=\"%s\" exclusive=%d mixdown=%d "
-				       "mono=%d private=%d muteBehavior=%ld processes=[%s]\n",
-				       d.name.UTF8String, d.isExclusive, d.isMixdown, d.isMono, d.isPrivate,
+				for (NSNumber *p in d.processes)
+					[procs appendFormat:@"%u ", p.unsignedIntValue];
+				printf("poise: tap %s uid %s: exclusive=%d mixdown=%d mono=%d private=%d "
+				       "muteBehavior=%ld processes=[%s]\n",
+				       d.name.UTF8String, uid, d.isExclusive, d.isMixdown, d.isMono, d.isPrivate,
 				       (long)d.muteBehavior, procs.UTF8String);
 				CFRelease(back);
 			}
 		}
 
-		if (create_aggregate(s, uid) != noErr) {
-			snprintf(err, err_size, "cannot create the aggregate device for \"%s\"",
-			         cfg->output_device ? cfg->output_device : "default output");
+		if (create_aggregate(n, uid) != noErr) {
+			snprintf(err, errlen, "cannot create the aggregate device for \"%s\"",
+			         output_device ? output_device : "default output");
 			goto fail;
 		}
 	}
 
-	/* Explicit 48 kHz Float32 non-interleaved on both sides. */
-	set_stream_formats(s, kAudioObjectPropertyScopeInput, &s->input_format, "aggregate input");
-	set_stream_formats(s, kAudioObjectPropertyScopeOutput, &s->output_format, "aggregate output");
-	read_back_aggregate(s);
+	/* Explicit rate, Float32 on both sides: the HAL resamples the device. */
+	set_stream_formats(n, kAudioObjectPropertyScopeInput, &n->input_format, "aggregate input");
+	set_stream_formats(n, kAudioObjectPropertyScopeOutput, &n->output_format, "aggregate output");
+	read_back_aggregate(n);
 
-	poise_mac_session_report(s);
+	printf("poise: requested format: %.0f Hz, %u ch, Float32\n", n->requested.mSampleRate,
+	       (unsigned)n->requested.mChannelsPerFrame);
+	print_asbd("tap format (kAudioTapPropertyFormat)", &n->tap_format);
+	print_asbd("aggregate input stream (read back)", &n->input_format);
+	print_asbd("aggregate output stream (read back)", &n->output_format);
+	printf("poise: aggregate clock master: %s; sub-tap drift compensation read back %u\n",
+	       n->clock_uid[0] ? n->clock_uid : "(not reported)", (unsigned)n->drift_compensation);
 
-	if (!format_acceptable(&s->input_format, &s->requested)) {
-		char name[256] = "";
-		hal_get_string(s->output_device, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
-		               name, sizeof(name));
-		snprintf(err, err_size,
+	/* C2: 48 kHz (or the requested rate) or refuse - never run the engine at a
+	 * rate other than the one the streams actually carry. */
+	if (!format_acceptable(&n->input_format, &n->requested)) {
+		snprintf(err, errlen,
 		         "refusing to run: the aggregate input stream is %.0f Hz, %u ch, flags 0x%x, not "
-		         "the requested %.0f Hz Float32 non-interleaved (device \"%s\" runs at %.0f Hz)",
-		         s->input_format.mSampleRate, (unsigned)s->input_format.mChannelsPerFrame,
-		         (unsigned)s->input_format.mFormatFlags, (double)cfg->rate, name,
-		         s->device_nominal_rate);
+		         "the requested %.0f Hz Float32 (device \"%s\" runs at %.0f Hz)",
+		         n->input_format.mSampleRate, (unsigned)n->input_format.mChannelsPerFrame,
+		         (unsigned)n->input_format.mFormatFlags, n->requested.mSampleRate,
+		         n->device_name, n->device_nominal_rate);
 		goto fail;
 	}
-	if (!format_acceptable(&s->output_format, &s->requested)) {
-		char name[256] = "";
-		hal_get_string(s->output_device, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
-		               name, sizeof(name));
-		snprintf(err, err_size,
+	if (!format_acceptable(&n->output_format, &n->requested)) {
+		snprintf(err, errlen,
 		         "refusing to run: the aggregate output stream is %.0f Hz, %u ch, flags 0x%x, not "
-		         "the requested %.0f Hz Float32 non-interleaved (device \"%s\" runs at %.0f Hz)",
-		         s->output_format.mSampleRate, (unsigned)s->output_format.mChannelsPerFrame,
-		         (unsigned)s->output_format.mFormatFlags, (double)cfg->rate, name,
-		         s->device_nominal_rate);
+		         "the requested %.0f Hz Float32 (device \"%s\" runs at %.0f Hz)",
+		         n->output_format.mSampleRate, (unsigned)n->output_format.mChannelsPerFrame,
+		         (unsigned)n->output_format.mFormatFlags, n->requested.mSampleRate,
+		         n->device_name, n->device_nominal_rate);
 		goto fail;
 	}
 
-	ring_init(&s->ring, cfg->rate, RING_SECONDS);
-	s->scratch = calloc(SCRATCH_FRAMES * POISE_COREAUDIO_CHANNELS, sizeof(float));
-	if (!s->ring.frames || !s->scratch) {
-		snprintf(err, err_size, "out of memory");
+	n->core = poise_core_new(frame, engine_latency, quantum, margin, fade, dry_gain);
+	if (!n->core) {
+		snprintf(err, errlen, "invalid core parameters: frame %u, fade %u", frame, fade);
 		goto fail;
 	}
-	if (!wav_open(&s->wav, cfg->out_path, cfg->rate, cfg->sample_format)) {
-		snprintf(err, err_size, "cannot write %s", cfg->out_path);
+	n->scratch = calloc(SCRATCH_FRAMES, sizeof(float));
+	if (!n->scratch) {
+		snprintf(err, errlen, "out of memory");
 		goto fail;
 	}
-	atomic_store(&s->writer_stop, 0);
-	if (pthread_create(&s->writer, NULL, writer_thread, s) != 0) {
-		snprintf(err, err_size, "cannot start the writer thread");
-		goto fail;
-	}
-	s->started = 1;
 
-	st = AudioDeviceCreateIOProcID(s->aggregate_id, ioproc, s, &s->proc_id);
+	st = AudioDeviceCreateIOProcID(n->aggregate_id, ioproc, n, &n->proc_id);
 	if (st != noErr) {
 		report_status("AudioDeviceCreateIOProcID", st);
-		snprintf(err, err_size, "AudioDeviceCreateIOProcID failed: OSStatus %d", (int)st);
+		snprintf(err, errlen, "AudioDeviceCreateIOProcID failed: OSStatus %d", (int)st);
 		goto fail;
 	}
-	st = AudioDeviceStart(s->aggregate_id, s->proc_id);
-	if (st == noErr && cfg->verbose) {
-		UInt32 running = 0, alive = 0, size = sizeof(running);
-		hal_get(s->aggregate_id, kAudioDevicePropertyDeviceIsRunning,
-		        kAudioObjectPropertyScopeGlobal, &running, &size);
-		size = sizeof(alive);
-		hal_get(s->aggregate_id, kAudioDevicePropertyDeviceIsAlive,
-		        kAudioObjectPropertyScopeGlobal, &alive, &size);
-		fprintf(stderr, "poise: after start: aggregate %u running=%u alive=%u\n",
-		        (unsigned)s->aggregate_id, (unsigned)running, (unsigned)alive);
-	}
+	st = AudioDeviceStart(n->aggregate_id, n->proc_id);
 	if (st != noErr) {
 		report_status("AudioDeviceStart", st);
-		snprintf(err, err_size, "AudioDeviceStart failed: OSStatus %d", (int)st);
+		snprintf(err, errlen, "AudioDeviceStart failed: OSStatus %d", (int)st);
 		goto fail;
 	}
 	/* AudioDeviceStart returns noErr even when the HAL then declines to run the
-	 * IO context (seen on this host after a previous instance was torn down); the
-	 * only symptom is that no callback ever arrives. Treat that as a failure, not
-	 * as a silent capture. */
-	for (unsigned waited = 0; waited < 3000; waited += 25) {
-		if (atomic_load(&s->c.callbacks))
+	 * IO context, and a denied System Audio Recording grant looks the same; the
+	 * only symptom is that no callback ever arrives. Report that as a failure
+	 * rather than as a silent capture (C2b). */
+	for (unsigned waited = 0; waited < STARTUP_CALLBACK_MS; waited += 25) {
+		if (atomic_load(&n->c.callbacks))
 			break;
 		struct timespec ts = { 0, 25 * 1000000L };
 		nanosleep(&ts, NULL);
-		if (g_stop)
-			break;
 	}
-	if (!atomic_load(&s->c.callbacks)) {
-		snprintf(err, err_size,
-		         "the aggregate started (no error) but no IOProc callback arrived in 3 s: the HAL "
-		         "did not run the aggregate");
+	if (!atomic_load(&n->c.callbacks)) {
+		snprintf(err, errlen,
+		         "the aggregate started (no error) but no IOProc callback arrived in %u ms: the "
+		         "HAL did not run the aggregate (a denied System Audio Recording grant looks "
+		         "like this)", STARTUP_CALLBACK_MS);
 		goto fail;
 	}
-	return s;
+
+	atomic_store(&n->monitor_stop, 0);
+	if (pthread_create(&n->monitor, NULL, watchdog_thread, n) == 0) {
+		n->monitor_started = 1;
+	} else {
+		fprintf(stderr, "poise: cannot start the watchdog thread\n");
+	}
+	register_node(n);
+	return n;
 
 fail:
-	poise_mac_session_stop(s);
+	free_node(n);
 	return NULL;
 }
 
-void poise_mac_session_stop(struct poise_mac_session *s)
+/* ------------------------------------------------------------------- CLI */
+
+#ifdef POISE_CA_CLI
+
+/* The standalone spike harness: it runs an identity "engine" on a worker thread
+ * so the core's exchange, the dry fallback and the counters can be measured
+ * without Python. Not part of the library (poise_coreaudio.h). */
+
+#define CLI_WRITER_TICK_MS 50u
+
+enum cli_sample_format {
+	CLI_F32, /* 32-bit float WAV (format tag 3) */
+	CLI_S16, /* 16-bit PCM WAV (format tag 1) */
+};
+
+struct cli_meter {
+	FILE *f;
+	unsigned rate;
+	enum cli_sample_format fmt;
+	uint64_t frames;
+	float peak;
+	double energy;
+	float *tail; /* the last second, for the feedback probe */
+	uint64_t tail_pos;
+	uint64_t tail_filled;
+	double tail_energy;
+};
+
+static void put16(FILE *f, uint16_t v)
 {
-	if (!s)
+	fputc(v & 0xff, f);
+	fputc((v >> 8) & 0xff, f);
+}
+
+static void put32(FILE *f, uint32_t v)
+{
+	put16(f, v & 0xffff);
+	put16(f, (v >> 16) & 0xffff);
+}
+
+static void wav_header(FILE *f, unsigned rate, unsigned channels,
+                       enum cli_sample_format fmt, uint64_t frames)
+{
+	unsigned bits = (fmt == CLI_F32) ? 32 : 16;
+	unsigned align = channels * bits / 8;
+	uint64_t data = frames * align;
+	if (data > 0xffffffffu)
+		data = 0xffffffffu;
+	fseek(f, 0, SEEK_SET);
+	fwrite("RIFF", 1, 4, f);
+	put32(f, (uint32_t)(36 + data));
+	fwrite("WAVE", 1, 4, f);
+	fwrite("fmt ", 1, 4, f);
+	put32(f, 16);
+	put16(f, (fmt == CLI_F32) ? 3 : 1); /* WAVE_FORMAT_IEEE_FLOAT / PCM */
+	put16(f, channels);
+	put32(f, rate);
+	put32(f, rate * align);
+	put16(f, align);
+	put16(f, bits);
+	fwrite("data", 1, 4, f);
+	put32(f, (uint32_t)data);
+	fflush(f);
+}
+
+/* The meter is created whether or not a WAV is asked for: the run summary and
+ * the silence warning come from it (see the note in mac-tap-spike.md about
+ * measuring only when recording). */
+static int wav_open(struct cli_meter *w, const char *path, unsigned rate,
+                    enum cli_sample_format fmt)
+{
+	memset(w, 0, sizeof(*w));
+	w->rate = rate;
+	w->fmt = fmt;
+	w->tail = calloc((size_t)rate * POISE_COREAUDIO_CHANNELS, sizeof(float));
+	if (!path)
+		return 1;
+	w->f = fopen(path, "wb+");
+	if (!w->f) {
+		fprintf(stderr, "poise: cannot write %s: %s\n", path, strerror(errno));
+		free(w->tail);
+		w->tail = NULL;
+		return 0;
+	}
+	wav_header(w->f, rate, POISE_COREAUDIO_CHANNELS, fmt, 0);
+	return 1;
+}
+
+static void wav_write(struct cli_meter *w, const float *mono, uint32_t frames)
+{
+	size_t channels = POISE_COREAUDIO_CHANNELS;
+
+	for (uint32_t i = 0; i < frames; i++) {
+		float x = mono[i];
+		float ax = fabsf(x);
+		if (ax > w->peak)
+			w->peak = ax;
+		w->energy += (double)x * x * (double)channels;
+		if (w->tail) {
+			size_t at = (size_t)w->tail_pos;
+			double old = w->tail[at];
+			w->tail_energy += (double)x * x * (double)channels - old * old;
+			w->tail[at] = x;
+			w->tail_pos = (w->tail_pos + 1) % ((size_t)w->rate * channels);
+			if (w->tail_filled < (uint64_t)w->rate * channels)
+				w->tail_filled++;
+		}
+	}
+	w->frames += frames;
+	if (!w->f)
 		return;
-	if (s->aggregate_id && s->proc_id) {
-		/* This is what unmutes the Mac: MutedWhenTapped mutes only while the tap
-		 * is read. */
-		AudioDeviceStop(s->aggregate_id, s->proc_id);
-		AudioDeviceDestroyIOProcID(s->aggregate_id, s->proc_id);
-		s->proc_id = 0;
+	if (w->fmt == CLI_F32) {
+		for (uint32_t i = 0; i < frames; i++) {
+			fwrite(&mono[i], sizeof(float), 1, w->f);
+			fwrite(&mono[i], sizeof(float), 1, w->f);
+		}
+	} else {
+		for (uint32_t i = 0; i < frames; i++) {
+			float x = mono[i];
+			if (x > 1.0f)
+				x = 1.0f;
+			if (x < -1.0f)
+				x = -1.0f;
+			int16_t s = (int16_t)lrintf(x * 32767.0f);
+			fwrite(&s, sizeof(s), 1, w->f);
+			fwrite(&s, sizeof(s), 1, w->f);
+		}
 	}
-	if (s->aggregate_id) {
-		AudioHardwareDestroyAggregateDevice(s->aggregate_id);
-		s->aggregate_id = 0;
-	}
-	if (s->tap_id) {
-		AudioHardwareDestroyProcessTap(s->tap_id);
-		s->tap_id = 0;
-	}
-	if (s->started) {
-		atomic_store(&s->writer_stop, 1);
-		pthread_join(s->writer, NULL);
-		s->started = 0;
-	}
-	wav_close(&s->wav);
-	ring_free(&s->ring);
-	free(s->scratch);
-	s->scratch = NULL;
 }
 
-void poise_mac_session_counters(const struct poise_mac_session *s,
-                                struct poise_mac_counters *out)
+static void wav_close(struct cli_meter *w)
 {
-	memset(out, 0, sizeof(*out));
-	out->input_frames = atomic_load(&s->c.input_frames);
-	out->output_frames = atomic_load(&s->c.output_frames);
-	out->callbacks = atomic_load(&s->c.callbacks);
-	out->quantum_min = atomic_load(&s->c.quantum_min);
-	out->quantum_max = atomic_load(&s->c.quantum_max);
-	out->dropped_frames = atomic_load(&s->c.dropped_frames);
-	out->overloads = atomic_load(&s->c.overloads);
-	out->rt_policy_set = atomic_load(&s->c.rt_policy_set);
+	if (!w->f)
+		return;
+	wav_header(w->f, w->rate, POISE_COREAUDIO_CHANNELS, w->fmt, w->frames);
+	fclose(w->f);
+	w->f = NULL;
+	free(w->tail);
+	w->tail = NULL;
 }
 
-void poise_mac_session_levels(const struct poise_mac_session *s, float *peak, float *rms,
-                              float *tail_rms)
+static volatile sig_atomic_t g_stop;
+
+static void on_signal(int sig)
 {
-	const struct poise_wav *w = &s->wav;
-	if (peak)
-		*peak = w->peak;
-	if (rms)
-		*rms = w->frames ? (float)sqrt(w->energy / ((double)w->frames * w->channels)) : 0.0f;
-	if (tail_rms) {
-		double n = (double)w->tail_filled;
-		*tail_rms = n > 0 ? (float)sqrt(fmax(w->tail_energy, 0.0) / n) : 0.0f;
+	(void)sig;
+	g_stop = 1;
+}
+
+struct cli_worker {
+	struct poise_ca *n;
+	poise_core *core;
+	uint32_t frame;
+	struct cli_meter meter;
+	unsigned stall_at_ms; /* when to hold a frame back once (0 = never) */
+	unsigned stall_ms;
+	_Atomic int stalled;
+	_Atomic int stop;
+	pthread_t thread;
+	int started;
+};
+
+/* The identity "engine": take each frame from the core, write it, hand it back.
+ * A frame this thread does not hand back in time plays dry at the same delay,
+ * which is what --stall-at exercises. */
+static void *cli_worker_thread(void *arg)
+{
+	struct cli_worker *w = arg;
+	float *buf = calloc(w->frame, sizeof(float));
+	uint64_t start = monotonic_ms_();
+
+	if (!buf)
+		return NULL;
+	while (!atomic_load(&w->stop)) {
+		int64_t k = poise_core_wait_frame(w->core, buf, 100);
+		if (k == -2)
+			break;
+		if (k >= 0) {
+			wav_write(&w->meter, buf, w->frame);
+			poise_core_put_frame(w->core, k, buf);
+		}
+		if (w->stall_at_ms && !atomic_load(&w->stalled) &&
+		    monotonic_ms_() - start >= w->stall_at_ms) {
+			atomic_store(&w->stalled, 1);
+			printf("poise: worker holds a frame back for %u ms\n", w->stall_ms);
+			fflush(stdout);
+			struct timespec ts = { w->stall_ms / 1000,
+			                       (long)(w->stall_ms % 1000) * 1000000L };
+			nanosleep(&ts, NULL);
+		}
 	}
+	free(buf);
+	return NULL;
 }
 
-void poise_mac_session_report(const struct poise_mac_session *s)
+static void cli_worker_start(struct cli_worker *w, struct poise_ca *n,
+                             const char *out_path, unsigned rate,
+                             enum cli_sample_format fmt, unsigned stall_at_ms,
+                             unsigned stall_ms)
 {
-	char name[256] = "";
-	hal_get_string(s->output_device, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
-	               name, sizeof(name));
-	printf("poise: requested format: %.0f Hz, %u ch, Float32, non-interleaved\n",
-	       s->requested.mSampleRate, (unsigned)s->requested.mChannelsPerFrame);
-	printf("poise: tap format is %s; aggregate input is %s; aggregate output is %s\n",
-	       is_non_interleaved(&s->tap_format) ? "non-interleaved" : "interleaved",
-	       is_non_interleaved(&s->input_format) ? "non-interleaved" : "interleaved",
-	       is_non_interleaved(&s->output_format) ? "non-interleaved" : "interleaved");
-	print_asbd("tap format (kAudioTapPropertyFormat)", &s->tap_format);
-	print_asbd("aggregate input stream (read back)", &s->input_format);
-	print_asbd("aggregate output stream (read back)", &s->output_format);
-	print_asbd("output device stream (virtual)", &s->device_format);
-	printf("poise: output device nominal rate: %.0f Hz (\"%s\")\n", s->device_nominal_rate, name);
-	printf("poise: aggregate clock master: %s\n", s->clock_uid[0] ? s->clock_uid : "(not reported)");
-	/* Requested through kAudioSubTapDriftCompensationKey when the aggregate was
-	 * created; kAudioSubTapPropertyDriftCompensation is not readable from a
-	 * client process here (see measurements/mac-tap-spike.md (d)). */
-	printf("poise: per-sub-tap drift compensation: requested 1 (kAudioSubTapDriftCompensationKey), "
-	       "property read back %u%s\n", (unsigned)s->drift_compensation,
-	       s->drift_compensation ? " (on)" : " (unreadable from this process)");
+	memset(w, 0, sizeof(*w));
+	w->n = n;
+	w->core = poise_ca_core(n);
+	w->frame = poise_ca_frame(n);
+	w->stall_at_ms = stall_at_ms;
+	w->stall_ms = stall_ms;
+	atomic_store(&w->stalled, 0);
+	atomic_store(&w->stop, 0);
+	if (!wav_open(&w->meter, out_path, rate, fmt)) {
+		fprintf(stderr, "poise: recording disabled\n");
+	}
+	if (pthread_create(&w->thread, NULL, cli_worker_thread, w) == 0)
+		w->started = 1;
 }
 
-void poise_mac_list_devices(void)
+static void cli_worker_stop(struct cli_worker *w)
+{
+	atomic_store(&w->stop, 1);
+	poise_core_stop(w->core);
+	if (w->started)
+		pthread_join(w->thread, NULL);
+	w->started = 0;
+	wav_close(&w->meter);
+}
+
+static float to_dbfs(float x)
+{
+	if (x <= 1e-6f)
+		return -120.0f;
+	return 20.0f * log10f(x);
+}
+
+static const char *transport_name(UInt32 transport, char buf[8])
+{
+	switch (transport) {
+	case kAudioDeviceTransportTypeBuiltIn: return "built-in";
+	case kAudioDeviceTransportTypeUSB: return "usb";
+	case kAudioDeviceTransportTypeBluetooth: return "bluetooth";
+	case kAudioDeviceTransportTypeBluetoothLE: return "bluetooth-le";
+	case kAudioDeviceTransportTypeHDMI: return "hdmi";
+	case kAudioDeviceTransportTypeDisplayPort: return "displayport";
+	case kAudioDeviceTransportTypeAirPlay: return "airplay";
+	case kAudioDeviceTransportTypeAVB: return "avb";
+	case kAudioDeviceTransportTypeAggregate: return "aggregate";
+	case kAudioDeviceTransportTypeVirtual: return "virtual";
+	default: break;
+	}
+	snprintf(buf, 8, "%c%c%c%c",
+	         (char)((transport >> 24) & 0xff), (char)((transport >> 16) & 0xff),
+	         (char)((transport >> 8) & 0xff), (char)(transport & 0xff));
+	return buf;
+}
+
+void poise_ca_list_devices(void)
 {
 	UInt32 count = 0;
 	AudioObjectID *devs = hal_device_list(&count);
@@ -1308,102 +1468,72 @@ void poise_mac_list_devices(void)
 	free(devs);
 }
 
-void poise_mac_session_run(struct poise_mac_session *s)
-{
-	if (!s)
-		return;
-	unsigned elapsed_ms = 0;
-	unsigned next_report = 1000;
-	while (!g_stop) {
-		if (s->cfg.seconds && elapsed_ms >= s->cfg.seconds * 1000u)
-			break;
-		struct timespec ts = { 0, 50 * 1000000L };
-		nanosleep(&ts, NULL);
-		elapsed_ms += 50;
-		if (s->cfg.verbose && elapsed_ms >= next_report) {
-			UInt32 running = 0, size = sizeof(running);
-			hal_get(s->aggregate_id, kAudioDevicePropertyDeviceIsRunning,
-			        kAudioObjectPropertyScopeGlobal, &running, &size);
-			fprintf(stderr,
-			        "poise: t=%.1f s callbacks=%llu input=%llu output=%llu aggregate-running=%u\n",
-			        elapsed_ms / 1000.0, (unsigned long long)atomic_load(&s->c.callbacks),
-			        (unsigned long long)atomic_load(&s->c.input_frames),
-			        (unsigned long long)atomic_load(&s->c.output_frames), (unsigned)running);
-			next_report += 1000;
-		}
-	}
-}
-
-/* ------------------------------------------------------------------- CLI */
-
-/* The CLI's live session, for atexit (C1: the tap must never outlive the
- * process). */
-static struct poise_mac_session *g_session_ptr;
-
-static void on_signal(int sig)
-{
-	(void)sig;
-	/* The tap is destroyed by the main loop (or atexit) once this is seen;
-	 * nothing async-signal-unsafe happens here. */
-	poise_mac_request_stop();
-}
-
-static void on_exit(void)
-{
-	/* Last line of defence for C1: a tap that outlives the process mutes the
-	 * whole Mac until it is destroyed. */
-	if (g_session_ptr)
-		poise_mac_session_stop(g_session_ptr);
-}
-static float to_dbfs(float x)
-{
-	if (x <= 1e-6f)
-		return -120.0f;
-	return 20.0f * log10f(x);
-}
-
 static void usage(void)
 {
 	printf("usage: poise_coreaudio --seconds N [--out file.wav] [--passthrough]\n"
 	       "                       [--device NAME] [--rate HZ] [--format f32|s16] [--verbose]\n"
+	       "                       [--frame N] [--margin N] [--engine-latency N]\n"
+	       "                       [--stall-at MS --stall-ms MS]\n"
 	       "       poise_coreaudio --list-devices\n"
 	       "\n"
-	       "  --seconds 0   run until SIGINT/SIGTERM\n");
+	       "  --seconds 0   run until SIGINT/SIGTERM\n"
+	       "  --stall-at    hold one frame back after MS (shows the dry fallback)\n"
+	       "  --passthrough accepted for old measurement commands: the node always\n"
+	       "                plays what the core gives it\n");
 }
 
 int main(int argc, char **argv)
 {
 	@autoreleasepool {
-		struct poise_mac_session_config cfg;
-		memset(&cfg, 0, sizeof(cfg));
-		cfg.seconds = 5;
-		cfg.rate = POISE_COREAUDIO_RATE;
-		cfg.sample_format = POISE_MAC_F32;
+		const char *device = NULL;
+		const char *out_path = NULL;
+		unsigned seconds = 5;
+		unsigned rate = POISE_COREAUDIO_RATE;
+		unsigned frame = 512;
+		unsigned margin = 256;
+		unsigned engine_latency = 0;
+		unsigned quantum = 512;
+		unsigned fade = 64;
+		unsigned stall_at = 0;
+		unsigned stall_ms = 0;
+		enum cli_sample_format fmt = CLI_F32;
 		int list = 0;
+		int verbose = 0;
+		int passthrough = 0;
 
 		for (int i = 1; i < argc; i++) {
 			if (!strcmp(argv[i], "--seconds") && i + 1 < argc) {
-				cfg.seconds = (unsigned)strtoul(argv[++i], NULL, 10);
+				seconds = (unsigned)strtoul(argv[++i], NULL, 10);
 			} else if (!strcmp(argv[i], "--out") && i + 1 < argc) {
-				cfg.out_path = argv[++i];
+				out_path = argv[++i];
 			} else if (!strcmp(argv[i], "--passthrough")) {
-				cfg.passthrough = 1;
+				passthrough = 1;
 			} else if (!strcmp(argv[i], "--device") && i + 1 < argc) {
-				cfg.output_device = argv[++i];
+				device = argv[++i];
 			} else if (!strcmp(argv[i], "--rate") && i + 1 < argc) {
-				cfg.rate = (unsigned)strtoul(argv[++i], NULL, 10);
+				rate = (unsigned)strtoul(argv[++i], NULL, 10);
+			} else if (!strcmp(argv[i], "--frame") && i + 1 < argc) {
+				frame = (unsigned)strtoul(argv[++i], NULL, 10);
+			} else if (!strcmp(argv[i], "--margin") && i + 1 < argc) {
+				margin = (unsigned)strtoul(argv[++i], NULL, 10);
+			} else if (!strcmp(argv[i], "--engine-latency") && i + 1 < argc) {
+				engine_latency = (unsigned)strtoul(argv[++i], NULL, 10);
+			} else if (!strcmp(argv[i], "--stall-at") && i + 1 < argc) {
+				stall_at = (unsigned)strtoul(argv[++i], NULL, 10);
+			} else if (!strcmp(argv[i], "--stall-ms") && i + 1 < argc) {
+				stall_ms = (unsigned)strtoul(argv[++i], NULL, 10);
 			} else if (!strcmp(argv[i], "--format") && i + 1 < argc) {
 				const char *f = argv[++i];
 				if (!strcmp(f, "s16"))
-					cfg.sample_format = POISE_MAC_S16;
+					fmt = CLI_S16;
 				else if (!strcmp(f, "f32"))
-					cfg.sample_format = POISE_MAC_F32;
+					fmt = CLI_F32;
 				else {
 					fprintf(stderr, "poise: unknown --format %s\n", f);
 					return 1;
 				}
 			} else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) {
-				cfg.verbose = 1;
+				verbose = 1;
 			} else if (!strcmp(argv[i], "--list-devices")) {
 				list = 1;
 			} else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -1417,7 +1547,7 @@ int main(int argc, char **argv)
 		}
 
 		if (list) {
-			poise_mac_list_devices();
+			poise_ca_list_devices();
 			return 0;
 		}
 
@@ -1426,85 +1556,129 @@ int main(int argc, char **argv)
 		sa.sa_handler = on_signal;
 		sigaction(SIGINT, &sa, NULL);
 		sigaction(SIGTERM, &sa, NULL);
-		atexit(on_exit);
 
-		printf("poise: macOS %s, %s\n", [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String],
-		       cfg.passthrough ? "pass-through" : "capture only");
+		printf("poise: macOS %s, node with the fixed-delay core (poise_core %u stats)\n",
+		       [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String],
+		       (unsigned)poise_core_stat_count());
+		if (passthrough)
+			printf("poise: --passthrough: the node always plays what the core gives it\n");
+		fflush(stdout);
 
 		char err[1024] = "";
-		struct poise_mac_session *s = poise_mac_session_start(&cfg, err, sizeof(err));
-		if (!s) {
+		struct poise_ca *n = poise_ca_new(device, frame, engine_latency, quantum, margin,
+		                                  fade, 1.0f, rate, 1, err, sizeof(err));
+		if (!n) {
 			fprintf(stderr, "poise: %s\n", err);
 			return 2;
 		}
-		g_session_ptr = s;
+		if (verbose) {
+			printf("poise: RT policy: %s\n",
+			       atomic_load(&n->c.rt_policy_set) ? "time-constraint" : "not set");
+		}
+
+		struct cli_worker worker;
+		cli_worker_start(&worker, n, out_path, rate, fmt, stall_at, stall_ms);
 
 		struct timespec t0, t1;
 		clock_gettime(CLOCK_MONOTONIC, &t0);
-		poise_mac_session_run(s);
+		unsigned elapsed_ms = 0;
+		while (!g_stop) {
+			if (seconds && elapsed_ms >= seconds * 1000u)
+				break;
+			struct timespec ts = { 0, 50 * 1000000L };
+			nanosleep(&ts, NULL);
+			elapsed_ms += 50;
+			char msg[512];
+			if (poise_ca_status(n, msg, sizeof(msg))) {
+				fprintf(stderr, "poise: %s\n", msg);
+				break;
+			}
+		}
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 		double wall = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
 
-		poise_mac_session_stop(s);
-		g_session_ptr = NULL;
+		uint64_t st[POISE_CA_STAT_COUNT];
+		poise_ca_get_stats(n, st, POISE_CA_STAT_COUNT);
+		uint64_t delay = poise_ca_delay_samples(n);
+		uint64_t io = poise_ca_io_latency_samples(n);
+		int64_t in_adv = atomic_load(&n->c.last_in_time) - atomic_load(&n->c.first_in_time);
+		int64_t out_adv = atomic_load(&n->c.last_out_time) - atomic_load(&n->c.first_out_time);
+		int has_time = atomic_load(&n->c.has_time);
+		cli_worker_stop(&worker);
+		poise_ca_destroy(n);
 
-		struct poise_mac_counters c;
-		poise_mac_session_counters(s, &c);
-		float peak = 0, rms = 0, tail = 0;
-		poise_mac_session_levels(s, &peak, &rms, &tail);
+		struct cli_meter *w = &worker.meter;
+		double in_s = (double)st[POISE_CA_INPUT_FRAMES] / rate;
+		double out_s = (double)st[POISE_CA_OUTPUT_FRAMES] / rate;
+		double ppm = st[POISE_CA_INPUT_FRAMES]
+		                 ? (double)((int64_t)st[POISE_CA_OUTPUT_FRAMES] -
+		                            (int64_t)st[POISE_CA_INPUT_FRAMES]) /
+		                       (double)st[POISE_CA_INPUT_FRAMES] * 1e6
+		                 : 0.0;
+		double ms_per_sample = 1000.0 / (double)rate;
+		float rms = w->frames ? (float)sqrt(w->energy /
+		                                    ((double)w->frames * POISE_COREAUDIO_CHANNELS))
+		                      : 0.0f;
+		double n_tail = (double)w->tail_filled;
+		float tail = n_tail > 0 ? (float)sqrt(fmax(w->tail_energy, 0.0) / n_tail) : 0.0f;
 
-		double in_s = (double)c.input_frames / cfg.rate;
-		double out_s = (double)c.output_frames / cfg.rate;
-		double ppm = c.input_frames ? (double)((int64_t)c.output_frames - (int64_t)c.input_frames) /
-		                                  (double)c.input_frames * 1e6
-		                            : 0.0;
-		printf("poise: wall %.2f s; tap delivered %llu frames (%.3f s), output consumed %llu frames "
+		printf("poise: wall %.2f s; tap delivered %llu frames (%.3f s), output played %llu frames "
 		       "(%.3f s)\n",
-		       wall, (unsigned long long)c.input_frames, in_s,
-		       (unsigned long long)c.output_frames, out_s);
+		       wall, (unsigned long long)st[POISE_CA_INPUT_FRAMES], in_s,
+		       (unsigned long long)st[POISE_CA_OUTPUT_FRAMES], out_s);
 		printf("poise: drift output-tap %+lld frames, %+.2f ppm\n",
-		       (long long)((int64_t)c.output_frames - (int64_t)c.input_frames), ppm);
-		if (atomic_load(&s->c.has_time)) {
-			int64_t in_adv = atomic_load(&s->c.last_in_time) - atomic_load(&s->c.first_in_time);
-			int64_t out_adv = atomic_load(&s->c.last_out_time) - atomic_load(&s->c.first_out_time);
+		       (long long)((int64_t)st[POISE_CA_OUTPUT_FRAMES] -
+		                   (int64_t)st[POISE_CA_INPUT_FRAMES]), ppm);
+		{
 			double clock_ppm = in_adv ? (double)(out_adv - in_adv) / (double)in_adv * 1e6 : 0.0;
-			printf("poise: clocks: tap advanced %lld samples, output advanced %lld samples over the "
-			       "same %llu callbacks: %+lld samples, %+.2f ppm\n",
-			       (long long)in_adv, (long long)out_adv, (unsigned long long)c.callbacks,
-			       (long long)(out_adv - in_adv), clock_ppm);
-			printf("poise: output-minus-tap time stamp delta: %lld..%lld samples "
-			       "(input time flags 0x%x, output time flags 0x%x)\n",
-			       (long long)atomic_load(&s->c.delta_min),
-			       (long long)atomic_load(&s->c.delta_max), s->time_flags_in, s->time_flags_out);
+			if (has_time)
+				printf("poise: clocks: tap advanced %lld samples, output advanced %lld samples over "
+				       "the same %llu callbacks: %+lld samples, %+.2f ppm\n",
+				       (long long)in_adv, (long long)out_adv,
+				       (unsigned long long)st[POISE_CA_CALLBACKS],
+				       (long long)(out_adv - in_adv), clock_ppm);
 		}
-		printf("poise: callbacks %llu, quantum %llu..%llu frames\n",
-		       (unsigned long long)c.callbacks, (unsigned long long)c.quantum_min,
-		       (unsigned long long)c.quantum_max);
-		printf("poise: peak %.1f dBFS, rms %.1f dBFS, last-second rms %.1f dBFS\n",
-		       to_dbfs(peak), to_dbfs(rms), to_dbfs(tail));
-		printf("poise: RT policy: %s; dropped %llu frames; overloads %llu\n",
-		       c.rt_policy_set ? "time-constraint" : "not set",
-		       (unsigned long long)c.dropped_frames, (unsigned long long)c.overloads);
-		if (s->policy_verified)
-			printf("poise: RT policy read back on the IOProc thread: period %u ticks, computation "
-			       "%u, constraint %u, preemptible %u\n",
-			       s->policy_period, s->policy_computation, s->policy_constraint,
-			       s->policy_preemptible);
-		if (cfg.out_path)
-			printf("poise: wrote %s\n", cfg.out_path);
-		if (!c.input_frames) {
+		printf("poise: callbacks %llu, quantum max %llu frames\n",
+		       (unsigned long long)st[POISE_CA_CALLBACKS],
+		       (unsigned long long)st[POISE_CA_QUANTUM_MAX]);
+		printf("poise: frames processed %llu (wet), dry %llu, skipped %llu, late %llu\n",
+		       (unsigned long long)st[POISE_CA_FRAMES_WET],
+		       (unsigned long long)st[POISE_CA_FRAMES_DRY],
+		       (unsigned long long)st[POISE_CA_FRAMES_SKIPPED],
+		       (unsigned long long)st[POISE_CA_FRAMES_LATE]);
+		printf("poise: dropped %llu frames; overloads %llu; delay changes %llu; resyncs %llu; "
+		       "input gaps %llu\n",
+		       (unsigned long long)st[POISE_CA_DROPPED],
+		       (unsigned long long)st[POISE_CA_OVERLOADS],
+		       (unsigned long long)st[POISE_CA_DELAY_CHANGES],
+		       (unsigned long long)st[POISE_CA_RESYNCS],
+		       (unsigned long long)st[POISE_CA_INPUT_GAPS]);
+		printf("poise: delay %llu samples (%.1f ms); device side %llu samples (%.1f ms); total "
+		       "added %.1f ms (engine delay excluded)\n",
+		       (unsigned long long)delay, (double)delay * ms_per_sample,
+		       (unsigned long long)io, (double)io * ms_per_sample,
+		       (double)(delay + io) * ms_per_sample);
+		printf("poise: capture health: saw_signal %llu, quiet frames %llu (C2b)\n",
+		       (unsigned long long)st[POISE_CA_SAW_SIGNAL],
+		       (unsigned long long)st[POISE_CA_QUIET_FRAMES]);
+		printf("poise: played: peak %.1f dBFS, rms %.1f dBFS, last-second rms %.1f dBFS\n",
+		       to_dbfs(w->peak), to_dbfs(rms), to_dbfs(tail));
+		printf("poise: RT policy: %s\n",
+		       st[POISE_CA_RT_POLICY] ? "time-constraint" : "not set");
+		if (out_path)
+			printf("poise: wrote %s\n", out_path);
+		if (!st[POISE_CA_INPUT_FRAMES]) {
 			fprintf(stderr, "poise: no frames at all: the tap was never read\n");
-			free(s);
 			return 4;
 		}
-		if (peak <= 0.0f) {
+		if (!st[POISE_CA_SAW_SIGNAL]) {
 			fprintf(stderr,
 			        "poise: captured only silence: either nothing was playing, or the System Audio "
 			        "Recording grant is missing\n");
-			free(s);
 			return 5;
 		}
-		free(s);
 	}
 	return 0;
 }
+
+#endif /* POISE_CA_CLI */
