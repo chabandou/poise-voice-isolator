@@ -87,9 +87,10 @@ make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise
 poise                                   # terminal UI
 ```
 
-Python 3.10-3.12 works; 3.12 is what CI uses (`numpy<2` has no wheels past cp312). Without conda any
-3.10-3.12 environment does: `python3.12 -m venv .venv`, `.venv/bin/pip install -e .`, then the two
-commands above.
+3.11 or 3.12; 3.12 is what CI uses and what the numbers in `measurements/` come from. 3.10 also runs,
+but it caps ONNX Runtime at 1.22.1 on Apple silicon (no `cp310` wheel after that), so the engine versions
+differ. `numpy<2` caps the range at 3.12 either way. Without conda any 3.11-3.12 environment does:
+`python3.12 -m venv .venv`, `.venv/bin/pip install -e .`, then the two commands above.
 
 Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
 Windows there is nothing to install. The apps it captures are muted while it runs and unmuted when it
