@@ -41,3 +41,6 @@ stream_denoiser/native/libonnxruntime_providers_*.so
 # Tool droppings
 nuitka-crash-report.xml
 .playwright-cli/
+
+# macOS metadata (Finder droppings)
+.DS_Store
