@@ -87,9 +87,8 @@ make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise
 poise                                   # terminal UI
 ```
 
-3.11 or 3.12; 3.12 is what CI uses and what the numbers in `measurements/` come from. 3.10 also runs,
-but it caps ONNX Runtime at 1.22.1 on Apple silicon (no `cp310` wheel after that), so the engine versions
-differ. `numpy<2` caps the range at 3.12 either way. Without conda any 3.11-3.12 environment does:
+Use 3.12 (the version CI builds and the one the numbers in `measurements/` come from; 3.11 works too,
+while 3.10 caps ONNX Runtime at 1.22.1 on Apple silicon). Without conda:
 `python3.12 -m venv .venv`, `.venv/bin/pip install -e .`, then the two commands above.
 
 Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
@@ -253,7 +252,7 @@ On Windows, set `POISE_WIN_MARGIN_MS` as a user environment variable and restart
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
 cd poise-voice-isolator
-conda create -n poise python=3.10 && conda activate poise
+conda create -n poise python=3.12 && conda activate poise
 
 pip install -e ".[linux]"   # TUI: textual, pulsectl
 pip install -e ".[gui]"     # desktop app: PyQt6
