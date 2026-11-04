@@ -1,7 +1,7 @@
 # macOS tap spike: feasibility probes for the Core Audio capture path
 
-Measured 2026-11-02 on the port's Apple Silicon host. This is the gate G2 evidence for the plan's
-architecture (§3): a global `CATapDescription` with `MuteBehaviorMutedWhenTapped`, a private aggregate
+Measured 2026-11-02 on Apple Silicon (Mac14,9, macOS 27.0.1). This is the evidence for the capture
+architecture the node uses: a global `CATapDescription` with `MuteBehaviorMutedWhenTapped`, a private aggregate
 device whose clock master is the real output device, and one IOProc. Code: `native/poise_coreaudio/`
 (`poise_coreaudio.m`, `Makefile`), bundle wrapper `tools/make_dev_app.sh`; raw run logs are quoted below.
 
@@ -26,16 +26,16 @@ choice and its measurements are in `measurements/mac-wake.md` (Mach semaphores a
 |:--|:--|
 | TCC service | `kTCCServiceAudioCapture` (`log show`: `service=kTCCServiceAudioCapture`, `target_token={pid:…}`) |
 | Info.plist key | `NSAudioCaptureUsageDescription` — present in the bundle; the bundle must be **non-sandboxed** |
-| Where the user grants it | System Settings → Privacy & Security → **Screen & System Audio Recording** → the **"System Audio Recording Only"** section (the screenshot the operator confirmed shows PoiseDev toggled on there) |
+| Where the user grants it | System Settings → Privacy & Security → **Screen & System Audio Recording** → the **"System Audio Recording Only"** section (confirmed on the test machine, where PoiseDev is toggled on there) |
 | Prompt text | the standard "…would like to record this computer's audio" dialog with **Allow** / **Don't Allow** |
 | What a denial looks like in code | **no error from the HAL.** Two symptoms were observed on this host: the aggregate starts and the IOProc runs with all-zero buffers, or the aggregate starts and no IOProc callback ever arrives. `AudioHardwareCreateProcessTap`/`AudioDeviceStart` return `noErr` in both cases; the only error a caller can see is one it invents itself (the spike exits non-zero after 3 s of no callbacks). |
 | What tccd says | `sending empty reply to requestor=com.apple.audio.coreaudiod for service=kTCCServiceAudioCapture — auth_value absent; client will receive kTCCErrorDomain Code=2` |
-| Grant identity | keyed to the **code identity**. After re-signing the ad-hoc bundle (`make_dev_app.sh` following a rebuild) capture stopped working; re-granting (`tccutil reset AudioCapture dev.poise.spike`, relaunch, click Allow) restored it immediately (`peak -9.1 dBFS`). The symptom observed after the re-sign was `the aggregate started (no error) but no IOProc callback arrived in 3 s`, which is **ambiguous**: the code documents the same symptom after a previous instance was torn down (`poise_coreaudio.m:1156-1159`), and no tccd line was captured for that particular run. What is not ambiguous is the zeros case, where `tccd` logged `auth_value absent … kTCCErrorDomain Code=2` — that is the evidence the contract C2b rests on. |
+| Grant identity | keyed to the **code identity**. After re-signing the ad-hoc bundle (`make_dev_app.sh` following a rebuild) capture stopped working; re-granting (`tccutil reset AudioCapture dev.poise.spike`, relaunch, click Allow) restored it immediately (`peak -9.1 dBFS`). The symptom observed after the re-sign was `the aggregate started (no error) but no IOProc callback arrived in 3 s`, which is **ambiguous**: the code documents the same symptom after a previous instance was torn down (`poise_coreaudio.m:1156-1159`), and no tccd line was captured for that particular run. What is not ambiguous is the zeros case, where `tccd` logged `auth_value absent … kTCCErrorDomain Code=2` — that is the evidence behind the capture-health check. |
 | Running the binary directly | `build/PoiseDev.app/Contents/MacOS/poise_coreaudio` run from a shell is attributed to the **terminal's** identity, not the bundle's. Whether it captures therefore depends on whether *that terminal* holds the grant, not on Poise: observed both ways on this host (zeros while the terminal lacked it, full capture once Ghostty held Screen & System Audio Recording). For a *user-facing* build, LaunchServices (`open`, i.e. a real app launch) is the supported path; for developer runs from a shell, the terminal's own grant applies. |
 | Is the Settings toggle sufficient? | not by itself: a toggle that exists from an earlier denial can read as ON while tccd still reports `auth_value absent`. The reliable sequence is `tccutil reset AudioCapture <bundle-id>` → relaunch → **Allow** (not "Allow once"). |
 
 **Design consequences.** The node cannot detect a denied grant through the audio API, so (i) the doctor
-check must compare captured energy against "is the system playing", (ii) C1's watchdog cannot use
+check must compare captured energy against "is the system playing", (ii) the watchdog cannot use
 "no callbacks" as its only trigger — the "no callback in 3 s" path *is* what a bad grant looks like —
 and (iii) a stable signing identity is load-bearing for the product, not cosmetic: with an ad-hoc
 signature every rebuild re-prompts, which is exactly what a user of a self-built copy would hit.
@@ -53,8 +53,8 @@ poise: output device stream (virtual):      48000 Hz, 2 ch, Float32 … flags 0x
 ```
 
 - **Interleaved, not planar.** `kAudioFormatFlagIsNonInterleaved` is not honoured for the tap or the
-  aggregate streams on this OS. Contract C2 must therefore say "take the ASBD you are given and handle
-  interleaved", not "demand non-interleaved".
+  aggregate streams on this OS. So a node must take the ASBD it is given and handle interleaved buffers, not demand
+  planar ones.
 - **The tap follows the device's nominal rate.** With `--rate 44100` the tap stream still came back at
   48 kHz while the aggregate output came back at 44.1 kHz, i.e. a **mixed-rate aggregate** (48k in /
   44.1k out) is constructible — and the spike refuses to run in that state. Two distinct refusals were
@@ -78,10 +78,10 @@ poise: output device stream (virtual):      48000 Hz, 2 ch, Float32 … flags 0x
   two `hal_set` calls in the file are `kAudioStreamPropertyVirtualFormat` and the advisory
   `kAudioTapPropertyFormat`. The device was nevertheless observed at 44 100 Hz after a `--rate 44100`
   run and back at 48 000 Hz afterwards — some other actor changed it, so a real node must not assume it
-  controls the rate, and (per C2) must either force it explicitly or refuse. Implementing set-and-restore
-  is ~15 lines and belongs in T4.
+  controls the rate, and (per the format contract) must either force it explicitly or refuse. Implementing set-and-restore
+  is ~15 lines and belongs in the node.
 - `kAudioTapPropertyFormat` is advisory and rejects writes here (`OSStatus 1852797029 'nope'`), and
-  `kAudioSubTapPropertyDriftCompensation` is unreadable (`560947818 '!obj'`) — so C3's pre-decided
+  `kAudioSubTapPropertyDriftCompensation` is unreadable (`560947818 '!obj'`) — so the clock's pre-decided
   fallback "turn on per-sub-tap drift compensation" is **not available on this OS**. If drift appears,
   the bridge (`wasapi_node.py:104-130` analogue) is the only option.
 
@@ -128,7 +128,7 @@ poise: tap description read back: name="Poise Tap Spike" exclusive=1 mixdown=1 m
 
 With `--passthrough` (captured audio written back to the aggregate's output) the run is stable — peak
 and last-second RMS do not grow over 93 s, and the process never re-captures its own playout. This is
-the property that makes the pass-through leg safe for the T5h latency harness.
+the property that makes the pass-through leg safe for a latency harness.
 
 ## (f) Bluetooth / AirPlay output
 
@@ -166,14 +166,14 @@ early when no `--out` is given — so every run without `--out` reported `peak -
 `captured only silence: either nothing was playing, or the System Audio Recording grant is missing`,
 even while it was capturing a tone at -9 dBFS into its ring buffer. Levels are now measured in a
 meter-only instance that exists with or without a file. Worth recording because it cost real time and
-because the same trap applies to any "measure only when recording" shortcut in T4.
+because the same trap applies to any "measure only when recording" shortcut.
 
 ## What this does not prove
 
-- **A/V offset**: nothing here measures what leaves the speakers (that is T5h, with a microphone).
+- **A/V offset**: nothing here measures what leaves the speakers (that needs a microphone).
 - **Bluetooth/AirPlay**, per (f).
-- **The engine in the loop**: this spike passes audio through; T5 runs the real fixed-delay core and the
-  ONNX engines and asserts `frames_dry == 0`.
+- **The engine in the loop**: this spike passes audio through; a run with the real fixed-delay core and
+  the ONNX engines is a separate measurement.
 - **Long-run stability** beyond the 10-minute run below, and nothing about thermal throttling.
 - **Other macOS versions**: everything above is macOS 27.0.1. The floor the code targets is 14.2; a 14.x
   run may differ in the TCC pane wording and in which tap properties exist.
@@ -191,14 +191,14 @@ open -n -W build/PoiseDev.app --stdout /tmp/poise.out --stderr /tmp/poise.err \
 grep -E "peak|rms|callbacks|drift|clocks" /tmp/poise.out
 ```
 
-## Gate G2 verdict
+## Verdict
 
-**GO**, with three amendments to the plan that this spike earned:
+**GO**, with three amendments this spike earned:
 
-1. **C2** must accept interleaved Float32 (the HAL will not give planar), and must handle the mixed-rate
+1. **The format contract** must accept interleaved Float32 (the HAL will not give planar), and must handle the mixed-rate
    aggregate case by forcing the device rate or resampling — refusing is the correct v1 behaviour.
-2. **C3**'s "per-sub-tap drift compensation" fallback does not exist on this OS; the clock bridge is the
-   only fallback, and the short-run drift is zero.
-3. **C1/T9** must treat a denied grant as *silence* (or as missing callbacks) with no error, and the
+2. A "per-sub-tap drift compensation" fallback does not exist on this OS; a clock bridge is the only fallback, and
+   the measured drift is zero.
+3. **The watchdog and the doctor** must treat a denied grant as *silence* (or as missing callbacks) with no error, and the
    doctor check must compare energy against system activity. A stable signing identity is required for
-   the grant to survive rebuilds — T12 is load-bearing for that, not cosmetic.
+   the grant to survive rebuilds — release signing is load-bearing for that, not cosmetic.

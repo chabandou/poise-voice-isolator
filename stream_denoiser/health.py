@@ -12,7 +12,7 @@ Covers the known Linux issues programmatically:
 3. Stuck on the Poise_Capture null sink after a crash: restore the real
    default sink and unload our null-sink module (no sudo needed).
 
-And the macOS ones (plan C2b, C1), where both failure modes are silent:
+And the macOS ones (capture health and audio restoration), where both failure modes are silent:
 
 1. A denied or absent System Audio Recording grant: the tap captures
    digital silence, or no IOProc callback arrives at all, and the audio
@@ -392,7 +392,7 @@ def reset_audio() -> Tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# macOS: the Core Audio tap (plans C1, C2b)
+# macOS: the Core Audio tap (the mute contract and capture health)
 # ---------------------------------------------------------------------------
 
 # How long the capture probe listens, and how long --doctor lets it.
@@ -411,9 +411,9 @@ class _OutputState:
 
 
 def _grant_fix() -> str:
-    """What a denied, stale or absent capture grant needs (plan C2b).
+    """What a denied, stale or absent capture grant needs.
 
-    Measured in T3: the toggle is in the pane's "System Audio Recording
+    Measured on macOS 27: the toggle is in the pane's "System Audio Recording
     Only" section, and the grant is keyed to the code identity of the app
     that creates the tap — so a shell run answers under the terminal's
     identity, and a rebuild can invalidate a switch that reads ON.
@@ -550,7 +550,7 @@ def _probe_node(result: Dict[str, Any]) -> None:
     Unmuted (``tap_mute=False``) because --doctor must not mute the Mac, and
     the playback leg at zero gain so the probe does not duplicate what is
     playing by the fixed delay. The node is closed on every route here: the
-    tap only lives while a process holds it (plan C1).
+    tap only lives while a process holds it (the mute contract).
     """
     from .backends.coreaudio_node import NODE_RATE, CoreAudioNode
     from .constants import (DEFAULT_FRAME_SIZE, MAC_FADE_SAMPLES,
@@ -636,7 +636,7 @@ _NO_CALLBACK_HINT = "no IOProc callback arrived"
 
 
 def check_macos_capture() -> CheckResult:
-    """What the tap is delivering right now (plan C2b).
+    """What the tap is delivering right now (capture health).
 
     Three answers matter, and only the first is good news: the tap is
     delivering sound; it is capturing zeros while the output device is
@@ -710,7 +710,7 @@ def check_macos_capture() -> CheckResult:
     # quiet Mac too (measured: True with nothing playing). Blaming the grant
     # on that signal would send a user to Settings for no reason, and
     # clearing the grant as healthy would hide the failure this check exists
-    # for. So name both causes and let the operator decide, and only claim
+    # for. So name both causes and let the reader decide, and only claim
     # "ok" when there is positive evidence that the tap works.
     return CheckResult(
         name="capture", ok=False,
@@ -729,7 +729,7 @@ def check_macos_taps() -> CheckResult:
     """Whether a Poise tap or aggregate is still registered in the HAL.
 
     A tap whose owner died keeps the apps it read muted, so the whole Mac
-    stays silent until the audio daemon drops it (plan C1's risk R2).
+    stays silent until the audio daemon drops it.
     """
     from .backends.platform.macos import list_core_audio_devices
 

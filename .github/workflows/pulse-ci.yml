@@ -187,16 +187,16 @@ jobs:
     # The suite on macOS, the counterpart of the windows job. It also builds
     # the Core Audio node (native/poise_coreaudio) first, because unlike the
     # Windows DLL that library is built rather than committed, and it checks
-    # that the library loads and that the core suites did not silently skip. The runner has no audio device and cannot grant TCC
-    # (System Audio Recording), so anything hardware-bound skips: the
+    # that the library loads and that the core suites did not silently skip.
+    #
+    # The runner has no audio device and cannot grant TCC (System Audio
+    # Recording), so anything hardware-bound skips: the
     # integration-marked live-tap test needs POISE_COREAUDIO_LIVE=1 plus the
     # grant and an output device, so the tap path can only be exercised on
     # hardware, never here. The rest of tests/ runs.
     #
-    # Runs on every PR (the pull_request trigger has no path filter: a
-    # skipped required check blocks the PR forever). It is not a required
-    # check in itself: making the new macOS jobs required is branch
-    # protection, a maintainer decision to raise in the PR body (PLAN R9).
+    # Runs on every PR: pull_request has no path filter here, because a
+    # skipped required check would block a PR forever.
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4

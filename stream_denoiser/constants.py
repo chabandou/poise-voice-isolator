@@ -62,9 +62,10 @@ WINDOWS_BACKENDS = ("auto", "wasapi", "portaudio")
 MAC_QUANTUM = 512
 # Time the inference thread gets per frame beyond the cycle itself
 # (samples, 256 = 5.3 ms); a frame later than this plays unprocessed.
-# Sized by measurement, not inherited from the Windows 21 ms: T2 measured
-# DF3 at RTF 0.031-0.035 on this host (frame p95 0.396 ms against the
-# 10.67 ms frame period) and T4's hardware run used 256 samples
+# Sized by measurement, not inherited from the Windows 21 ms: DeepFilterNet3
+# runs at RTF 0.031-0.035 on this hardware (frame p95 0.396 ms against the
+# 10.67 ms frame period, measurements/mac-engine-rtf.md) and a hardware run
+# used 256 samples
 # successfully, the same evidence that pinned
 # WIN_PROCESS_MARGIN_SAMPLES = 256 above. Override with
 # POISE_MAC_MARGIN_MS (milliseconds), which _loop_util.margin_samples
@@ -76,7 +77,7 @@ MAC_FADE_SAMPLES = PW_FADE_SAMPLES
 POISE_MAC_MARGIN_MS = "POISE_MAC_MARGIN_MS"
 # backends/coreaudio_backend.py imports all four and keeps only local
 # aliases (QUANTUM / MARGIN_SAMPLES / FADE_SAMPLES / MARGIN_ENV), so this is
-# the single source: T5's re-sizing of MAC_MARGIN_SAMPLES takes effect.
+# the single source: a change to MAC_MARGIN_SAMPLES takes effect.
 # macOS backend: "auto" (the Core Audio tap; the platform has no second
 # path to choose between) or "coreaudio". Override with POISE_BACKEND or
 # --backend.

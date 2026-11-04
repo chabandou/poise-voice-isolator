@@ -72,7 +72,7 @@ session the worst single frame was 1.59 ms (DF3) and 0.83 ms (GTCRN), while
 the means and p95s stayed where the table has them. That is scheduler noise
 on one frame, not a cost the engine pays regularly.
 
-Against the plan's acceptance thresholds (`README.md:56` numbers restated as
+Against the acceptance thresholds (`README.md:56` numbers restated as
 `DF3 < 0.30`, `GTCRN < 0.10`):
 
 | Engine | Measured RTF | Threshold | Verdict |
@@ -194,13 +194,13 @@ prints that engine's own traceback and exits 1 (nothing is worked around).
   different (unmeasured) set of numbers, and this says nothing about whether
   it would be faster or slower.
 - **Only the engine, not the audio path.** No device, no tap, no core delay,
-  no worker thread. It does not measure A/V offset (that is T5h), nor whether
+  no worker thread. It does not measure A/V offset (that needs a microphone), nor whether
   the inference thread meets the deadline while a Core Audio IOProc runs
   beside it. The timer wraps `engine.process_frame()` alone: the app adds its
   own per-frame work on top (AAD, the +6 dB makeup gain, the soft limiter, the
   level meter and fractional-block resampling, `processor.py:358-386`), so
   these are engine-only numbers and `MAC_MARGIN_SAMPLES` must be sized from
-  T5's `frames_dry` under load, not from this table alone.
+  `frames_dry` under load, not from this table alone.
 - **Warm state only.** The measured pass runs after a 2 s warm-up and keeps
   that state, so the first second of a fresh session is excluded. That
   exclusion is about timing (page-in, ONNX Runtime's arena growth, the CPU's

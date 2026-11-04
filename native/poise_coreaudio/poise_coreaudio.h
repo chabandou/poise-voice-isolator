@@ -2,7 +2,7 @@
  * Poise's macOS audio path: a global Core Audio process tap feeding poise_core,
  * whose output plays back through the same (private aggregate) device. The
  * counterpart of poise_wasapi.h; see poise_coreaudio.m for the model and the
- * plan's contracts C1-C4.
+ * the contracts this header documents.
  *
  * No Objective-C types here: every entry point is callable from ctypes with a
  * stable signature (backends/coreaudio_node.py binds poise_ca_*, and the
@@ -17,7 +17,7 @@
 #include "poise_core.h"
 
 /* The rate every stream is created at unless the caller asks for another one
- * (plan C2: 48 kHz or refuse - the node refuses rather than running the 48 kHz
+ * (the format contract: 48 kHz or refuse - the node refuses rather than running the 48 kHz
  * engine on 44.1 kHz buffers). */
 #define POISE_COREAUDIO_RATE 48000u
 #define POISE_COREAUDIO_CHANNELS 2u
@@ -41,14 +41,14 @@ enum poise_ca_stat {
 	POISE_CA_DELAY_SAMPLES,  /* fixed delay the core adds (samples) */
 	POISE_CA_DROPPED,        /* frames that never reached the core */
 	POISE_CA_OVERLOADS,      /* callbacks whose output could not be filled */
-	POISE_CA_QUIET_FRAMES,   /* captured frames below the silence floor (C2b) */
-	POISE_CA_SAW_SIGNAL,     /* 1 once captured audio carried sound (C2b) */
-	POISE_CA_DRIFT_SAMPLES,  /* tap frames minus output frames (C3, signed) */
-	POISE_CA_TIME_DELTA_MIN, /* output minus tap time stamp (C3, signed) */
+	POISE_CA_QUIET_FRAMES,   /* captured frames below the silence floor (capture health) */
+	POISE_CA_SAW_SIGNAL,     /* 1 once captured audio carried sound (capture health) */
+	POISE_CA_DRIFT_SAMPLES,  /* tap frames minus output frames (signed) */
+	POISE_CA_TIME_DELTA_MIN, /* output minus tap time stamp (signed) */
 	POISE_CA_TIME_DELTA_MAX,
 	POISE_CA_RT_POLICY,      /* 1 if THREAD_TIME_CONSTRAINT_POLICY took */
-	POISE_CA_RESTARTS,       /* aggregate rebuilds after a device change (C4, T5) */
-	POISE_CA_TAP_ALIVE,      /* 1 while the tap is alive and delivering (C4, T5) */
+	POISE_CA_RESTARTS,       /* aggregate rebuilds after a device change (none yet) */
+	POISE_CA_TAP_ALIVE,      /* 1 while the tap is alive and delivering */
 	POISE_CA_STAT_COUNT
 };
 
@@ -68,10 +68,10 @@ typedef struct poise_ca poise_ca;
  *              the delay (counted in DELAY_CHANGES).
  * rate:        nominal rate of every stream (0 = POISE_COREAUDIO_RATE). A
  *              device the HAL cannot give that rate is refused with its name
- *              and its real rate (C2).
+ *              and its real rate (the format contract).
  * tap_mute:    1 = CATapMutedWhenTapped, which is the shipping behaviour: the
  *              tap silences every app while it is read, so stopping or
- *              destroying the node is what restores the Mac's audio (C1).
+ *              destroying the node is what restores the Mac's audio (the mute contract).
  *              0 = leave the app audio unmuted (diagnostics only).
  *
  * Returns NULL with a message in err on failure.
@@ -106,7 +106,7 @@ uint64_t poise_ca_delay_samples(poise_ca *n);
 uint64_t poise_ca_io_latency_samples(poise_ca *n);
 
 /* 0 while running; 1 with a message in err once the node stopped itself. The
- * 250 ms watchdog (C1) is the only source today: it destroys the tap, which
+ * 250 ms watchdog (the mute contract) is the only source today: it destroys the tap, which
  * restores the Mac's audio, and reports that here. */
 int poise_ca_status(poise_ca *n, char *err, size_t errlen);
 

@@ -476,7 +476,7 @@ class _Control:
         On macOS the Core Audio tap belongs to this process, so a Ctrl-C
         that reaches it too (this process shares the UI's terminal process
         group) must end the session here as well: killing it instead would
-        leave the tap muting the Mac (plan C1).
+        leave the tap muting the Mac (the mute contract).
         """
         def handler(signum, frame):
             self.stop = self.quit = True

@@ -1,6 +1,6 @@
 # Builds Poise's macOS audio node: libpoise_coreaudio.dylib (the shipping
 # artifact, loaded by stream_denoiser/backends/coreaudio_node.py through
-# ctypes) and the standalone spike harness (poise_coreaudio, the T3 CLI).
+# ctypes) and the standalone harness (poise_coreaudio, the measurement CLI).
 #
 #   make -C native/poise_coreaudio            # -> dylib + ./poise_coreaudio
 #   make -C native/poise_coreaudio dylib
@@ -38,7 +38,7 @@ HDR := poise_coreaudio.h $(CORE)/poise_core.h
 OUT ?= ../../stream_denoiser/native/libpoise_coreaudio.dylib
 CLI ?= poise_coreaudio
 
-# Guard ARM64/Intel: the plan targets Apple Silicon; x86_64 is untested (R8), so
+# Guard ARM64/Intel: this targets Apple Silicon; x86_64 is untested, so
 # build for the host arch rather than a universal binary.
 ARCH ?= $(shell uname -m)
 SYSROOT := $(if $(SDK),-isysroot $(SDK),)

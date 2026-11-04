@@ -14,7 +14,7 @@ macOS-specific audio functionality:
   older Mac gets a sentence rather than a dlopen failure.
 
 There is no loopback here and no capture device to pick: the tap carries
-every app's audio (plan C2b), so only the output device is a choice.
+every app's audio (capture health), so only the output device is a choice.
 PortAudio is not used on macOS — sounddevice is not a macOS dependency and
 the HAL answers natively. This module is unused on other platforms.
 """

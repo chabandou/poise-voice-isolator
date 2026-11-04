@@ -20,7 +20,7 @@
 #
 # Bundle ID and code signature: signed ad hoc with a fixed identifier, because
 # TCC keys the grant on the code identity. Nothing here needs a Developer ID;
-# T12 owns the real signing.
+# Release signing is a separate concern; this is for local runs.
 #
 # Info.plist key for the grant: NSAudioCaptureUsageDescription. That is the key
 # this macOS maps to kTCCServiceAudioCapture (tccd's own service table lists the

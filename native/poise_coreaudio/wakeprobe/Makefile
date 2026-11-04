@@ -1,7 +1,7 @@
 # Builds wake_probe twice from one source, so the two wake primitives are
 # otherwise identical binaries (see wake_probe.c and measurements/mac-wake.md):
 #
-#   build/wake_probe_mach      -DUSE_MACH_SEM   (the plan's W1 choice)
+#   build/wake_probe_mach      -DUSE_MACH_SEM   (the Mach-semaphore choice)
 #   build/wake_probe_condvar   -DUSE_CONDVAR    (the alternative)
 #
 # Measurement tool, not shipped. No audio device, no permissions, no network.

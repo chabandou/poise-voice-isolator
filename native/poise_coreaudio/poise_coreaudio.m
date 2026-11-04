@@ -19,13 +19,13 @@
  * (poise_wasapi.c asks WASAPI for it); the aggregate's stream format is what
  * the IOProc sees, and the HAL resamples the physical device to it. So the
  * node always runs at one rate, and a device that will not take that format is
- * refused rather than run at another rate (plan C2). The HAL hands back
+ * refused rather than run at another rate (the format contract). The HAL hands back
  * interleaved buffers even when asked for non-interleaved, so the IOProc
  * discovers the layout from the buffer list (measurements/mac-tap-spike.md (c)).
  *
  * Why the tap must not outlive the process: with MutedWhenTapped, the tap
  * silences every app's audio while it is being read. It is destroyed on the
- * normal path (poise_ca_destroy), by the 250 ms watchdog (C1) and from atexit.
+ * normal path (poise_ca_destroy), by the 250 ms watchdog (the mute contract) and from atexit.
  *
  * The mute is released by AudioDeviceStop(): MutedWhenTapped mutes only while
  * the tap is read, so the order here is stop the device, destroy the IOProc,
@@ -67,7 +67,7 @@
 #define SCRATCH_FRAMES 8192u     /* largest cycle handled in one go */
 #define TCC_WAIT_SECONDS 180u    /* the grant prompt needs a person */
 #define TCC_RETRY_MS 3000u
-#define WATCHDOG_MS 250u         /* C1: no callback this long = stop and unmute */
+#define WATCHDOG_MS 250u         /* no callback this long = stop, which unmutes the Mac */
 #define WATCHDOG_TICK_MS 50u
 #define STARTUP_CALLBACK_MS 3000u
 /* Peak below which captured audio counts as silence (about -100 dBFS), the
@@ -85,7 +85,7 @@ struct poise_ca_counters {
 	_Atomic int saw_signal;
 	_Atomic int rt_policy_set;
 	/* Clocks: the tap's time stamp is in the tap's clock domain, the output's
-	 * in the output device's (C3). */
+	 * in the output device's clock domain. */
 	_Atomic int64_t first_in_time;
 	_Atomic int64_t last_in_time;
 	_Atomic int64_t first_out_time;
@@ -117,7 +117,7 @@ struct poise_ca {
 
 	struct poise_ca_counters c;
 
-	/* C1: teardown is serialised with the watchdog and poise_ca_destroy. The
+	/* Mute contract: teardown is serialised with the watchdog and poise_ca_destroy. The
 	 * realtime callback never takes this lock. */
 	pthread_mutex_t lock;
 	int stopped;
@@ -365,7 +365,7 @@ static uint32_t abl_frames(const AudioBufferList *abl)
 
 /* Truncate a chunk to what every buffer of the list can actually hold: the HAL
  * hands out buffers shorter than the cycle around device start/stop, and
- * writing past mDataByteSize would corrupt the callback's stack (plan C2). */
+ * writing past mDataByteSize would corrupt the callback's stack (the format contract). */
 static uint32_t abl_clamp(const AudioBufferList *abl, uint32_t frames, uint64_t offset)
 {
 	if (!abl || abl->mNumberBuffers == 0)
@@ -470,7 +470,7 @@ static void set_realtime_policy(struct poise_ca *n, uint32_t frames)
 	}
 }
 
-/* C2b: a denied System Audio Recording grant arrives as zeros, never as an
+/* Capture health: a denied System Audio Recording grant arrives as zeros, never as an
  * error, so capture health is measured energy, not a return code. */
 static void meter_capture(struct poise_ca *n, const float *mono, uint32_t frames)
 {
@@ -528,7 +528,7 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now,
 			atomic_store(&n->c.quantum_min, in_frames);
 	}
 
-	/* Clock domains (C3): the tap's time stamp is the tap's clock, the output's
+	/* Clock domains: the tap's time stamp is the tap's clock, the output's
 	 * is the output device's. Their difference is the playout leg's latency. */
 	if (inInputTime && inOutputTime) {
 		int64_t in_t = (int64_t)llround(inInputTime->mSampleTime);
@@ -699,7 +699,7 @@ static OSStatus create_aggregate(struct poise_ca *n, const char *tapuid)
 	NSDictionary *tapEntry = @{
 		@kAudioSubTapUIDKey : @(tapuid),
 		/* The tap's clock and the output device's clock are not the same clock,
-		 * so the HAL must resample one of them (C3). */
+		 * so the HAL must resample one of them. */
 		@kAudioSubTapDriftCompensationKey : @(1),
 		@kAudioSubTapDriftCompensationQualityKey : @(kAudioAggregateDriftCompensationHighQuality),
 	};
@@ -746,7 +746,7 @@ static void read_back_aggregate(struct poise_ca *n)
 		CFRelease(clock);
 	}
 
-	/* Per-sub-tap drift compensation, as read back (C3). Not readable from a
+	/* Per-sub-tap drift compensation, as read back. Not readable from a
 	 * client process on macOS 27; the value stays 0 then. */
 	AudioObjectID *subtaps = NULL;
 	size = 0;
@@ -770,7 +770,7 @@ static void read_back_aggregate(struct poise_ca *n)
 	}
 }
 
-/* ------------------------------------------------------------- C1 teardown */
+/* ------------------------------------------- teardown: destroying the tap unmutes */
 
 /* Stop the device (this is what unmutes the Mac), destroy the IOProc, the
  * aggregate and the tap, in that order. Idempotent. */
@@ -805,7 +805,7 @@ static void fail_with(struct poise_ca *n, const char *msg)
 	atomic_store(&n->failed, 1);
 }
 
-/* C1: a tap that stops being read keeps the whole Mac silent, so a device that
+/* Mute contract: a tap that stops being read keeps the whole Mac silent, so a device that
  * stops calling back must not leave one behind. The first callback is
  * poise_ca_new()'s business (a missing grant looks exactly like this). */
 static void *watchdog_thread(void *arg)
@@ -973,7 +973,7 @@ void poise_ca_get_stats(struct poise_ca *n, uint64_t *out, uint32_t n_stats)
 	v[POISE_CA_DELAY_SAMPLES] = core[POISE_STAT_DELAY];
 	v[POISE_CA_DROPPED] = atomic_load(&n->c.dropped);
 	v[POISE_CA_OVERLOADS] = atomic_load(&n->c.overloads);
-	v[POISE_CA_RESTARTS] = 0;    /* T5 fills these with the C4 listeners */
+	v[POISE_CA_RESTARTS] = 0;    /* the device-change listeners are not implemented */
 	v[POISE_CA_TAP_ALIVE] = 1;
 	v[POISE_CA_QUIET_FRAMES] = atomic_load(&n->c.quiet_frames);
 	v[POISE_CA_SAW_SIGNAL] = (uint64_t)atomic_load(&n->c.saw_signal);
@@ -1112,7 +1112,7 @@ struct poise_ca *poise_ca_new(const char *output_device, uint32_t frame,
 	printf("poise: aggregate clock master: %s; sub-tap drift compensation read back %u\n",
 	       n->clock_uid[0] ? n->clock_uid : "(not reported)", (unsigned)n->drift_compensation);
 
-	/* C2: 48 kHz (or the requested rate) or refuse - never run the engine at a
+	/* Format contract: 48 kHz (or the requested rate) or refuse - never run the engine at a
 	 * rate other than the one the streams actually carry. */
 	if (!format_acceptable(&n->input_format, &n->requested)) {
 		snprintf(err, errlen,
@@ -1159,7 +1159,7 @@ struct poise_ca *poise_ca_new(const char *output_device, uint32_t frame,
 	/* AudioDeviceStart returns noErr even when the HAL then declines to run the
 	 * IO context, and a denied System Audio Recording grant looks the same; the
 	 * only symptom is that no callback ever arrives. Report that as a failure
-	 * rather than as a silent capture (C2b). */
+	 * rather than as a silent capture (capture health). */
 	for (unsigned waited = 0; waited < STARTUP_CALLBACK_MS; waited += 25) {
 		if (atomic_load(&n->c.callbacks))
 			break;
@@ -1658,7 +1658,7 @@ int main(int argc, char **argv)
 		       (unsigned long long)delay, (double)delay * ms_per_sample,
 		       (unsigned long long)io, (double)io * ms_per_sample,
 		       (double)(delay + io) * ms_per_sample);
-		printf("poise: capture health: saw_signal %llu, quiet frames %llu (C2b)\n",
+		printf("poise: capture health: saw_signal %llu, quiet frames %llu (capture health)\n",
 		       (unsigned long long)st[POISE_CA_SAW_SIGNAL],
 		       (unsigned long long)st[POISE_CA_QUIET_FRAMES]);
 		printf("poise: played: peak %.1f dBFS, rms %.1f dBFS, last-second rms %.1f dBFS\n",

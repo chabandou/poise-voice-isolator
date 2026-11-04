@@ -9,10 +9,10 @@ node_loop runs inference for it on a Python thread — the same shape as
 the WASAPI path on Windows.
 
 The tap cannot be asked to convert: the aggregate's stream format is what
-the IOProc gets (plan C2), so the streams are created at 48 kHz Float32
+the IOProc gets (the format contract), so the streams are created at 48 kHz Float32
 and a device the HAL refuses that for is refused here, by name, instead
 of running the engine at the wrong rate. A missing System Audio
-Recording grant is not an error but a silence (plan C2b), so the tap's
+Recording grant is not an error but a silence (capture health), so the tap's
 own capture health is reported alongside the counters.
 """
 import platform
@@ -45,10 +45,10 @@ from .node_loop import log_core_events, worker_loop
 _logger = get_logger(__name__)
 
 # The values live in constants.py with the rest of the platform groups
-# (PW_*/WIN_*); these are aliases so nothing reads a second source. T5 sizes
-# MAC_MARGIN_SAMPLES from its soak, and that edit must be the one that counts.
+# (PW_*/WIN_*); these are aliases so nothing reads a second source, so a
+# change to MAC_MARGIN_SAMPLES is the one that takes effect.
 MARGIN_ENV = POISE_MAC_MARGIN_MS
-# The rate the node's streams carry (plan C2): 48 kHz, or the device is refused.
+# The rate the node's streams carry (the format contract): 48 kHz, or the device is refused.
 RATE = NODE_RATE
 QUANTUM = MAC_QUANTUM
 MARGIN_SAMPLES = MAC_MARGIN_SAMPLES
@@ -101,8 +101,8 @@ def select_coreaudio_backend(preference: str = "auto") -> Tuple[str, str]:
 
     Raises RuntimeError when it cannot run: macOS has nothing to fall back
     to, and the PortAudio loop would record the default input instead of
-    the system's audio. T7 owns the user-facing wording of the version
-    floor; this is the check behind it.
+    the system's audio. The user-facing wording of the floor lives in
+    backends/platform/macos.py; this is the check behind it.
     """
     value = (preference or "auto").strip().lower()
     if value not in ("auto", "coreaudio"):
@@ -118,7 +118,7 @@ def select_coreaudio_backend(preference: str = "auto") -> Tuple[str, str]:
 # Logging
 # ---------------------------------------------------------------------------
 
-# What the tap is delivering (plan C2b): "no-audio" is not capturing at
+# What the tap is delivering (capture health): "no-audio" is not capturing at
 # all, "silent" is capturing zeros — a denied or stale grant, or a Mac
 # that is quiet.
 def capture_state(stats: Dict[str, int]) -> str:
@@ -132,7 +132,7 @@ def capture_state(stats: Dict[str, int]) -> str:
 
 _CAPTURE_NOTES = {
     "no-audio": "the tap has delivered nothing: the aggregate is not being "
-                "read at all (plan C2b)",
+                "read at all (capture health)",
     "silent": "the tap is delivering silence: a Mac that is quiet, or the "
               "System Audio Recording grant is denied or stale — Settings > "
               "Privacy & Security > Screen & System Audio Recording",
@@ -143,9 +143,9 @@ _CAPTURE_NOTES = {
 def tap_alive(node, stats: Dict[str, int]) -> int:
     """1 while the tap is alive.
 
-    The native counter is C4's (T5's property listeners fill it; today it
-    reads 1), so a node that has stopped itself — the 250 ms watchdog,
-    plan C1 — is not alive whatever it says.
+    The native counter is a placeholder (the device-change listeners that
+    would maintain it do not exist yet; it reads 1), so a node that has
+    stopped itself — the 250 ms watchdog — is not alive whatever it says.
     """
     return int(bool(stats["tap_alive"]) and node.error() is None)
 
@@ -178,7 +178,7 @@ _NODE_EVENTS = (
 
 def _log_events(node, seen: dict, gap_max: float, busy_max: float) -> dict:
     """The core's events (as on PipeWire) plus the device's, and a line
-    when what the tap delivers changes (C2b)."""
+    when what the tap delivers changes (capture health)."""
     st = log_core_events(node, seen, gap_max, busy_max)
     ca = node.node_stats()
     previous = seen.get("node") or {}
@@ -199,7 +199,7 @@ def _log_events(node, seen: dict, gap_max: float, busy_max: float) -> dict:
 # Creating the node
 # ---------------------------------------------------------------------------
 
-# How long an abandoned creation may hold the caller's exit path (C1).
+# How long an abandoned creation may hold the caller's exit path (the mute contract).
 STARTUP_JOIN_SEC = 0.5
 
 
@@ -211,7 +211,7 @@ class _NodeCreation:
     interrupted, so created on the main thread Ctrl-C would not be handled
     until it returned. Here the wait is interrupted within 50 ms, and a
     node that appears after the caller gave up is destroyed at once —
-    destroying the tap is what unmutes the Mac (plan C1).
+    destroying the tap is what unmutes the Mac (the mute contract).
     """
 
     def __init__(self, make: Callable[[], CoreAudioNode]):
@@ -271,7 +271,7 @@ class _NodeCreation:
         Best effort by design: it runs on exit routes, where a raise would
         hide the reason the caller gave up.
 
-        The join matters for C1. poise_ca_new() creates the tap (muting the
+        The join matters for the mute contract. poise_ca_new() creates the tap (muting the
         Mac) *before* it registers the node with the library's atexit net, so a
         Ctrl-C in that window would otherwise leave a muting tap behind with
         nothing able to destroy it: the creation thread is a daemon and the
@@ -332,15 +332,15 @@ def run_coreaudio_loop(processor, output: Optional[str] = None,
     Raises:
         CoreAudioStartError: the node could not be created (nothing ran) —
             including a device that cannot give 48 kHz, with its real rate
-            and its name in the message (plan C2).
+            and its name in the message (the format contract).
         CoreAudioError: the node failed while running (the watchdog
-            reports a device that stopped calling back there, plan C1).
+            reports a device that stopped calling back there, the mute contract).
 
     Returns:
         The processor's final stats.
     """
     # Fixed 48 kHz: the HAL resamples the device, the engine never runs at
-    # another rate (plan C2).
+    # another rate (the format contract).
     processor.setup_resampler(RATE)
     processor.setup_output_resampler(RATE)
     frame = processor.frame_size

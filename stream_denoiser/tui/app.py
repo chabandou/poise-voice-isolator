@@ -191,7 +191,7 @@ class PoiseApp(App):
         Restores original audio sink and removes the virtual null sink.
         On macOS it ends the audio process, whose session destroys the
         Core Audio tap it created: a tap outliving its reader keeps the
-        whole Mac muted (plan C1).
+        whole Mac muted (the mute contract).
         """
         if self._cleanup_done:
             return
@@ -208,7 +208,7 @@ class PoiseApp(App):
             # shutdown() terminates a process that will not go; if even
             # that did not land, the tap may still be muting the Mac.
             # Nothing here can force it, so leave the one line the log and
-            # the doctor check (T9) need.
+            # the doctor check needs.
             logging.getLogger("stream_denoiser").warning(
                 "audio process %s survived shutdown: its Core Audio tap may "
                 "still be muting the Mac until the process exits",
@@ -720,7 +720,7 @@ class PoiseApp(App):
 
         One Core Audio tap carries every app's audio and the result plays to
         one output device, so there is nothing to route and no capture
-        device to name (plan C2b). The device goes to the audio process as
+        device to name (capture health). The device goes to the audio process as
         the name the list showed: the native node matches a name or a UID
         and says so when nothing matches.
         """

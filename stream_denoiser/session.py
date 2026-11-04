@@ -204,7 +204,7 @@ def _run_macos(processor, config: dict, loop: dict,
     from .backends.coreaudio_backend import run_coreaudio_loop
     from .backends.platform.macos import require_core_audio_tap_support
 
-    # A sentence, not a dlopen failure (plan T7's runtime floor).
+    # A sentence, not a dlopen failure.
     require_core_audio_tap_support()
     output = config.get("output_device") or None
     started("coreaudio", None, output)

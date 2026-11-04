@@ -4,7 +4,7 @@
  * native/core/poise_core.c publishes from the realtime audio callback and
  * waits on a worker thread.  Its Windows branch uses a Win32 semaphore and
  * its POSIX branch uses sem_init/sem_post/sem_timedwait, neither of which
- * Darwin has (sem_init -> ENOSYS, no sem_timedwait).  The plan's W1 says an
+ * Darwin has (sem_init -> ENOSYS, no sem_timedwait).  The the Mach-semaphore choice says an
  * __APPLE__ branch should use Mach semaphores instead of a pthread condvar.
  * This probe measures that choice: the same file is built twice, with
  * -DUSE_MACH_SEM or -DUSE_CONDVAR, so the two binaries differ only in the
@@ -59,10 +59,10 @@
 
 /* Frame budget the core runs at: 512 frames at 48 kHz. */
 #define FRAME_PERIOD_NS 10666667u
-/* p2/p4 pass thresholds (plan W1). */
+/* p2/p4 pass thresholds (the wake-mechanism choice). */
 #define POST_P99_BUDGET_US 10.0
 #define POST_MAX_BUDGET_US 50.0
-/* p3 pass thresholds (plan W1). */
+/* p3 pass thresholds (the wake-mechanism choice). */
 #define WAKE_P99_BUDGET_US 200.0
 #define WAKE_MAX_BUDGET_US 1000.0
 
@@ -993,7 +993,7 @@ static int mode_p1(void)
 	}
 	g_window_ns = 0;
 	free(post);
-	printf("  verdict (mach sem, the primitive W1 adopts): %s\n",
+	printf("  verdict (mach sem): %s\n",
 			mach_ok ? "PASS" : "FAIL");
 	return mach_ok ? 0 : 1;
 }

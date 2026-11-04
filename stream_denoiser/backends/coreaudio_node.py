@@ -9,7 +9,7 @@ through the same output device; it never waits on Python. node_loop runs
 inference for it, as for the PipeWire node on Linux and the WASAPI node
 on Windows.
 
-The tap silences the apps it is read from (plan C1), so ``close()`` —
+The tap silences the apps it is read from (the mute contract), so ``close()`` —
 which destroys the tap — is what gives the Mac its audio back.
 ``_destroy_live_nodes`` runs it for a node still alive at exit.
 """
@@ -39,9 +39,9 @@ CA_STAT_NAMES = (
 )
 _SIGNED = {"drift_samples", "time_delta_min", "time_delta_max"}
 
-# The rate the node's streams carry unless asked for another one. Plan C2:
-# the node refuses a device whose aggregate streams it cannot give this
-# rate, so a running node's streams always carry the requested rate.
+# The rate the node's streams carry unless asked for another one: the node
+# refuses a device whose aggregate streams it cannot give this rate, so a
+# running node's streams always carry the requested rate.
 NODE_RATE = 48000
 
 
@@ -134,7 +134,7 @@ def _stats(fn, handle, names) -> Dict[str, int]:
 
 
 # Every live node. A tap that outlives its reader mutes the whole Mac, so
-# an exit route that never reached close() still destroys it (plan C1);
+# an exit route that never reached close() still destroys it (the mute contract);
 # the library registers the same net natively, for exits ctypes cannot see.
 _live = set()
 _live_lock = threading.Lock()
@@ -158,8 +158,8 @@ class CoreAudioNode(CoreOps):
     """Every app's audio -> poise_core -> the output device, live in Core
     Audio.
 
-    Created running, with the tap muting the apps it is read from (plan
-    C1: ``tap_mute``; the shipping value). Until a worker calls
+    Created running, with the tap muting the apps it is read from
+    (``tap_mute``; the shipping value). Until a worker calls
     ``wait_frame`` the output is the unprocessed input, delayed like
     processed audio would be.
     """
@@ -172,7 +172,7 @@ class CoreAudioNode(CoreOps):
         self.frame = int(frame)
         self.engine_latency = int(engine_latency)
         # The rate the streams carry. The native node reads it back from
-        # the aggregate and refuses a device it cannot give it (C2), so
+        # the aggregate and refuses a device it cannot give it (the format contract), so
         # this is the device's rate, not an assumption: it has no getter
         # of its own.
         self.rate = int(rate or NODE_RATE)
@@ -202,9 +202,9 @@ class CoreAudioNode(CoreOps):
 
     def node_stats(self) -> Dict[str, int]:
         """The node's counters: the core's own (copied natively) plus the
-        device side's — overloads, the tap's capture health (C2b), the clock
-        drift and time-stamp deltas (C3) and C4's restarts and tap_alive,
-        which the native side answers with placeholders until T5's property
+        device side's — overloads, the tap's capture health (capture health), the clock
+        drift and time-stamp deltas, and the restarts and tap_alive,
+        which the native side answers with a placeholder until the property
         listeners fill them in."""
         return _stats(self._lib.poise_ca_get_stats, self._handle,
                       CA_STAT_NAMES)
@@ -224,7 +224,7 @@ class CoreAudioNode(CoreOps):
         is dropped here — call it as often as you like. It must not run
         while a worker is parked inside ``wait_frame``: the free path
         destroys the semaphore a parked waiter sits on, so the inference
-        thread has to have returned first (plan C1).
+        thread has to have returned first (the mute contract).
         """
         with _live_lock:
             _live.discard(self)

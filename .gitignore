@@ -19,7 +19,7 @@ desktop.ini
 installer/windows/vbcable/
 # Built by native/poise_pw/Makefile (build-linux.sh runs it)
 stream_denoiser/native/libpoise_pw.so
-# Built by native/poise_coreaudio/Makefile (T4: the Core Audio node)
+# Built by native/poise_coreaudio/Makefile (the macOS Core Audio node)
 stream_denoiser/native/libpoise_coreaudio.dylib
 stream_denoiser/native/libpoise_coreaudio.dylib.dSYM/
 # Built by build-rnnoise-dll.sh linux (build-linux.sh runs it)

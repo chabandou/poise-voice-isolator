@@ -1,5 +1,5 @@
 """The native Core Audio path on macOS: library binding, backend
-selection, the 48 kHz-or-refuse rule, the stat set the plan pins, the
+selection, the 48 kHz-or-refuse rule, the documented stat set, the
 capture-health distinction and the exit routes (fakes; no device, no TCC
 grant and no system audio needed).
 
@@ -165,7 +165,7 @@ def test_node_stats_map_the_native_order_and_read_the_signed_ones():
         (764, 391168, 2)
     assert (st["drift_samples"], st["time_delta_min"]) == (-17, -3)
     assert st["time_delta_max"] == 1180
-    # C4's two counters exist natively (placeholders until T5's listeners).
+    # The two device-change counters exist natively as placeholders.
     assert (st["restarts"], st["tap_alive"]) == (1, 1)
     node.close()
 
@@ -190,7 +190,7 @@ def test_close_destroys_the_tap_once_and_leaves_the_exit_net():
 
 
 def test_the_exit_net_destroys_a_node_nobody_closed():
-    """atexit route (plan C1): a node still alive at exit is destroyed,
+    """atexit route (the mute contract): a node still alive at exit is destroyed,
     which is what unmutes the Mac."""
     lib = _FakeLib()
     node = _node(lib)
@@ -266,7 +266,7 @@ def test_margin_env_override(monkeypatch):
     assert margin() == cb.MARGIN_SAMPLES
 
 
-# --- what the tap delivers (plan C2b) --------------------------------------
+# --- what the tap delivers (capture health) --------------------------------------
 
 def test_capture_state_separates_zeros_from_not_capturing():
     base = dict.fromkeys(cn.CA_STAT_NAMES, 0)
@@ -404,7 +404,7 @@ def _log_lines(logger):
         logger.removeHandler(handler)
 
 
-def test_sync_line_reports_the_device_rate_and_the_plan_s_own_stat_set():
+def test_sync_line_reports_the_device_rate_and_the_documented_stat_set():
     node = _FakeNode()
     # A rate that is not DEFAULT_SAMPLE_RATE: the line must scale its
     # milliseconds by the node's rate, not by the constant.
@@ -491,7 +491,7 @@ def test_a_device_that_cannot_give_48k_is_refused_by_name(monkeypatch):
 def test_a_stop_while_the_prompt_is_up_destroys_the_node(monkeypatch):
     """Ctrl-C during poise_ca_new (the System Audio Recording prompt waits
     for a person) must not leave a tap behind: the node is destroyed as
-    soon as it exists (plan C1)."""
+    soon as it exists (the mute contract)."""
     import threading
 
     stop = threading.Event()
@@ -542,7 +542,7 @@ def test_live_node_delivers_frames_and_stops_cleanly():
     """Real tap: a few frames arrive, then close() unmutes the Mac.
 
     Audio has to be playing: with nothing tapped, the aggregate's IOProc
-    never runs and the native node gives up after 3 s (see T6's note).
+    never runs and the native node gives up after 3 s.
     """
     node = cn.CoreAudioNode(output=None, frame=512, engine_latency=1536,
                             quantum=512, margin=256, fade=64, dry_gain=1.0)

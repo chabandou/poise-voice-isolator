@@ -2,7 +2,7 @@
 
 Measured 2026-11-02 on the port's Apple Silicon host, to decide the primitive that
 replaces `sem_timedwait` in `native/core/poise_core.c` for the Apple branch
-(plan §3 W1). Every number here comes from `native/poise_coreaudio/wakeprobe/wake_probe.c`
+(the Mach-semaphore wake path). Every number here comes from `native/poise_coreaudio/wakeprobe/wake_probe.c`
 (`make -C native/poise_coreaudio/wakeprobe`, then `./run_all.sh`); the complete raw logs
 for both builds are committed as `native/poise_coreaudio/wakeprobe/runs/{mach,condvar}.log`
 (138 lines each, modes p1-p5, every number below is quotable from them).
@@ -122,7 +122,7 @@ The condvar's post blocks for as long as the holder keeps the mutex — 5 posts 
 phase averaged **104 157 µs**, worst **105 049 µs** (the condvar build measures the same
 phase on itself: mean 104 495 µs, worst 105 048 µs). At a 10.667 ms frame period that is
 **~9.8 frames** during which the realtime callback is stuck in user space; the HAL would
-count those as `kAudioDeviceProcessorOverload` (contract C4) and the audio would play dry.
+count those as `kAudioDeviceProcessorOverload` and the audio would play dry.
 The Mach semaphore's numbers do not move at all when the mutex holder runs, because its
 post is a trap that takes no user-space lock.
 
@@ -162,8 +162,8 @@ machinery, which is the failure mode P4 just demonstrated, and `sem_open` +
 
 ## What this does not prove
 
-- It does not measure the core itself: no audio device, no tap, no HAL. P6 in task T5
-  runs the real core and asserts `frames_dry == 0` and `frames_skipped == 0` over a
+- It does not measure the core itself: no audio device, no tap, no HAL. A soak run
+  with the real core asserts `frames_dry == 0` and `frames_skipped == 0` over a
   10-minute soak with a tone playing.
 - The wake latencies are on an idle-to-loaded laptop, not on a thermally throttled one.
 - P4's mutex holder is a synthetic adversary; a real contender (Python holding the GIL,

@@ -52,7 +52,7 @@ def _interrupt_on_termination_signals() -> None:
     KeyboardInterrupt they take the Ctrl+C path instead: the audio loop
     stops and ``process_system_audio_realtime`` restores the routing. On
     macOS the same path destroys the Core Audio tap, which is what unmutes
-    the Mac (backends/coreaudio_backend, plan C1). Repeats are ignored so
+    the Mac (backends/coreaudio_backend, the mute contract). Repeats are ignored so
     a second signal can't cut that cleanup short.
     """
     sigs = [getattr(signal, n) for n in ("SIGTERM", "SIGHUP")
