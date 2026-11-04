@@ -7,7 +7,8 @@ DenoiserAudioProcessor.
 """
 import importlib
 
-from .availability import available_models, model_unavailable_reason
+from .availability import (available_models, model_supported_here,
+                           model_unavailable_reason)
 from ..constants import (
     ALL_MODELS,
     DEFAULT_DF3_ONNX,
@@ -83,6 +84,7 @@ __all__ = [
     "RNNoiseEngine",
     "create_engine",
     "available_models",
+    "model_supported_here",
     "model_unavailable_reason",
     "DEFAULT_DF3_ONNX",
 ]
