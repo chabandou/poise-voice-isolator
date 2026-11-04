@@ -155,17 +155,18 @@ resampler, but a high-band-only residual would be measured as the resampler's.
 ## Commands
 
 ```sh
-# from the repo root
+# from the repo root, with the venv the README sets up active
+# (`python` below means that interpreter)
 
 # the three runs behind sections 2 and 3 (repeat the line for each run)
-.venv/bin/python tools/mac_engine_smoke.py
+python tools/mac_engine_smoke.py
 
 # the other two seeds of the seed table
-.venv/bin/python tools/mac_engine_smoke.py --seed 1
-.venv/bin/python tools/mac_engine_smoke.py --seed 2
+python tools/mac_engine_smoke.py --seed 1
+python tools/mac_engine_smoke.py --seed 2
 
 # longer audio, other warm-up
-.venv/bin/python tools/mac_engine_smoke.py --seconds 60 --warmup-seconds 2
+python tools/mac_engine_smoke.py --seconds 60 --warmup-seconds 2
 ```
 
 Exit code 0 when both engines ran; if one cannot load or run, the tool

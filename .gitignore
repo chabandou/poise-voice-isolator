@@ -13,6 +13,8 @@ stream_denoiser_RT.py
 bash.exe.stackdump
 # Windows VM zero-step shared folder (Z:\poise-voice-isolator is this repo)
 .venv-win/
+# The macOS/Linux venv tools/dev_env.sh creates
+.venv/
 Thumbs.db
 desktop.ini
 # Staged VB-Cable driver setups (build-time download via installer/fetch_vbcable.py)
