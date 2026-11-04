@@ -12,7 +12,7 @@ Covers the known Linux issues programmatically:
 3. Stuck on the Poise_Capture null sink after a crash: restore the real
    default sink and unload our null-sink module (no sudo needed).
 
-And the macOS ones (capture health and audio restoration), where both failure modes are silent:
+And the macOS ones, where both failure modes are silent:
 
 1. A denied or absent System Audio Recording grant: the tap captures
    digital silence, or no IOProc callback arrives at all, and the audio

@@ -190,7 +190,7 @@ def test_close_destroys_the_tap_once_and_leaves_the_exit_net():
 
 
 def test_the_exit_net_destroys_a_node_nobody_closed():
-    """atexit route (the mute contract): a node still alive at exit is destroyed,
+    """atexit route: a node still alive at exit is destroyed,
     which is what unmutes the Mac."""
     lib = _FakeLib()
     node = _node(lib)
@@ -266,7 +266,7 @@ def test_margin_env_override(monkeypatch):
     assert margin() == cb.MARGIN_SAMPLES
 
 
-# --- what the tap delivers (capture health) --------------------------------------
+# --- what the tap delivers -------------------------------------------------
 
 def test_capture_state_separates_zeros_from_not_capturing():
     base = dict.fromkeys(cn.CA_STAT_NAMES, 0)

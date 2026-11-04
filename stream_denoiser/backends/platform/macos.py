@@ -42,7 +42,7 @@ class MacOSUnsupported(RuntimeError):
 # ---------------------------------------------------------------------------
 
 def macos_version() -> str:
-    """The running macOS version as a string ("14.2.1"), or "" if unreadable."""
+    """The running macOS version ("14.2.1"), or "" if unreadable."""
     return platform.mac_ver()[0] or ""
 
 
@@ -101,14 +101,17 @@ def _fourcc(code: str) -> int:
 _SCOPE_GLOBAL = _fourcc("glob")
 _SCOPE_INPUT = _fourcc("inpt")
 _SCOPE_OUTPUT = _fourcc("outp")
-_SELECTOR_DEVICES = _fourcc("dev#")               # kAudioHardwarePropertyDevices
-_SELECTOR_DEFAULT_OUTPUT = _fourcc("dOut")        # kAudioHardwarePropertyDefaultOutputDevice
-_SELECTOR_NAME = _fourcc("lnam")                  # kAudioObjectPropertyName
-_SELECTOR_UID = _fourcc("uid ")                   # kAudioDevicePropertyDeviceUID
-_SELECTOR_TRANSPORT = _fourcc("tran")             # kAudioDevicePropertyTransportType
-_SELECTOR_NOMINAL_RATE = _fourcc("nsrt")          # kAudioDevicePropertyNominalSampleRate
-_SELECTOR_STREAMS = _fourcc("strm")               # kAudioDevicePropertyStreams
-_SELECTOR_STREAM_CONFIG = _fourcc("slay")         # kAudioDevicePropertyStreamConfiguration
+# The four-character codes behind kAudioHardwarePropertyDevices and
+# ...DefaultOutputDevice, kAudioObjectPropertyName, and kAudioDeviceProperty
+# DeviceUID/TransportType/NominalSampleRate/Streams/StreamConfiguration.
+_SELECTOR_DEVICES = _fourcc("dev#")
+_SELECTOR_DEFAULT_OUTPUT = _fourcc("dOut")
+_SELECTOR_NAME = _fourcc("lnam")
+_SELECTOR_UID = _fourcc("uid ")
+_SELECTOR_TRANSPORT = _fourcc("tran")
+_SELECTOR_NOMINAL_RATE = _fourcc("nsrt")
+_SELECTOR_STREAMS = _fourcc("strm")
+_SELECTOR_STREAM_CONFIG = _fourcc("slay")
 
 # The same words native/poise_coreaudio's transport_name() uses for the
 # same hardware, plus the bus types it leaves as four characters, so the
@@ -211,7 +214,8 @@ def _u32(ca, object_id: int, selector: int, scope: int = _SCOPE_GLOBAL) -> int:
     return struct.unpack("<I", raw[:4])[0]
 
 
-def _f64(ca, object_id: int, selector: int, scope: int = _SCOPE_GLOBAL) -> float:
+def _f64(ca, object_id: int, selector: int,
+         scope: int = _SCOPE_GLOBAL) -> float:
     raw = _raw(ca, object_id, selector, scope)
     if not raw or len(raw) < 8:
         return 0.0

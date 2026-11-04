@@ -78,9 +78,9 @@ except Exception:
 # The desktop app's tests need Qt and drive a real event loop, which makes them
 # timing-sensitive on a loaded CI runner (they pump with processEvents() and
 # fixed sleeps). Marking them lets a platform job separate "the backend suite
-# blocks the PR" from "the GUI suite runs and reports", without listing 24
-# files by hand or weakening any assertion. Modules are detected once, by what
-# they import, so a new GUI test file is covered automatically.
+# blocks the PR" from "the GUI suite runs and reports", without a list of
+# files to maintain or a relaxed assertion. Modules are detected by what they
+# import, so a new GUI test file is covered automatically.
 _GUI_IMPORT = ("stream_denoiser.gui", "PyQt6")
 _gui_cache: dict = {}
 

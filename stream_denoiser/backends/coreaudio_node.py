@@ -3,15 +3,14 @@ ctypes binding for libpoise_coreaudio.dylib, Poise's native audio path
 (macOS).
 
 The native side (native/poise_coreaudio/) taps every app's audio with a
-global Core Audio process tap, runs poise_core's fixed-delay exchange
-(delay_core) from the aggregate's IOProc and plays the result back
-through the same output device; it never waits on Python. node_loop runs
-inference for it, as for the PipeWire node on Linux and the WASAPI node
-on Windows.
+global Core Audio process tap, runs poise_core's fixed-delay exchange from
+the aggregate's IOProc and plays the result back through the same output
+device; it never waits on Python. node_loop runs inference for it, as it
+does for the PipeWire and WASAPI nodes.
 
-The tap silences the apps it is read from (the mute contract), so ``close()`` —
-which destroys the tap — is what gives the Mac its audio back.
-``_destroy_live_nodes`` runs it for a node still alive at exit.
+Reading the tap silences the apps it reads (the mute contract), so
+``close()`` — which destroys the tap — is what gives the Mac its audio
+back. ``_destroy_live_nodes`` runs it for a node alive at exit.
 """
 import atexit
 import ctypes
@@ -39,9 +38,8 @@ CA_STAT_NAMES = (
 )
 _SIGNED = {"drift_samples", "time_delta_min", "time_delta_max"}
 
-# The rate the node's streams carry unless asked for another one: the node
-# refuses a device whose aggregate streams it cannot give this rate, so a
-# running node's streams always carry the requested rate.
+# The rate the node's streams carry. A device that cannot be given it is
+# refused, so a running node's streams always carry the requested rate.
 NODE_RATE = 48000
 
 
@@ -133,9 +131,9 @@ def _stats(fn, handle, names) -> Dict[str, int]:
     return out
 
 
-# Every live node. A tap that outlives its reader mutes the whole Mac, so
-# an exit route that never reached close() still destroys it (the mute contract);
-# the library registers the same net natively, for exits ctypes cannot see.
+# Every live node: a tap that outlives its reader mutes the whole Mac, so an
+# exit route that never reached close() still destroys it (the library
+# registers the same net natively, for exits ctypes cannot see).
 _live = set()
 _live_lock = threading.Lock()
 
@@ -171,10 +169,8 @@ class CoreAudioNode(CoreOps):
         self._lib = lib if lib is not None else load_library()
         self.frame = int(frame)
         self.engine_latency = int(engine_latency)
-        # The rate the streams carry. The native node reads it back from
-        # the aggregate and refuses a device it cannot give it (the format contract), so
-        # this is the device's rate, not an assumption: it has no getter
-        # of its own.
+        # The node reads this rate back from the aggregate, so it is the
+        # device's rate, not an assumption.
         self.rate = int(rate or NODE_RATE)
         err = ctypes.create_string_buffer(512)
         self._handle = self._lib.poise_ca_new(
@@ -202,10 +198,9 @@ class CoreAudioNode(CoreOps):
 
     def node_stats(self) -> Dict[str, int]:
         """The node's counters: the core's own (copied natively) plus the
-        device side's — overloads, the tap's capture health (capture health), the clock
-        drift and time-stamp deltas, and the restarts and tap_alive,
-        which the native side answers with a placeholder until the property
-        listeners fill them in."""
+        device side's — overloads, capture health, clock drift, time-stamp
+        deltas, and restarts/tap_alive, which the native side answers with a
+        placeholder until the property listeners fill them in."""
         return _stats(self._lib.poise_ca_get_stats, self._handle,
                       CA_STAT_NAMES)
 
@@ -216,15 +211,12 @@ class CoreAudioNode(CoreOps):
         return None
 
     def close(self) -> None:
-        """Stop the device, destroy the IOProc, the aggregate and the tap
-        (which is what unmutes the Mac).
+        """Destroy the tap, aggregate and IOProc, which unmutes the Mac.
 
-        ``poise_ca_destroy()`` takes the handle once and is not idempotent
-        (the header says so: a second call is a double free), so the handle
-        is dropped here — call it as often as you like. It must not run
-        while a worker is parked inside ``wait_frame``: the free path
-        destroys the semaphore a parked waiter sits on, so the inference
-        thread has to have returned first (the mute contract).
+        ``poise_ca_destroy()`` frees the handle, so it is dropped here and
+        a second call is harmless. The inference thread must have left
+        ``wait_frame`` first: the free path destroys the semaphore a parked
+        waiter sits on.
         """
         with _live_lock:
             _live.discard(self)

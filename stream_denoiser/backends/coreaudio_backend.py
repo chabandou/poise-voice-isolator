@@ -9,11 +9,10 @@ node_loop runs inference for it on a Python thread — the same shape as
 the WASAPI path on Windows.
 
 The tap cannot be asked to convert: the aggregate's stream format is what
-the IOProc gets (the format contract), so the streams are created at 48 kHz Float32
-and a device the HAL refuses that for is refused here, by name, instead
-of running the engine at the wrong rate. A missing System Audio
-Recording grant is not an error but a silence (capture health), so the tap's
-own capture health is reported alongside the counters.
+the IOProc gets, so the streams are created at 48 kHz Float32 and a device
+the HAL refuses that for is refused here, by name (the format contract). A
+missing System Audio Recording grant is not an error but a silence, which
+is what the capture-health counters are for.
 """
 import platform
 import sys
@@ -48,7 +47,7 @@ _logger = get_logger(__name__)
 # (PW_*/WIN_*); these are aliases so nothing reads a second source, so a
 # change to MAC_MARGIN_SAMPLES is the one that takes effect.
 MARGIN_ENV = POISE_MAC_MARGIN_MS
-# The rate the node's streams carry (the format contract): 48 kHz, or the device is refused.
+# The rate the node's streams carry: 48 kHz, or the device is refused.
 RATE = NODE_RATE
 QUANTUM = MAC_QUANTUM
 MARGIN_SAMPLES = MAC_MARGIN_SAMPLES
@@ -199,7 +198,7 @@ def _log_events(node, seen: dict, gap_max: float, busy_max: float) -> dict:
 # Creating the node
 # ---------------------------------------------------------------------------
 
-# How long an abandoned creation may hold the caller's exit path (the mute contract).
+# How long an abandoned creation may hold the caller's exit path.
 STARTUP_JOIN_SEC = 0.5
 
 
@@ -268,16 +267,12 @@ class _NodeCreation:
     def abandon(self) -> None:
         """Destroy the node as soon as it exists (the caller is going away).
 
-        Best effort by design: it runs on exit routes, where a raise would
-        hide the reason the caller gave up.
-
-        The join matters for the mute contract. poise_ca_new() creates the tap (muting the
-        Mac) *before* it registers the node with the library's atexit net, so a
-        Ctrl-C in that window would otherwise leave a muting tap behind with
-        nothing able to destroy it: the creation thread is a daemon and the
-        caller's handle is still None. Waiting briefly lets the common case
-        (a few seconds of startup) close the node before the process exits;
-        when it does not finish, the warning says what the Mac is doing.
+        poise_ca_new() mutes the Mac before it registers the node with the
+        library's atexit net, and the creation thread is a daemon, so a
+        Ctrl-C in that window would leave a muting tap that nothing can
+        destroy. The join below closes it when creation finishes within
+        STARTUP_JOIN_SEC; otherwise the warning says the Mac may stay muted
+        until this process exits.
         """
         with self._lock:
             self._abandoned = True
@@ -315,8 +310,7 @@ def run_coreaudio_loop(processor, output: Optional[str] = None,
     Args:
         processor: Configured DenoiserAudioProcessor (engine already set).
         output: Output device name or UID substring; None = the default
-            output. Bluetooth and AirPlay are accepted as far as the HAL
-            accepts them.
+            output.
         should_stop: threading.Event, callable, or None (until Ctrl+C).
         on_stats: Optional callback(stats, elapsed_sec) every interval.
         stats_interval_sec: Stats callback cadence.
@@ -330,11 +324,11 @@ def run_coreaudio_loop(processor, output: Optional[str] = None,
     and its latency in samples.
 
     Raises:
-        CoreAudioStartError: the node could not be created (nothing ran) —
-            including a device that cannot give 48 kHz, with its real rate
-            and its name in the message (the format contract).
+        CoreAudioStartError: the node could not be created (nothing ran),
+            including a device that cannot give 48 kHz — its real rate and
+            name are in the message.
         CoreAudioError: the node failed while running (the watchdog
-            reports a device that stopped calling back there, the mute contract).
+            reports a device that stopped calling back).
 
     Returns:
         The processor's final stats.
