@@ -183,10 +183,11 @@ jobs:
           python -m pytest tests/test_wasapi_integration.py tests/test_volume_mirror.py             tests/test_vbcable_install.py -v -rs | tee "$RUNNER_TEMP/hardware.log"
           ! grep -q SKIPPED "$RUNNER_TEMP/hardware.log"
 
-  macos-unit:
-    # The Core Audio node (native/poise_coreaudio) and the Python side that
-    # binds it, on the platform they ship on: the macOS counterpart of the
-    # windows job. The runner has no audio device and cannot grant TCC
+  macos:
+    # The suite on macOS, the counterpart of the windows job. It also builds
+    # the Core Audio node (native/poise_coreaudio) first, because unlike the
+    # Windows DLL that library is built rather than committed, and it checks
+    # that the library loads and that the core suites did not silently skip. The runner has no audio device and cannot grant TCC
     # (System Audio Recording), so anything hardware-bound skips: the
     # integration-marked live-tap test needs POISE_COREAUDIO_LIVE=1 plus the
     # grant and an output device, so the tap path can only be exercised on
