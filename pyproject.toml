@@ -80,4 +80,5 @@ stream_denoiser = ["models/*.onnx", "models/*.npz", "tui/*.tcss", "gui/assets/*"
 [tool.pytest.ini_options]
 markers = [
     "integration: needs live audio (a Pulse-compatible server, PipeWire, or VB-Cable on Windows)",
+    "gui: needs Qt (PyQt6) and a Qt event loop; the desktop app's tests",
 ]
