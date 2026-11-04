@@ -462,12 +462,10 @@ static void set_realtime_policy(struct poise_ca *n, uint32_t frames)
 	kern_return_t kr = thread_policy_set(mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
 	                                     (thread_policy_t)&p,
 	                                     THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-	if (kr == KERN_SUCCESS) {
+	if (kr == KERN_SUCCESS)
 		atomic_store(&n->c.rt_policy_set, 1);
-	} else {
-		fprintf(stderr, "poise: thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY): kr=%d\n",
-		        (int)kr);
-	}
+	/* No printf here: this runs on the audio callback, and a failed policy
+	 * shows up as rt_policy 0 in the stats (the CLI prints it). */
 }
 
 /* Capture health: a denied System Audio Recording grant arrives as zeros, never as an
