@@ -155,7 +155,7 @@ resampler, but a high-band-only residual would be measured as the resampler's.
 ## Commands
 
 ```sh
-# from the repo root, with the venv the README sets up active
+# from the repo root, in the environment the README sets up
 # (`python` below means that interpreter)
 
 # the three runs behind sections 2 and 3 (repeat the line for each run)

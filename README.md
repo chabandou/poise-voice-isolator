@@ -80,31 +80,16 @@ terminal UI is the macOS interface, built from source, and no audio driver is re
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
 cd poise-voice-isolator
-tools/dev_env.sh                        # venv, deps, the native node, then the suite
-.venv/bin/poise                         # terminal UI; or .venv/bin/poise-cli
-```
+conda create -n poise python=3.12 && conda activate poise
 
-The conda environment the [Development](#from-source) section describes works just as well:
-`conda create -n poise python=3.12`, then `pip install -e . && make -C native/poise_coreaudio`.
-
-Without conda, use a 3.10-3.12 interpreter (`numpy<2` caps the range). If a version manager pins a
-different default, its shim refuses `python3.12` even when 3.12 is installed: create the venv with the
-interpreter explicitly instead.
-
-```bash
-python3.12 -m venv .venv
-# mise:  mise x python@3.12 -- python -m venv .venv
-# uv:    uv venv --python 3.12 .venv
-# brew:  /opt/homebrew/opt/python@3.12/bin/python3.12 -m venv .venv
-# pyenv: ~/.pyenv/versions/3.12.*/bin/python -m venv .venv
-
-.venv/bin/pip install -e .
+pip install -e .                        # textual for the TUI, numpy, ONNX Runtime
 make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise_coreaudio.dylib
+poise                                   # terminal UI
 ```
 
-`tools/dev_env.sh` does all of the above, and it also repairs a venv whose interpreter has gone away —
-a venv points back at the Python it was made from, so pruning or upgrading that install breaks
-`.venv/bin/poise` with `bad interpreter: ...: no such file or directory`. Run it again.
+Python 3.10-3.12 works; 3.12 is what CI uses (`numpy<2` has no wheels past cp312). Without conda any
+3.10-3.12 environment does: `python3.12 -m venv .venv`, `.venv/bin/pip install -e .`, then the two
+commands above.
 
 Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
 Windows there is nothing to install. The apps it captures are muted while it runs and unmuted when it
