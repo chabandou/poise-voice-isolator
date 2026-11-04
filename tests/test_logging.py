@@ -86,7 +86,10 @@ def test_macos_default_log_chain(monkeypatch, tmp_path):
     files = list(lc._iter_candidate_files(None, None))
     assert files, "the macOS chain yielded no candidate"
     assert files[0] == tmp_path / "Library" / "Logs" / "Poise" / "poise.log"
-    assert any("/tmp/poise-" in str(f) for f in files), files
+    # The fallback is a directory named poise-<user> under the temp root;
+    # compare path parts so Windows separators do not matter here.
+    assert any(any(part.startswith("poise-") for part in f.parts)
+               for f in files), files
 
 
 # Without an explicit path the *default* chain is walked on Linux and macOS
@@ -96,8 +99,20 @@ def test_macos_default_log_chain(monkeypatch, tmp_path):
 _linux_only = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
     reason="XDG//tmp fallback rows are Linux-specific")
+# Windows turns file logging off unless a path is given (logging_config
+# returns None), so the default-chain tests have nothing to walk there --
+# that is the documented behaviour, not a failure.
+_not_windows = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="file logging defaults are off on Windows without an explicit path")
+# The crash log asserts a POSIX fatal-signal exit code (subprocess reports
+# -SIGABRT); Windows reports the abort differently.
+_posix_crash_log = pytest.mark.skipif(
+    not (sys.platform.startswith("linux") or sys.platform == "darwin"),
+    reason="fatal-signal exit codes are POSIX")
 
 
+@_not_windows
 def test_empty_home_still_produces_writable_log(monkeypatch, tmp_path):
     """HOME='' (desktop-file/sudo quirks) must not log under '/.local'."""
     monkeypatch.setenv("HOME", "")
@@ -117,6 +132,7 @@ _skip_as_root = pytest.mark.skipif(
     reason="root ignores directory permissions (e.g. CI containers)")
 
 
+@_not_windows
 @_skip_as_root
 def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     """Read-only home with no XDG set -> per-user /tmp dir, never None."""
@@ -324,6 +340,7 @@ def _run_crashing_child(code: str):
     )
 
 
+@_posix_crash_log
 def test_crash_traceback_records_python_stack_on_abort(tmp_path):
     """A native abort (e.g. glibc heap-corruption) leaves every thread's
     Python stack in poise-crash.log, next to poise.log."""
