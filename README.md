@@ -84,8 +84,11 @@ tools/dev_env.sh                        # venv, deps, the native node, then the 
 .venv/bin/poise                         # terminal UI; or .venv/bin/poise-cli
 ```
 
-By hand, with a 3.10-3.12 interpreter (`numpy<2` caps the range). If a version manager pins a different
-default, its shim refuses `python3.12` even when 3.12 is installed: create the venv with the
+The conda environment the [Development](#from-source) section describes works just as well:
+`conda create -n poise python=3.12`, then `pip install -e . && make -C native/poise_coreaudio`.
+
+Without conda, use a 3.10-3.12 interpreter (`numpy<2` caps the range). If a version manager pins a
+different default, its shim refuses `python3.12` even when 3.12 is installed: create the venv with the
 interpreter explicitly instead.
 
 ```bash
