@@ -168,9 +168,10 @@ Both rewrite scripts rebuild their file from the original (checked by SHA-256) a
 | **Linux · PipeWire** *(default)* | A **Poise Voice Isolator** sink becomes the default; a native node inside PipeWire's graph processes each cycle and hands it to your speakers | ~76 ms |
 | **Linux · Pulse** *(fallback)* | A `Poise_Capture` null sink becomes the default; Poise records its monitor and plays to your speakers | varies |
 | **Windows** | **CABLE Input** becomes the default; a native WASAPI path on an MMCSS thread carries **CABLE Output** to your speakers | ~190 ms |
+| **macOS** | Nothing becomes the default: a **Core Audio process tap** reads every app's audio and a private aggregate device plays the isolated speech to your output device — no virtual driver | ~84 ms |
 
 > [!NOTE]
-> A frame that misses its deadline plays **unprocessed** rather than late, so audio never drifts behind the video (the log counts these as `dry`). Your original default device comes back on exit, and if Poise is killed, its PipeWire sink disappears with it. On Windows, Poise mirrors CABLE Input's volume onto your real device, so volume keys and mute keep working.
+> A frame that misses its deadline plays **unprocessed** rather than late, so audio never drifts behind the video (the log counts these as `dry`). Your original default device comes back on exit, and if Poise is killed, its PipeWire sink disappears with it. On Windows, Poise mirrors CABLE Input's volume onto your real device, so volume keys and mute keep working. On macOS, a tap mutes the apps it reads only while it is alive, so exiting Poise there is what unmutes them.
 
 ## Troubleshooting
 
@@ -237,6 +238,7 @@ Each frame gets a fixed deadline; a frame that misses it plays unprocessed. The 
 
 ```bash
 POISE_PW_MARGIN_MS=30 poise      # Linux, default 21
+POISE_MAC_MARGIN_MS=3 poise      # macOS, default 5.3 (256 samples)
 ```
 
 On Windows, set `POISE_WIN_MARGIN_MS` as a user environment variable and restart Poise.
@@ -344,7 +346,7 @@ stream_denoiser/
 ├── backend_detection.py     # Backend availability checks
 ├── device_utils.py          # Audio device utilities
 ├── platform_utils.py        # Platform detection
-├── health.py                # Startup health checks and audio recovery (Linux)
+├── health.py                # Startup health checks and audio recovery (Linux, macOS)
 ├── updates.py               # In-app updates (Windows installs)
 ├── constants.py             # Global configuration
 ├── logging_config.py        # Logging configuration
