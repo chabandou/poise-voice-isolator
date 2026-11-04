@@ -74,8 +74,8 @@ Download **`Poise_Setup.exe`** from the [latest release](https://github.com/chab
 
 ### macOS
 
-macOS 14.2 or newer, Apple silicon. There is no packaged build yet: build it from source, no audio
-driver required.
+macOS 14.2 or newer, Apple silicon. There is no packaged build and no desktop app on macOS yet: the
+terminal UI is the macOS interface, built from source, and no audio driver is required.
 
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
