@@ -4,4 +4,4 @@ sounddevice>=0.4.6; sys_platform == 'win32'
 samplerate>=0.1.0
 PyQt6>=6.5.0
 pulsectl>=24.0.0; sys_platform == 'linux'
-textual>=8.2.8; sys_platform == 'linux'
+textual>=8.2.8; sys_platform == 'linux' or sys_platform == 'darwin'

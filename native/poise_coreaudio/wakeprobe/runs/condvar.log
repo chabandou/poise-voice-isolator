@@ -1,0 +1,138 @@
+=== condvar p1 ===
+wake_probe: build=condvar  post path takes a user mutex: yes
+  kern.osproductversion 27.0.1
+  hw.model       Mac14,9
+  machdep.cpu.brand_string Apple M2 Pro
+  cpus           10
+  timebase       numer=125 denom=3
+
+P1 no lost wakeup
+  table A: 1000 posts with no waiter at all, then the consumer drains (timeout 5 ms)
+  engine                           posted   consumed    verdict
+  mach sem                           1000       1000         ok
+  condvar, post takes mutex          1000       1000         ok
+  condvar, post no mutex             1000       1000         ok
+  table A cannot tell the two condvar variants apart: the counter survives either way,
+  because nothing runs concurrently here and the signal is not needed to keep the count.
+
+  table B: the natural rate.  150 bursts of 10 posts every 200000 ns, 2 ms of silence
+  between bursts, waiter timeout 20 ms, waiter does a pseudo-random 0-200 us of work
+  between waits so the phases drift.  latency = wake - max(post, wait start), so the
+  waiter's own work is not charged to the primitive; late = 100 us or more.
+  engine                            wakes timeouts     late  waited ms  delivery latency
+  mach sem                           1500        0       12      549.4  p50     8.6 p99     73.2 max    7738.5 us
+  condvar, post takes mutex          1500        0       24      543.9  p50     9.0 p99    197.1 max    1754.8 us
+  condvar, post no mutex             1496        0       37      522.9  p50     7.8 p99    620.5 max    4024.3 us
+  the mach and mutex rows are the noise floor of this metric on this machine (OS
+  scheduling of a default-QoS waiter), so at the natural window width no lost wake
+  was observed for any engine: the mechanism is below table C's resolution.
+
+  table C: the window, hit by construction.  The waiter's check-then-block window is
+  widened to 50000 ns in every engine and flagged, so the publisher posts inside it -
+  exactly the situation a realtime callback reaches by chance.  50 iterations, a
+  fresh instance each time, waiter timeout 20 ms.  lost = the waiter paid the whole
+  timeout; reached = iterations in which the publisher really did post inside the
+  window (the rest are excluded: the publisher was descheduled past it); post = how
+  long the post itself took inside the window.
+  engine                             lost  reached  post max  verdict
+  mach sem                              0       49    4.916 us  ok
+  condvar, post takes mutex             0       50   98.708 us  ok
+  condvar, post no mutex               49       49    0.833 us  LOST WAKES
+  verdict (mach sem, the primitive W1 adopts): PASS
+exit=0
+=== condvar p2 ===
+wake_probe: build=condvar  post path takes a user mutex: yes
+  kern.osproductversion 27.0.1
+  hw.model       Mac14,9
+  machdep.cpu.brand_string Apple M2 Pro
+  cpus           10
+  timebase       numer=125 denom=3
+
+P2 publish latency: 200000 posts, no waiter, on a THREAD_TIME_CONSTRAINT_POLICY thread
+  build=condvar, post takes a user mutex: yes
+  nothing drains while the posts are timed, so the count climbs to 200000 and the instance
+  is destroyed after: deliberate, a mach semaphore counts and signal cannot fail,
+  which is exactly why this is a latency test and not a correctness test (that is p1).
+  thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY): (os/kern) successful (0)
+  readback: (os/kern) successful (0) period=256000 computation=12000 constraint=24000 ticks (10.667/0.500/1.000 ms)
+  pass criteria: p99 < 10.0 us and max < 50.0 us
+  condvar, post takes mutex          p50     0.041  p99     0.041  max     5.166 us  (n=200000)  PASS
+  verdict: PASS
+exit=0
+=== condvar p3 ===
+wake_probe: build=condvar  post path takes a user mutex: yes
+  kern.osproductversion 27.0.1
+  hw.model       Mac14,9
+  machdep.cpu.brand_string Apple M2 Pro
+  cpus           10
+  timebase       numer=125 denom=3
+
+P3 wake latency: signal -> return from the wait, 20000 iterations, waiter at QOS_CLASS_DEFAULT
+  the publisher sleeps 100 us after the waiter announces, so the waiter is blocked before the post
+  pass criteria: p99 < 200.0 us and max < 1000.0 us
+  mach sem                           p50     6.000  p99    21.833  max   362.125 us  (n=20000)  PASS
+  condvar, post takes mutex          p50     5.000  p99    22.875  max   899.958 us  (n=20000)  PASS
+  verdict (mach sem): PASS
+exit=0
+=== condvar p4 ===
+wake_probe: build=condvar  post path takes a user mutex: yes
+  kern.osproductversion 27.0.1
+  hw.model       Mac14,9
+  machdep.cpu.brand_string Apple M2 Pro
+  cpus           10
+  timebase       numer=125 denom=3
+
+P4 publish latency under load: 10 CPU hogs (one per core) and a normal-priority
+  thread holding the post mutex for 100 ms at a time (100 ms gap)
+  pass criteria (as p2): p99 < 10.0 us and max < 50.0 us; the frame period is 10666.667 us
+  both engines are measured in this one process, under the same load
+  thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY): (os/kern) successful (0)
+  readback: (os/kern) successful (0) period=256000 computation=12000 constraint=24000 ticks (10.667/0.500/1.000 ms)
+  mach sem: post takes a user mutex: no
+  hogs only                          p50     0.125  p99     0.166  max     2.041 us  (n=20000)  PASS
+  hogs + 100 ms mutex holder         p50     0.291  p99     0.791  max     0.791 us  (n=200)  PASS
+    post while the mutex is held:  5 posts, mean 1.099 us, worst 3.791 us
+    blocker held the mutex 10 times in that phase
+  condvar, post takes mutex: post takes a user mutex: yes
+  hogs only                          p50     0.041  p99     0.041  max     0.166 us  (n=20000)  PASS
+  hogs + 100 ms mutex holder         p50     0.000  p99 107172.875  max 159481.041 us  (n=200)  FAIL
+    post while the mutex is held:  5 posts, mean 104494.875 us, worst 105048.208 us
+    blocker held the mutex 11 times in that phase
+  verdict (mach sem): PASS
+exit=0
+=== condvar p5 ===
+wake_probe: build=condvar  post path takes a user mutex: yes
+  kern.osproductversion 27.0.1
+  hw.model       Mac14,9
+  machdep.cpu.brand_string Apple M2 Pro
+  cpus           10
+  timebase       numer=125 denom=3
+
+P5 semantics
+  --- mach sem (post takes a user mutex: no)
+    (i)  100 ms wait, no signal: rc=-1 elapsed 105.005 ms -> PASS
+    (ii)     0 ms -> sec=0 nsec=0
+    (ii)     1 ms -> sec=0 nsec=1000000
+    (ii)   999 ms -> sec=0 nsec=999000000
+    (ii)  1000 ms -> sec=1 nsec=0
+    (ii)  1500 ms -> sec=1 nsec=500000000
+    (ii)  2500 ms -> sec=2 nsec=500000000
+    (ii) 1500 ms wait, no signal: rc=-1 elapsed 1505.023 ms -> PASS
+    (ii) clamping -> PASS
+    (iii) 100 create/post-5/destroy cycles, no waiter -> PASS
+    (iv) waiter blocked for 5000 ms, then a stop-style post: rc=0 in 0.015 ms -> PASS
+    (v)  thread_abort during the wait: aborts retried=1, then a post returned rc=0 in 0.024 ms -> PASS
+  --- condvar, post takes mutex (post takes a user mutex: yes)
+    (i)  100 ms wait, no signal: rc=-1 elapsed 100.247 ms -> PASS
+    (ii)     0 ms -> sec=0 nsec=0
+    (ii)     1 ms -> sec=0 nsec=1000000
+    (ii)   999 ms -> sec=0 nsec=999000000
+    (ii)  1000 ms -> sec=1 nsec=0
+    (ii)  1500 ms -> sec=1 nsec=500000000
+    (ii)  2500 ms -> sec=2 nsec=500000000
+    (ii) 1500 ms wait, no signal: rc=-1 elapsed 1501.063 ms -> PASS
+    (ii) clamping -> PASS
+    (iii) 100 create/post-5/destroy cycles, no waiter -> PASS
+    (iv) waiter blocked for 5000 ms, then a stop-style post: rc=0 in 0.022 ms -> PASS
+  verdict (mach sem): PASS
+exit=0

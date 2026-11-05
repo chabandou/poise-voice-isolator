@@ -4,11 +4,13 @@ Audio Device Utilities
 Windows: CABLE Output as a regular WASAPI capture device via sounddevice
     (integer IDs).
 Linux: PulseAudio/PipeWire via names (source/sink strings, pulse-simple).
+macOS: Core Audio devices by name or UID (backends.platform.macos); the tap
+    is not a device, so there is no capture device to pick.
 """
 from typing import Optional, List, Dict, Any, Tuple, Union
 
 from .backend_detection import USE_SOUNDDEVICE, sd
-from .platform_utils import is_windows, is_linux, is_acceptable_host_api
+from .platform_utils import is_windows, is_linux, is_macos, is_acceptable_host_api
 from .logging_config import get_logger
 
 _logger = get_logger(__name__)
@@ -46,6 +48,18 @@ def list_audio_devices() -> List[Dict[str, Any]]:
             return devices
         except Exception:
             return []
+    if is_macos():
+        # macOS: nothing to capture from, so the list is the output devices
+        # --sink can name (see --list-devices).
+        from .backends.platform.macos import list_core_audio_devices
+        return [{
+            'name': d.name,
+            'description': d.uid,
+            'max_input_channels': d.input_channels,
+            'max_output_channels': d.output_channels,
+            'default_samplerate': d.nominal_rate,
+            'hostapi': 'Core Audio',
+        } for d in list_core_audio_devices()]
     if USE_SOUNDDEVICE:
         devices = sd.query_devices()
         return devices
@@ -148,6 +162,13 @@ def find_loopback_device(device_id: Optional[int] = None) -> Optional[Union[int,
             _logger.debug("Linux platform module not available")
         return None
 
+    if is_macos():
+        # Nothing to find: the tap carries every app's audio, so there is no
+        # loopback device on macOS to open instead.
+        raise ValueError(
+            "macOS needs no loopback device: Poise taps all system audio "
+            "(see --list-devices for the output devices --sink can name).")
+
     # Fallback to sounddevice
     if not USE_SOUNDDEVICE:
         raise RuntimeError("Loopback device detection requires sounddevice")
@@ -226,6 +247,26 @@ def get_output_device_id(output_device: Optional[Union[int, str]], devices: List
             raise
         except Exception as e:
             raise ValueError(f"Could not resolve output sink: {e}")
+
+    if is_macos():
+        # A Core Audio device by name or UID; the native node is given the
+        # UID, which is unique and what it matches on.
+        from .backends.platform.macos import (
+            default_output_device, resolve_output_device)
+        if output_device is not None:
+            if not isinstance(output_device, str):
+                raise ValueError(
+                    f"Numeric --output-device {output_device} is not "
+                    "supported on macOS (Core Audio names its devices). "
+                    "Use --sink <name or uid> instead (see "
+                    "--list-devices).")
+            return resolve_output_device(output_device)
+        default = default_output_device()
+        if default is None:
+            raise ValueError("No Core Audio output device found")
+        _logger.info(f"Using default output device: {default.name} "
+                     f"({default.uid}, {default.nominal_rate} Hz)")
+        return default.uid
 
     if not USE_SOUNDDEVICE:
         raise RuntimeError("Output device selection requires sounddevice")

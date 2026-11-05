@@ -1,5 +1,5 @@
 """
-Startup Health Checks and Audio Recovery (Linux)
+Startup Health Checks and Audio Recovery (Linux, macOS)
 
 Covers the known Linux issues programmatically:
 
@@ -12,19 +12,33 @@ Covers the known Linux issues programmatically:
 3. Stuck on the Poise_Capture null sink after a crash: restore the real
    default sink and unload our null-sink module (no sudo needed).
 
+And the macOS ones, where both failure modes are silent:
+
+1. A denied or absent System Audio Recording grant: the tap captures
+   digital silence, or no IOProc callback arrives at all, and the audio
+   API reports no error. The doctor opens the tap for a second and
+   compares what it captured with whether the output device was playing.
+2. A tap that outlived the process that owned it: it keeps the apps it
+   read muted, so the whole Mac is silent. The doctor lists the HAL
+   devices and says whether a Poise aggregate is still registered.
+
 All third-party imports are lazy so `--doctor` works on minimal installs.
 """
 import glob
 import os
+import platform
 import shutil
 import struct
 import subprocess
 import sys
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .constants import PW_NODE_NAME
-from .logging_config import get_logger
+from .logging_config import get_log_file_path, get_logger
 
 _logger = get_logger(__name__)
 
@@ -309,10 +323,14 @@ def reset_audio() -> Tuple[bool, str]:
     """
     Restore a real default sink and unload our null-sink module(s).
 
-    Replaces the README's manual pactl steps. Returns (success, message).
+    Replaces the README's manual pactl steps on Linux; macOS has nothing a
+    second process can reset (see _reset_macos_audio). Returns
+    (success, message).
     """
+    if sys.platform == "darwin":
+        return _reset_macos_audio()
     if not sys.platform.startswith("linux"):
-        return False, "Audio reset is only supported on Linux."
+        return False, "Audio reset is only supported on Linux and macOS."
     if not _pactl_available():
         return False, (
             "pactl not found — install it (Arch: sudo pacman -S libpulse, "
@@ -374,11 +392,474 @@ def reset_audio() -> Tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# macOS: the Core Audio tap (the mute contract and capture health)
+# ---------------------------------------------------------------------------
+
+# How long the capture probe listens, and how long --doctor lets it.
+# poise_ca_new waits for the permission prompt (up to 3 minutes), so the probe
+# runs on a thread that the report does not wait for indefinitely.
+PROBE_SECONDS = 1.0
+PROBE_TIMEOUT_SEC = 8.0
+
+
+@dataclass
+class _OutputState:
+    """The default output device: its name, and whether it is playing."""
+
+    name: str
+    playing: Optional[bool]
+
+
+def _grant_fix() -> str:
+    """What a denied, stale or absent capture grant needs.
+
+    Measured on macOS 27: the toggle is in the pane's "System Audio Recording
+    Only" section, and the grant is keyed to the code identity of the app
+    that creates the tap — so a shell run answers under the terminal's
+    identity, and a rebuild can invalidate a switch that reads ON.
+    """
+    return (
+        "Open System Settings > Privacy & Security >\n"
+        "Screen & System Audio Recording, and switch the app that runs\n"
+        "Poise on in its \"System Audio Recording Only\" section. The grant\n"
+        "belongs to that app: started from a shell, Poise runs under your\n"
+        "terminal's identity (Terminal, iTerm, Ghostty, ...), so the\n"
+        "terminal is what has to be listed. A switch that already reads ON\n"
+        "can be stale, which is why re-arming it is the reliable sequence:\n"
+        "  tccutil reset AudioCapture <bundle-id>   (no id: every app)\n"
+        "then start Poise again and click Allow, not \"Allow once\".")
+
+
+def _flush_c_streams() -> None:
+    """Flush the C library's stdout buffer.
+
+    The native node prints with printf, whose buffer is not Python's: it
+    would otherwise be flushed later, after fd 1 points at the terminal
+    again (i.e. out of order).
+    """
+    try:
+        import ctypes
+
+        ctypes.CDLL(None).fflush(None)
+    except Exception:
+        pass
+
+
+@contextmanager
+def _captured_stdio() -> Iterator[Optional[str]]:
+    """Point fds 1 and 2 at a temp file for the duration; yields its path.
+
+    ``poise_ca_new`` prints the device, the stream formats and the tap with
+    printf, and reports advisory OSStatus values on stderr. Worth keeping
+    (they go into the log), but not in the middle of --doctor's report.
+    Yields None when this process's streams cannot be redirected (a captured
+    stream under pytest, say); the probe then runs with that output where it
+    would have gone anyway.
+    """
+    try:
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="poise-doctor-", suffix=".txt")
+    except OSError:
+        yield None
+        return
+    saved = {}
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        for target in (1, 2):
+            saved[target] = os.dup(target)
+            os.dup2(fd, target)
+    except OSError as e:
+        _logger.debug("doctor: streams not redirected: %r", e)
+        for target, copy in saved.items():
+            try:
+                os.dup2(copy, target)
+                os.close(copy)
+            except OSError:
+                pass
+        saved = {}
+    finally:
+        os.close(fd)
+    try:
+        yield path
+    finally:
+        if saved:
+            _flush_c_streams()
+            for stream in (sys.stdout, sys.stderr):
+                try:
+                    stream.flush()
+                except Exception:
+                    pass
+            for target, copy in saved.items():
+                try:
+                    os.dup2(copy, target)
+                finally:
+                    os.close(copy)
+
+
+def _log_captured_output(path: Optional[str]) -> None:
+    """Log (and remove) what the native node printed during the probe."""
+    if not path:
+        return
+    text = ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read().strip()
+    except OSError:
+        pass
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    if text:
+        _logger.info("doctor: the tap node's startup output:\n%s", text)
+
+
+# kAudioDevicePropertyDeviceIsRunningSomewhere: 1 while any process runs the
+# device, i.e. while something is being played.
+_RUNNING_SOMEWHERE = int.from_bytes(b"gone", "big")
+
+
+def _default_output_state() -> _OutputState:
+    """The default output device's name and whether it is playing.
+
+    ``playing`` is None when the HAL cannot be asked. The HAL binding is
+    backends/platform/macos.py's (the same one --list-devices uses); this
+    adds only the running-somewhere property, which the doctor needs to tell
+    "a quiet Mac" from "capturing zeros while sound is playing".
+    """
+    from .backends.platform import macos as hal
+
+    try:
+        device = hal.default_output_device()
+        if device is None:
+            return _OutputState("the output device", None)
+        ca, _cf = hal._core_audio()
+        playing = bool(hal._u32(ca, device.id, _RUNNING_SOMEWHERE))
+        return _OutputState(f'"{device.name}"', playing)
+    except Exception as e:
+        _logger.debug("doctor: cannot read the output device state: %r", e)
+        return _OutputState("the output device", None)
+
+
+def _probe_node(result: Dict[str, Any]) -> None:
+    """Open the tap unmuted and silent for PROBE_SECONDS, then close it.
+
+    Unmuted (``tap_mute=False``) because --doctor must not mute the Mac, and
+    the playback leg at zero gain so the probe does not duplicate what is
+    playing by the fixed delay. The node is closed on every route here: the
+    tap only lives while a process holds it (the mute contract).
+    """
+    from .backends.coreaudio_node import NODE_RATE, CoreAudioNode
+    from .constants import (DEFAULT_FRAME_SIZE, MAC_FADE_SAMPLES,
+                            MAC_MARGIN_SAMPLES, MAC_QUANTUM)
+
+    node = None
+    try:
+        node = CoreAudioNode(output=None, frame=DEFAULT_FRAME_SIZE,
+                             engine_latency=0, quantum=MAC_QUANTUM,
+                             margin=MAC_MARGIN_SAMPLES,
+                             fade=MAC_FADE_SAMPLES, dry_gain=0.0,
+                             rate=NODE_RATE, tap_mute=False)
+        time.sleep(PROBE_SECONDS)
+        result["stats"] = node.node_stats()
+        result["error"] = node.error()
+    except BaseException as e:  # noqa: BLE001 - reported by check_macos_capture
+        result["error"] = str(e) or type(e).__name__
+    finally:
+        if node is not None:
+            try:
+                node.close()
+            except Exception:
+                _logger.debug("doctor: closing the probe node failed",
+                              exc_info=True)
+
+
+def check_macos_version() -> CheckResult:
+    """The running macOS against the 14.2 floor Core Audio taps need."""
+    from .backends.platform.macos import (CORE_AUDIO_TAP_FLOOR,
+                                          MacOSUnsupported, macos_version,
+                                          require_core_audio_tap_support)
+
+    floor = f"{CORE_AUDIO_TAP_FLOOR[0]}.{CORE_AUDIO_TAP_FLOOR[1]}"
+    version = macos_version()
+    try:
+        require_core_audio_tap_support()
+    except MacOSUnsupported as e:
+        return CheckResult(
+            name="macOS", ok=False, detail=str(e),
+            fix=("Core Audio process taps arrived in macOS " + floor +
+                 "; there is no other audio path on macOS."))
+    machine = platform.machine()
+    if machine != "arm64":
+        return CheckResult(
+            name="macOS", ok=False,
+            detail=(f"macOS {version} on {machine}: Poise's macOS audio path "
+                    "is Apple Silicon only (the engines ship arm64 macOS "
+                    "wheels)."),
+            fix="Run Poise on an Apple Silicon Mac (Intel Macs are untested "
+                "and out of scope for this backend).")
+    return CheckResult(
+        name="macOS", ok=True,
+        detail=(f"{version} ({machine}) — Core Audio process taps need "
+                f"{floor} or newer"))
+
+
+def check_core_audio_node() -> CheckResult:
+    """Whether the native tap library is there and loads."""
+    from .backends.coreaudio_node import (LIB_NAME, CoreAudioUnavailable,
+                                          _candidate_paths, load_library)
+
+    build = ("Build it: make -C native/poise_coreaudio\n"
+             f"  (writes stream_denoiser/native/{LIB_NAME}; needs the Xcode "
+             "command line tools)")
+    try:
+        load_library()
+    except CoreAudioUnavailable as e:
+        return CheckResult(name="core-audio-node", ok=False,
+                           detail=f"the native tap library is not usable: {e}",
+                           fix=build)
+    found = [p for p in _candidate_paths() if os.path.exists(p)]
+    return CheckResult(
+        name="core-audio-node", ok=True,
+        detail=f"{LIB_NAME} loads ({found[0] if found else 'from the package'})")
+
+
+# The one native error that is ambiguous: AudioDeviceStart succeeds and no
+# IOProc callback ever arrives. A denied grant looks like this, and so does an
+# output device that nothing is playing through (the HAL then has no reason to
+# run the aggregate). The doctor needs the output device's own state to tell
+# the two apart (poise_ca_new's wording is native/poise_coreaudio, frozen).
+_NO_CALLBACK_HINT = "no IOProc callback arrived"
+
+
+def check_macos_capture() -> CheckResult:
+    """What the tap is delivering right now (capture health).
+
+    Three answers matter, and only the first is good news: the tap is
+    delivering sound; it is capturing zeros while the output device is
+    playing (a denied or stale System Audio Recording grant); or no IOProc
+    callback arrives at all (the same grant, seen from the other side — the
+    native node refuses to report that as a working capture). An idle Mac
+    produces the last two symptoms as well, so the output device is asked
+    whether it was playing anything before the answer is called a failure.
+    """
+    from .backends.coreaudio_backend import capture_state
+
+    output = _default_output_state()
+    result: Dict[str, Any] = {}
+    thread = threading.Thread(target=_probe_node, args=(result,),
+                              name="poise-doctor-probe", daemon=True)
+    with _captured_stdio() as captured:
+        thread.start()
+        thread.join(PROBE_TIMEOUT_SEC)
+    _log_captured_output(captured)
+
+    if thread.is_alive():
+        return CheckResult(
+            name="capture", ok=False,
+            detail=(f"the tap did not finish opening within "
+                    f"{PROBE_TIMEOUT_SEC:.0f} s. The native node waits for the "
+                    "System Audio Recording prompt (up to 3 minutes), so an "
+                    "unanswered permission request looks exactly like this."),
+            fix=_grant_fix())
+
+    stats = result.get("stats")
+    if not stats:
+        error = str(result.get("error") or "unknown error")
+        if _NO_CALLBACK_HINT in error:
+            if output.playing:
+                return CheckResult(
+                    name="capture", ok=False,
+                    detail=(f"no IOProc callback arrived while {output.name} "
+                            "was playing. The aggregate starts and the HAL "
+                            "never runs it: a denied or stale System Audio "
+                            "Recording grant looks exactly like this and "
+                            "raises no error"),
+                    fix=_grant_fix())
+            return CheckResult(
+                name="capture", ok=True,
+                detail=(f"no IOProc callback arrived, and nothing was playing "
+                        f"through {output.name}: the HAL does not run the "
+                        "aggregate for a silent Mac, so this says nothing "
+                        "about the grant yet. Play something (music, a "
+                        "video) and run --doctor again"),
+                fix=("Sound on the tap next time means the grant is fine.\n" +
+                     _grant_fix()))
+        return CheckResult(
+            name="capture", ok=False,
+            detail=f"the tap could not be opened: {error}",
+            fix=_grant_fix())
+
+    state = capture_state(stats)
+    frames = stats["input_frames"]
+    if state == "signal":
+        return CheckResult(
+            name="capture", ok=True,
+            detail=(f"the tap is delivering sound: {frames} frames in "
+                    f"{PROBE_SECONDS:.0f} s, {stats['quiet_frames']} of them "
+                    "below the silence floor (saw_signal=1)"))
+
+    heard = ("no audio frames at all" if state == "no-audio"
+             else f"{frames} frames, every one below the silence floor")
+    # Silence on the tap has two indistinguishable causes, and the HAL cannot
+    # separate them: kAudioDevicePropertyDeviceIsRunningSomewhere is true
+    # whenever any client holds the device open, so it reads "playing" on a
+    # quiet Mac too (measured: True with nothing playing). Blaming the grant
+    # on that signal would send a user to Settings for no reason, and
+    # clearing the grant as healthy would hide the failure this check exists
+    # for. So name both causes and let the reader decide, and only claim
+    # "ok" when there is positive evidence that the tap works.
+    return CheckResult(
+        name="capture", ok=False,
+        detail=(f"the tap delivered silence ({heard}) with {output.name} "
+                + ("open by some client" if output.playing
+                   else "not reported as playing")
+                + ": either nothing was playing, or the System Audio "
+                "Recording grant is denied or stale. A denial raises no "
+                "error at all"),
+        fix=("Play something (music, a video) and run --doctor again.\n"
+             "If the tap is still silent while it plays, the grant is the "
+             "cause:\n" + _grant_fix()))
+
+
+def check_macos_taps() -> CheckResult:
+    """Whether a Poise tap or aggregate is still registered in the HAL.
+
+    A tap whose owner died keeps the apps it read muted, so the whole Mac
+    stays silent until the audio daemon drops it.
+    """
+    from .backends.platform.macos import list_core_audio_devices
+
+    try:
+        devices = list_core_audio_devices()
+    except Exception as e:
+        return CheckResult(
+            name="tap/aggregate", ok=False,
+            detail=f"cannot enumerate the Core Audio devices: {e}")
+    strays = [d for d in devices
+              if d.name.startswith("Poise") or d.uid.startswith("dev.poise.")]
+    recovery = (
+        "Quit Poise: its exit routes destroy the tap, which is what unmutes "
+        "the Mac.\n"
+        "If no Poise is running and the Mac is still silent, restart the "
+        "audio daemon:\n"
+        "  sudo killall coreaudiod\n"
+        "(it starts again at once; every stale tap and aggregate goes with "
+        "it and audio comes back)")
+    if strays:
+        listed = ", ".join(f'{d.name} ({d.uid})' for d in strays)
+        return CheckResult(
+            name="tap/aggregate", ok=False,
+            detail=(f"a Poise aggregate is still registered: {listed}. Its "
+                    "owner is running (normal while Poise runs) or died "
+                    "without destroying it (the Mac stays muted then)"),
+            fix=recovery)
+    return CheckResult(
+        name="tap/aggregate", ok=True,
+        detail=("no Poise tap or aggregate is registered, so nothing of "
+                "Poise's is left in the HAL. (A private aggregate is listed "
+                "only for the process that owns it, so a tap leaked by a "
+                "dead process shows up as a silent Mac, not as a device "
+                "here.)\n"
+                "If the Mac is silent with no Poise running: sudo killall "
+                "coreaudiod"))
+
+
+def check_macos_log() -> CheckResult:
+    """The file log the doctor has just written to."""
+    path = get_log_file_path()
+    if not path:
+        return CheckResult(
+            name="log", ok=False,
+            detail="no file log is being written (--no-file-log?)",
+            fix=("Run without --no-file-log (and without "
+                 "POISE_DISABLE_FILE_LOG=1); POISE_LOG_FILE=<path> puts it "
+                 "somewhere specific."))
+    return CheckResult(name="log", ok=True,
+                       detail=f"{path} (this report is in it)")
+
+
+def run_macos_doctor() -> Tuple[bool, List[CheckResult]]:
+    """The macOS checks. Returns (all_ok, results).
+
+    The Linux checks next to this one ask about PulseAudio and PipeWire, so
+    they are not run here at all — there is nothing on a Mac for them to
+    find, and their fixes do not apply.
+    """
+    node = check_core_audio_node()
+    results = [check_macos_version(), node]
+    if node.ok:
+        results.append(check_macos_capture())
+    else:
+        results.append(CheckResult(
+            name="capture", ok=False,
+            detail="not probed: the native tap library is not usable (see "
+                   "core-audio-node)"))
+    results += [check_macos_taps(), check_macos_log()]
+    return all(r.ok for r in results), results
+
+
+def _reset_macos_audio() -> Tuple[bool, str]:
+    """macOS's --reset-audio: say what cannot be done, and what works.
+
+    A Core Audio process tap and its private aggregate belong to the process
+    that created them; there is no HAL call with which another process can
+    destroy them. So the honest answer names the two things that do work,
+    instead of the Linux pactl steps.
+    """
+    ok = True
+    lines = [
+        "Poise cannot dismantle another process's Core Audio tap: the tap "
+        "and\nits private aggregate are destroyed by the process that "
+        "created them,\nand no HAL call lets this process do it from outside.",
+    ]
+    try:
+        from .backends.platform.macos import list_core_audio_devices
+
+        strays = [d for d in list_core_audio_devices()
+                  if d.name.startswith("Poise")
+                  or d.uid.startswith("dev.poise.")]
+    except Exception as e:
+        strays = []
+        lines.append(f"(the HAL could not be asked: {e})")
+    if strays:
+        ok = False
+        lines.append(
+            "A Poise aggregate is registered right now: "
+            + ", ".join(f'{d.name} ({d.uid})' for d in strays) + ".")
+    else:
+        lines.append("No Poise aggregate is registered right now, so another\n"
+                     "Poise is probably not why audio is missing.")
+    lines += [
+        "What restores audio, in order:",
+        "  1. Quit Poise (the TUI ends its audio process on quit too): its "
+        "exit\n     routes destroy the tap, and destroying the tap unmutes "
+        "the Mac.",
+        "  2. Still silent: sudo killall coreaudiod — the audio daemon "
+        "restarts\n     immediately and drops every tap and aggregate whose "
+        "owner is gone.",
+        "  3. If Poise then captures nothing, the grant may be denied or "
+        "stale:",
+    ]
+    lines += ["     " + line for line in _grant_fix().splitlines()]
+    return ok, "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Doctor entry point
 # ---------------------------------------------------------------------------
 
 def run_doctor() -> Tuple[bool, List[CheckResult]]:
-    """Run all startup checks. Returns (all_ok, results)."""
+    """Run the Linux startup checks. Returns (all_ok, results).
+
+    macOS has its own set (run_macos_doctor): different failure modes, and
+    advice that does not mention pactl. The two are kept apart because the
+    checks are platform-specific by construction (tests/test_health.py also
+    pins this list), and cli.py picks one by platform.
+    """
     results = [check_execstack(), check_pulse_backend(),
                check_pipewire_node()]
     return all(r.ok for r in results), results

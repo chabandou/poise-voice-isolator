@@ -1,9 +1,11 @@
 """
 Device List Widget
 
-Box 3: the PulseAudio output sinks (by name). The one in use carries a
-gold dot; ↑ ↓ move, enter picks. Locked while a session runs (the sink
-is chosen at start).
+Box 3: the output devices, by name — PulseAudio's sinks on Linux; on macOS
+the Core Audio outputs, because a Mac has no PulseAudio server and the tap
+carries every app's audio (so there is no capture device to pick). The one
+in use carries a gold dot; ↑ ↓ move, enter picks. Locked while a session
+runs (the output is chosen at start).
 """
 from typing import List, Optional, Tuple
 
@@ -12,13 +14,68 @@ from textual.reactive import reactive
 from textual.widgets import Label, ListItem, ListView, Static
 
 from .. import palette as P
+from ...platform_utils import is_macos
 from .box import Box
 
 NAME_MAX = 40
 
+# (device name the audio backend is given, the line shown in the list)
+DeviceEntries = List[Tuple[str, str]]
+
+
+def _pulse_sinks() -> Optional[Tuple[DeviceEntries, Optional[str]]]:
+    """([(sink name, description)], default sink's name), or None.
+
+    None when there is no PulseAudio module to ask at all. A machine without
+    a PulseAudio server answers with an empty list instead (that is how macOS
+    answers), which is a different thing to say on screen.
+    """
+    try:
+        from ...backends.platform.linux import (
+            get_default_sink_name, list_pulseaudio_sinks,
+        )
+        from ...constants import PW_NODE_NAME
+    except ImportError:
+        return None
+    try:
+        sinks = [s for s in list_pulseaudio_sinks()
+                 if s.name not in ("Poise_Capture", PW_NODE_NAME)]
+        # Exclude other null/virtual sinks from the picker.
+        sinks = [s for s in sinks if "null" not in s.name.lower()]
+    except Exception:
+        return None
+    try:
+        default_sink = get_default_sink_name()
+    except Exception:
+        default_sink = None
+    return [(s.name, s.description) for s in sinks], default_sink
+
+
+def _core_audio_outputs() -> Optional[Tuple[DeviceEntries, Optional[str]]]:
+    """([(device name, description)], the default output's name) on macOS.
+
+    The output devices only: Poise taps all system audio, so there is no
+    capture device to choose (backends/platform/macos.py). The name is what
+    the app resolves to a UID before it starts; a Poise aggregate another
+    run left behind is not a choice.
+    """
+    try:
+        from ...backends.platform.macos import (
+            default_output_device, list_core_audio_devices,
+        )
+
+        devices = [d for d in list_core_audio_devices()
+                   if d.can_play and not d.name.startswith("Poise")]
+        default = default_output_device()
+    except Exception:
+        return None
+    entries = [(d.name, f"{d.name} ({d.transport or '?'}, "
+                        f"{d.nominal_rate // 1000} kHz)") for d in devices]
+    return entries, (default.name if default is not None else None)
+
 
 class DeviceListItem(ListItem):
-    """A single sink in the list."""
+    """A single output device in the list."""
 
     def __init__(self, sink_name: str, description: str) -> None:
         super().__init__()
@@ -54,7 +111,8 @@ class DeviceListItem(ListItem):
 
 
 class DeviceList(Box):
-    """Widget to display and select audio output sinks (Pulse names)."""
+    """Widget to display and select audio output devices (see
+    refresh_devices for the platform's source)."""
 
     selected_device: reactive[Optional[str]] = reactive(None)
 
@@ -86,7 +144,7 @@ class DeviceList(Box):
             item.set_in_use(item.sink_name == sink_name)
 
     def set_locked(self, locked: bool) -> None:
-        """While a session runs the sink cannot change."""
+        """While a session runs the output cannot change."""
         try:
             self.query_one("#device-list", ListView).disabled = locked
             self.query_one("#device-note", Static).update(
@@ -100,36 +158,31 @@ class DeviceList(Box):
             note(message, level)
 
     def refresh_devices(self) -> None:
-        """Refresh the sink list from PulseAudio."""
-        try:
-            from ...backends.platform.linux import (
-                list_pulseaudio_sinks, get_default_sink_name,
-            )
-        except ImportError:
+        """Refresh the output list from this platform's device source."""
+        sources = _pulse_sinks()
+        what = "PulseAudio sinks"
+        if is_macos() and not (sources and sources[0]):
+            # A Mac has no PulseAudio server, so its sink list is empty (or
+            # unavailable) by definition: the Core Audio outputs are the
+            # list there.
+            sources = _core_audio_outputs()
+            what = "Core Audio output devices"
+        if sources is None:
             self.devices = []
+            self.selected_device = None
             return
+        entries, default_sink = sources
         try:
-            from ...constants import PW_NODE_NAME
-            sinks = [s for s in list_pulseaudio_sinks()
-                     if s.name not in ("Poise_Capture", PW_NODE_NAME)]
-            # Exclude other null/virtual sinks from the picker.
-            sinks = [s for s in sinks if "null" not in s.name.lower()]
             self.devices = []
             list_view = self.query_one("#device-list", ListView)
             list_view.clear()
 
-            default_sink = None
-            try:
-                default_sink = get_default_sink_name()
-            except Exception:
-                default_sink = None
+            for name, description in entries:
+                self.devices.append((name, description))
+                list_view.append(DeviceListItem(name, description))
 
-            for sink in sinks:
-                self.devices.append((sink.name, sink.description))
-                list_view.append(DeviceListItem(sink.name, sink.description))
-
-            # Prefer the last picked sink, then the original default sink,
-            # else the first sink.
+            # Prefer the last picked device, then the platform's default,
+            # else the first one.
             selected = None
             if self.devices:
                 names = [name for name, _ in self.devices]
@@ -148,7 +201,7 @@ class DeviceList(Box):
                 self.watch_selected_device(selected)
             else:
                 self.selected_device = None
-                self._note("No PulseAudio sinks found", "error")
+                self._note(f"No {what} found", "error")
         except Exception:
             self.devices = []
             self.selected_device = None

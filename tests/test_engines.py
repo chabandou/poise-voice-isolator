@@ -398,3 +398,26 @@ def _make_gtcrn_engine_at(db):
         return create_engine(MODEL_GTCRN, atten_lim_db=db)
     except FileNotFoundError as e:
         pytest.skip(f"gtcrn model file not found: {e}")
+
+
+@pytest.mark.parametrize("plat,supported", [
+    ("linux", True), ("win32", True), ("darwin", False),
+])
+def test_rnnoise_is_offered_where_it_can_run(monkeypatch, plat, supported):
+    """RNNoise needs a .so/.dll and rnnoise_lib refuses every other platform,
+    so the picker must not offer it on macOS (nor hint at a Linux package)."""
+    from stream_denoiser.engines import availability
+    from stream_denoiser.constants import MODEL_RNNOISE, MODEL_GTCRN
+
+    monkeypatch.setattr(availability.sys, "platform", plat)
+    # Independent of whether this machine happens to have the library: the
+    # reason text only exists when it is missing.
+    monkeypatch.setattr(availability, "rnnoise_available", lambda: False)
+
+    assert availability.model_supported_here(MODEL_RNNOISE) is supported
+    assert availability.model_supported_here(MODEL_GTCRN) is True
+    reason = availability.model_unavailable_reason(MODEL_RNNOISE)
+    if supported:
+        assert "rnnoise" in (reason or "").lower() or "librnnoise" in (reason or "")
+    else:
+        assert "Linux and Windows" in reason

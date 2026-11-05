@@ -10,12 +10,15 @@ routing up puts it back.
 
 config keys (JSON values: AudioHost sends them over its pipe as they are):
     backend: "pipewire" or "pulse"; elsewhere "auto" (the native WASAPI
-        path, PortAudio when it cannot start), "wasapi" or "portaudio".
+        path, PortAudio when it cannot start), "wasapi" or "portaudio";
+        macOS: "auto" or "coreaudio" (one path, the Core Audio tap).
     model, onnx_path, atten_lim_db, aad_enabled, aad_threshold_db: the
         processor (see build_processor); all optional.
     input_device, output_device: pulse: source and sink names; pipewire:
         output_device, the sink to play to; Windows: PortAudio IDs, or
-        endpoint names on the native path. All optional.
+        endpoint names on the native path; macOS: output_device, the
+        output device's name or UID (there is no capture device: the tap
+        carries every app's audio). All optional.
     pipewire, optional: route_default, node_name, description.
     pulse: routed (the caller set up the null sink), monitor_source,
         fallback_sink (the real sink saved at routing setup).
@@ -29,6 +32,7 @@ from .constants import (
     DEFAULT_FRAME_SIZE,
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_RATE,
+    MACOS_BACKENDS,
     STATS_PRINT_INTERVAL_SEC,
     WINDOWS_BACKENDS,
 )
@@ -128,7 +132,19 @@ def run_session(processor, config: dict, should_stop=None,
         _final, empty_reads = run_pulse_loop(processor, source, sink,
                                              pause_gc=True, **loop)
         return {"empty_reads": empty_reads}
-    if backend in WINDOWS_BACKENDS and not sys.platform.startswith("linux"):
+    # macOS before Windows: on darwin "auto" means the Core Audio tap, and
+    # the platform is read from this module's ``sys`` the way the Linux
+    # and Windows tests read it (tests/test_session.py pins ``sys`` to run
+    # another platform's dispatch on any host).
+    if backend in MACOS_BACKENDS and sys.platform == "darwin":
+        _run_macos(processor, config, loop, started)
+        return {}
+    # Wasapi/portaudio are Windows backends. The old guard was
+    # ``not sys.platform.startswith("linux")``, which let ``--backend wasapi``
+    # on macOS fall into the Windows path (readable failure via
+    # WasapiUnavailable, but the wrong branch). Negative, so the tests that
+    # pin ``sys`` to run another platform's dispatch still work.
+    if backend in WINDOWS_BACKENDS and sys.platform == "win32":
         _run_windows(processor, config, backend, loop, started,
                      wasapi_margin, wasapi_pause_gc)
         return {}
@@ -175,6 +191,26 @@ def pulse_endpoints(config: dict) -> Tuple[str, str]:
         raise SessionError("No PulseAudio sink found for playback.",
                            PLAYBACK_NOTICE)
     return source, sink
+
+
+def _run_macos(processor, config: dict, loop: dict,
+               started: Callable) -> None:
+    """macOS's one path: the Core Audio tap.
+
+    There is nothing to fall back to: no loopback device exists on macOS,
+    and capturing the default input would record the microphone instead of
+    the system's audio. A Mac that cannot run the tap gets the reason.
+    """
+    from .backends.coreaudio_backend import run_coreaudio_loop
+    from .backends.platform.macos import require_core_audio_tap_support
+
+    # A sentence, not a dlopen failure.
+    require_core_audio_tap_support()
+    output = config.get("output_device") or None
+    started("coreaudio", None, output)
+    # The tap is the only audio path here: keep the collector off, as the
+    # PipeWire and pulse loops do (see run_session's wasapi_pause_gc).
+    run_coreaudio_loop(processor, output, pause_gc=True, **loop)
 
 
 def _run_windows(processor, config: dict, backend: str, loop: dict,

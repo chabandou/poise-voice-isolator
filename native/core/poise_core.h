@@ -12,7 +12,10 @@
  *
  * Positions are absolute sample counts at 48 kHz. Frame k covers input
  * samples [k*frame, (k+1)*frame). Single realtime thread, single worker
- * thread; no locks.
+ * thread; no locks. The worker is woken by a POSIX semaphore on Linux, a
+ * Win32 one on Windows (poise_wasapi) and a Mach one on macOS
+ * (poise_coreaudio): Darwin has no unnamed POSIX semaphores, and the post
+ * must stay lock-free on the realtime side (measurements/mac-wake.md).
  */
 #ifndef POISE_CORE_H
 #define POISE_CORE_H

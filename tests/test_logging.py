@@ -74,15 +74,45 @@ def test_default_log_dir_is_fixed_share_path():
     assert default_log_dir().as_posix().endswith(".local/share/poise/logs")
 
 
-# Without an explicit path, file logging is Linux-only: elsewhere
-# ensure_file_logging() returns None and the default/XDG//tmp chain
-# is never walked.
+def test_macos_default_log_chain(monkeypatch, tmp_path):
+    """On macOS the first default candidate is ~/Library/Logs/Poise, and the
+    per-user /tmp file is behind it, so a read-only home still gets a log."""
+    from stream_denoiser import logging_config as lc
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(lc, "_is_macos", lambda: True)
+    monkeypatch.setattr(lc, "_is_linux", lambda: False)
+    assert lc.macos_log_dir() == tmp_path / "Library" / "Logs" / "Poise"
+    files = list(lc._iter_candidate_files(None, None))
+    assert files, "the macOS chain yielded no candidate"
+    assert files[0] == tmp_path / "Library" / "Logs" / "Poise" / "poise.log"
+    # The fallback is a directory named poise-<user> under the temp root;
+    # compare path parts so Windows separators do not matter here.
+    assert any(any(part.startswith("poise-") for part in f.parts)
+               for f in files), files
+
+
+# Without an explicit path the *default* chain is walked on Linux and macOS
+# (logging_config._iter_candidate_files); only the XDG//tmp fallback rows are
+# Linux-specific, plus the crash log's core-dump expectations, so the markers
+# below name their own subject rather than "file logging".
 _linux_only = pytest.mark.skipif(
     not sys.platform.startswith("linux"),
-    reason="default log locations are Linux-only")
+    reason="XDG//tmp fallback rows are Linux-specific")
+# Windows turns file logging off unless a path is given (logging_config
+# returns None), so the default-chain tests have nothing to walk there --
+# that is the documented behaviour, not a failure.
+_not_windows = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="file logging defaults are off on Windows without an explicit path")
+# The crash log asserts a POSIX fatal-signal exit code (subprocess reports
+# -SIGABRT); Windows reports the abort differently.
+_posix_crash_log = pytest.mark.skipif(
+    not (sys.platform.startswith("linux") or sys.platform == "darwin"),
+    reason="fatal-signal exit codes are POSIX")
 
 
-@_linux_only
+@_not_windows
 def test_empty_home_still_produces_writable_log(monkeypatch, tmp_path):
     """HOME='' (desktop-file/sudo quirks) must not log under '/.local'."""
     monkeypatch.setenv("HOME", "")
@@ -102,7 +132,7 @@ _skip_as_root = pytest.mark.skipif(
     reason="root ignores directory permissions (e.g. CI containers)")
 
 
-@_linux_only
+@_not_windows
 @_skip_as_root
 def test_readonly_home_falls_back_to_per_user_tmp(monkeypatch, tmp_path):
     """Read-only home with no XDG set -> per-user /tmp dir, never None."""
@@ -310,8 +340,7 @@ def _run_crashing_child(code: str):
     )
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"),
-                    reason="crash log is part of Linux file logging")
+@_posix_crash_log
 def test_crash_traceback_records_python_stack_on_abort(tmp_path):
     """A native abort (e.g. glibc heap-corruption) leaves every thread's
     Python stack in poise-crash.log, next to poise.log."""
@@ -336,8 +365,6 @@ def test_crash_traceback_records_python_stack_on_abort(tmp_path):
     assert "worker_that_crashes" in crash
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"),
-                    reason="crash log is part of Linux file logging")
 def test_crash_traceback_off_without_file_logging():
     code = (
         "from stream_denoiser.logging_config import enable_crash_traceback\n"

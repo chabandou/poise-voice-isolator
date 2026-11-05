@@ -1,7 +1,7 @@
 """
 Logging Configuration Module
 
-Console output only in development; file logging (Linux only) is
+Console output only in development; file logging (Linux and macOS) is
 always available via ensure_file_logging() so weak machines can be
 diagnosed remotely. File handlers survive set_tui_mode(True).
 
@@ -16,6 +16,9 @@ onefile binary and across Linux distros:
 4. A per-user ``/tmp`` fallback (``/tmp/poise-<uid>/logs``) so a
    read-only/locked-down home or a root-owned leftover can never leave
    the user with no log file at all.
+
+macOS uses its own convention instead (``~/Library/Logs/Poise/poise.log``,
+see macos_log_dir); other platforms get no default file log at all.
 
 ``ensure_file_logging()`` never raises: it walks the candidates in
 order and returns the first writable location, or ``None``.
@@ -34,8 +37,9 @@ _loggers: dict[str, logging.Logger] = {}
 # Flag to indicate TUI mode (suppress console output when TUI is running)
 _tui_mode: bool = False
 
-# File-logging state (Linux only). A single shared RotatingFileHandler is
-# attached to every logger obtained via get_logger().
+# File-logging state (Linux and macOS). A single shared
+# RotatingFileHandler is attached to every logger obtained via
+# get_logger().
 _file_handler: Optional[logging.handlers.RotatingFileHandler] = None
 _log_file_path: Optional[str] = None
 
@@ -57,6 +61,10 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
 def _is_linux() -> bool:
     return sys.platform.startswith("linux")
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
 
 
 def _is_frozen() -> bool:
@@ -108,6 +116,21 @@ def default_log_dir() -> Path:
         return Path("/tmp") / "poise-logs"
 
 
+def macos_log_dir() -> Path:
+    """macOS log directory: ~/Library/Logs/Poise.
+
+    The platform's own place for an app's logs: Console.app lists it under
+    "Log Reports", Finder and macOS support articles point a user there,
+    and it is where a Mac user looks first. ``~/.local/state/poise`` would
+    work too, but it hides the file from every one of those surfaces, so
+    the macOS convention wins; ``--log-file`` overrides either.
+    """
+    try:
+        return _safe_home() / "Library" / "Logs" / "Poise"
+    except Exception:
+        return Path("/tmp") / "poise-logs"
+
+
 def _per_user_tmp_dir() -> Path:
     """Per-user /tmp dir (avoids collisions/root-owned leftovers in /tmp)."""
     try:
@@ -124,7 +147,11 @@ def _per_user_tmp_dir() -> Path:
 
 
 def candidate_log_dirs() -> list[Path]:
-    """Ordered, de-duplicated candidate log directories (first writable wins)."""
+    """Ordered, de-duplicated candidate log directories (first writable wins).
+
+    Linux's chain (default dir, XDG, per-user /tmp). macOS has a single
+    convention and is handled with it in _iter_candidate_files.
+    """
     candidates: list[Path] = []
     try:
         candidates.append(default_log_dir())
@@ -251,7 +278,16 @@ def _iter_candidate_files(
         except Exception:
             pass
     # Default/XDG//tmp candidates are Linux-only (explicit paths are
-    # honoured anywhere, e.g. for tests).
+    # honoured anywhere, e.g. for tests). macOS has one conventional
+    # location, with the per-user /tmp dir behind it so a read-only home
+    # still leaves a log file.
+    if _is_macos():
+        try:
+            yield macos_log_dir() / "poise.log"
+        except Exception:
+            pass
+        yield _per_user_tmp_dir() / "poise.log"
+        return
     if not _is_linux():
         return
     for directory in candidate_log_dirs():
@@ -266,14 +302,16 @@ def ensure_file_logging(
     backup_count: int = DEFAULT_BACKUP_COUNT,
 ) -> Optional[str]:
     """
-    Enable file logging (Linux only) and attach it to all known loggers.
+    Enable file logging (Linux and macOS) and attach it to all known loggers.
 
     Safe to call multiple times: the first call wins (same file reused).
-    Never raises: walks explicit path -> default dir -> XDG dirs ->
-    per-user /tmp and returns the first writable location, or None.
+    Never raises: walks explicit path -> platform default -> the rest of
+    that platform's candidates (Linux: XDG dirs; both: per-user /tmp) and
+    returns the first writable location, or None.
 
     Args:
-        log_file: Explicit file path (honoured even on non-Linux, for tests).
+        log_file: Explicit file path (honoured on every platform, for tests
+            and for ``--log-file``).
         log_dir: Directory for the default poise.log (default: default_log_dir()).
         level: Handler level (default INFO; pass DEBUG via --verbose).
         max_bytes: Rotation size. backup_count: rotated files kept.
@@ -294,7 +332,7 @@ def ensure_file_logging(
         return _log_file_path
 
     explicit = log_file is not None or log_dir is not None
-    if not explicit and not _is_linux():
+    if not explicit and not (_is_linux() or _is_macos()):
         return None
 
     for path in _iter_candidate_files(log_file, log_dir):
@@ -335,7 +373,9 @@ def add_log_args(parser):
     same everywhere.
     """
     parser.add_argument('--log-file', type=str, default=None,
-                        help='Write a diagnostic log file (Linux default: ~/.local/share/poise/logs/poise.log)')
+                        help='Write a diagnostic log file (Linux default: '
+                             '~/.local/share/poise/logs/poise.log; macOS '
+                             'default: ~/Library/Logs/Poise/poise.log)')
     parser.add_argument('--log-level', type=str, default='INFO',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                         help='File log verbosity (default: INFO; DEBUG for per-frame detail)')
@@ -372,8 +412,8 @@ def announce_log_path(path: Optional[str]) -> None:
             pass
 
 
-# Crash-traceback state (Linux only). faulthandler writes straight to the
-# file descriptor from its signal handler, so the file object must stay
+# Crash-traceback state (Linux and macOS). faulthandler writes straight to
+# the file descriptor from its signal handler, so the file object must stay
 # alive for the whole process lifetime.
 CRASH_LOG_NAME = "poise-crash.log"
 CRASH_LOG_MAX_BYTES = 256_000
@@ -390,7 +430,8 @@ def enable_crash_traceback() -> Optional[str]:
     signal, so the core dump (systemd-coredump) is still produced.
 
     The file sits next to ``poise.log`` and is only enabled while file
-    logging is on (Linux; honours ``--no-file-log`` / ``POISE_DISABLE_FILE_LOG``).
+    logging is on (Linux and macOS; honours ``--no-file-log`` /
+    ``POISE_DISABLE_FILE_LOG``).
     Each start appends a ``--- poise start ... pid=N ---`` header, so a
     traceback belongs to the nearest header above it. Never raises.
 

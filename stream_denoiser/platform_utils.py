@@ -16,6 +16,10 @@ def is_linux() -> bool:
     """Check if running on Linux."""
     return sys.platform.startswith('linux')
 
+def is_macos() -> bool:
+    """Check if running on macOS."""
+    return sys.platform == 'darwin'
+
 
 def get_vb_cable_switcher() -> Optional[Type]:
     """

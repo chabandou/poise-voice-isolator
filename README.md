@@ -72,6 +72,40 @@ Download **`Poise_Setup.exe`** from the [latest release](https://github.com/chab
 > [!TIP]
 > Setup bundles and silently installs the [VB-Cable](https://vb-audio.com/Cable/) driver when it is missing (reboot if asked). VB-Cable is donationware by VB-Audio; consider supporting them. Portable runs offer a one-click **Install VB-Cable** from the copy beside `Poise.exe`.
 
+### macOS
+
+macOS 14.2 or newer, Apple silicon. There is no packaged build and no desktop app on macOS yet: the
+terminal UI is the macOS interface, built from source, and no audio driver is required.
+
+```bash
+git clone https://github.com/chabandou/poise-voice-isolator.git
+cd poise-voice-isolator
+conda create -n poise python=3.12 && conda activate poise
+
+pip install -e .                        # textual for the TUI, numpy, ONNX Runtime
+make -C native/poise_coreaudio          # builds stream_denoiser/native/libpoise_coreaudio.dylib
+poise                                   # terminal UI
+```
+
+Use 3.12 (the version CI builds and the one the numbers in `measurements/` come from; 3.11 works too,
+while 3.10 caps ONNX Runtime at 1.22.1 on Apple silicon). Without conda:
+`python3.12 -m venv .venv`, `.venv/bin/pip install -e .`, then the two commands above.
+
+Poise captures system audio with a **Core Audio process tap** instead of a virtual device, so unlike
+Windows there is nothing to install. The apps it captures are muted while it runs and unmuted when it
+stops, exactly like the other platforms.
+
+macOS asks once for **System Audio Recording** (System Settings → Privacy & Security → Screen & System
+Audio Recording → "System Audio Recording Only"). Grant it to whatever launches Poise — the terminal,
+if you start it from a shell. A denial is silent rather than an error, so `poise --doctor` reports
+which state the tap is in and what to do. A development build signed ad-hoc re-asks after every
+rebuild; `tccutil reset AudioCapture <bundle-id>` re-arms the prompt.
+
+> [!NOTE]
+> DeepFilterNet3 and GTCRN are available; RNNoise is Linux/Windows only. The audio is not delayed for
+> the picture on macOS: expect ~84 ms with DeepFilterNet3 (~70 ms with GTCRN) between the video and
+> the sound. GTCRN plus `POISE_MAC_MARGIN_MS` is the lever if that is too much.
+
 ### Linux
 
 Arch Linux, from the [AUR](https://aur.archlinux.org/packages/poise-bin):
@@ -108,6 +142,10 @@ Switch with `m` in the TUI, the **Model** card in the app, or `--model` on the c
 | **GTCRN** | 18 ms | ~0.04 |
 | **RNNoise** | 20 ms | ~0.08 |
 
+macOS has no RNNoise build (Linux and Windows only), and runs faster than the laptop the table was
+measured on: DeepFilterNet3 at RTF **0.03** and GTCRN at **0.015** on an M2 Pro, both with
+`measurements/mac-engine-rtf.md` as the evidence.
+
 <sub>RTF = processing time ÷ audio time, measured on a Ryzen 5 4500U laptop on AC. Below 1.0 keeps up with real time.</sub>
 
 <details>
@@ -130,13 +168,14 @@ Both rewrite scripts rebuild their file from the original (checked by SHA-256) a
 | **Linux · PipeWire** *(default)* | A **Poise Voice Isolator** sink becomes the default; a native node inside PipeWire's graph processes each cycle and hands it to your speakers | ~76 ms |
 | **Linux · Pulse** *(fallback)* | A `Poise_Capture` null sink becomes the default; Poise records its monitor and plays to your speakers | varies |
 | **Windows** | **CABLE Input** becomes the default; a native WASAPI path on an MMCSS thread carries **CABLE Output** to your speakers | ~190 ms |
+| **macOS** | Nothing becomes the default: a **Core Audio process tap** reads every app's audio and a private aggregate device plays the isolated speech to your output device — no virtual driver | ~84 ms |
 
 > [!NOTE]
-> A frame that misses its deadline plays **unprocessed** rather than late, so audio never drifts behind the video (the log counts these as `dry`). Your original default device comes back on exit, and if Poise is killed, its PipeWire sink disappears with it. On Windows, Poise mirrors CABLE Input's volume onto your real device, so volume keys and mute keep working.
+> A frame that misses its deadline plays **unprocessed** rather than late, so audio never drifts behind the video (the log counts these as `dry`). Your original default device comes back on exit, and if Poise is killed, its PipeWire sink disappears with it. On Windows, Poise mirrors CABLE Input's volume onto your real device, so volume keys and mute keep working. On macOS, a tap mutes the apps it reads only while it is alive, so exiting Poise there is what unmutes them.
 
 ## Troubleshooting
 
-On Linux, start with the built-in doctor. It checks the audio server and the PipeWire node and says what to do (a quick version also runs at every start):
+On Linux, start with the built-in doctor. It checks the audio server and the PipeWire node and says what to do (a quick version also runs at every start). On macOS it checks the Core Audio tap, the System Audio Recording grant and the log file instead:
 
 ```bash
 poise --doctor
@@ -156,6 +195,34 @@ poise --reset-audio
 </details>
 
 <details>
+<summary><b>No sound at all on the Mac</b></summary>
+
+Poise mutes the apps it reads while it runs, so a Poise that is still holding its tap keeps the whole Mac silent. Quit Poise (in the TUI, `space` then `q`); if the Mac is still silent, restart the audio daemon:
+
+```bash
+sudo killall coreaudiod
+```
+
+`poise --doctor` says whether a Poise tap or aggregate is still registered, and `poise --reset-audio` explains what restores audio on macOS and what only the app that owns the tap can do.
+
+</details>
+
+<details>
+<summary><b>Silence, or Poise says it is capturing nothing</b></summary>
+
+On macOS a missing **Screen & System Audio Recording** grant is not an error: the tap captures silence, or delivers nothing at all. `poise --doctor` opens the tap for a second and says which of the two it is.
+
+The grant belongs to the app that runs Poise. Started from a shell that is your terminal (Terminal, iTerm, Ghostty, …), not Poise, so the terminal has to be switched on in **System Settings → Privacy & Security → Screen & System Audio Recording**, in the "System Audio Recording Only" section. A switch that already reads ON can be stale after a rebuild; re-arm it and allow again:
+
+```bash
+tccutil reset AudioCapture <bundle-id>
+```
+
+The log at `~/Library/Logs/Poise/poise.log` has the session's own answer: its `sync:` lines say `capture=signal`, `capture=silent` or `capture=no-audio`.
+
+</details>
+
+<details>
 <summary><b>Dropouts or unprocessed moments</b></summary>
 
 - Switch to **GTCRN**: about a third of DeepFilterNet3's CPU load.
@@ -171,6 +238,7 @@ Each frame gets a fixed deadline; a frame that misses it plays unprocessed. The 
 
 ```bash
 POISE_PW_MARGIN_MS=30 poise      # Linux, default 21
+POISE_MAC_MARGIN_MS=3 poise      # macOS, default 5.3 (256 samples)
 ```
 
 On Windows, set `POISE_WIN_MARGIN_MS` as a user environment variable and restart Poise.
@@ -184,7 +252,7 @@ On Windows, set `POISE_WIN_MARGIN_MS` as a user environment variable and restart
 ```bash
 git clone https://github.com/chabandou/poise-voice-isolator.git
 cd poise-voice-isolator
-conda create -n poise python=3.10 && conda activate poise
+conda create -n poise python=3.12 && conda activate poise
 
 pip install -e ".[linux]"   # TUI: textual, pulsectl
 pip install -e ".[gui]"     # desktop app: PyQt6
@@ -192,7 +260,7 @@ pip install -e ".[gui]"     # desktop app: PyQt6
 
 | Run | Command |
 |:--|:--|
-| Terminal UI (Linux) | `poise` · `python -m stream_denoiser.tui` |
+| Terminal UI (Linux, macOS) | `poise` · `python -m stream_denoiser.tui` |
 | Desktop app (Windows) | `python -m stream_denoiser.gui` |
 | Headless CLI | `poise-cli` · `python -m stream_denoiser` |
 | Tests | `pytest` (live-audio tests are marked `integration`) |
@@ -202,11 +270,12 @@ pip install -e ".[gui]"     # desktop app: PyQt6
 
 ### Native audio paths
 
-Both compile the same fixed-delay core, `native/core/poise_core.c`. Without them Poise falls back to the pulse-simple loop (Linux) or PortAudio streams (Windows).
+All three compile the same fixed-delay core, `native/core/poise_core.c`. Without them Poise falls back to the pulse-simple loop (Linux), PortAudio streams (Windows), and on macOS there is no fallback: the tap path is the only one.
 
 ```bash
 make -C native/poise_pw        # Linux:   stream_denoiser/native/libpoise_pw.so (needs PipeWire headers)
 make -C native/poise_wasapi    # Windows: stream_denoiser/native/poise_wasapi.dll (mingw-w64)
+make -C native/poise_coreaudio # macOS:   stream_denoiser/native/libpoise_coreaudio.dylib (Xcode CLT)
 ```
 
 > [!TIP]
@@ -277,7 +346,7 @@ stream_denoiser/
 ├── backend_detection.py     # Backend availability checks
 ├── device_utils.py          # Audio device utilities
 ├── platform_utils.py        # Platform detection
-├── health.py                # Startup health checks and audio recovery (Linux)
+├── health.py                # Startup health checks and audio recovery (Linux, macOS)
 ├── updates.py               # In-app updates (Windows installs)
 ├── constants.py             # Global configuration
 ├── logging_config.py        # Logging configuration
@@ -289,11 +358,13 @@ stream_denoiser/
 │   ├── pulse_simple.py      # ctypes binding for libpulse-simple
 │   ├── wasapi_backend.py    # Windows: native WASAPI path (default)
 │   ├── wasapi_node.py       # ctypes binding for poise_wasapi.dll (native/poise_wasapi)
-│   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by both native nodes
-│   ├── node_loop.py         # Inference thread for either native node
+│   ├── coreaudio_backend.py # macOS: Core Audio tap path (default)
+│   ├── coreaudio_node.py    # ctypes binding for libpoise_coreaudio.dylib (native/poise_coreaudio)
+│   ├── delay_core.py        # ctypes side of poise_core (native/core), shared by all three native nodes
+│   ├── node_loop.py         # Inference thread for any native node
 │   ├── sounddevice_backend.py # Windows fallback: PortAudio loop (VB Cable)
 │   ├── _loop_util.py        # Helpers the loops share
-│   └── platform/            # linux.py (PulseAudio), windows.py (WASAPI, VB-Cable switching)
+│   └── platform/            # linux.py (PulseAudio), windows.py (WASAPI, VB-Cable), macos.py (Core Audio HAL)
 ├── engines/                 # Denoise engines
 │   ├── base.py              # DenoiseEngine base class
 │   ├── availability.py      # Which models can run here
@@ -304,6 +375,7 @@ stream_denoiser/
 │   └── rnnoise_lib.py       # ctypes binding for the RNNoise library
 ├── models/                  # Vendored models: DeepFilterNet3 (.onnx + states .npz), GTCRN (.onnx)
 ├── native/                  # Prebuilt libraries: poise_wasapi, rnnoise (.so and .dll)
+│                            # (libpoise_coreaudio.dylib and libpoise_pw.so are built, not committed)
 ├── gui/                     # Desktop GUI (PyQt6)
 │   ├── main_window.py
 │   ├── worker.py            # QThread audio worker, signals to the GUI
@@ -315,7 +387,7 @@ stream_denoiser/
     ├── styles.tcss          # TUI stylesheet
     └── widgets/             # Device list, signal, isolation and events panels, model picker
 
-native/                      # C sources: core/ (shared delay), poise_pw/, poise_wasapi/, latmeter/
+native/                      # C sources: core/ (shared delay), poise_pw/, poise_wasapi/, poise_coreaudio/, latmeter/
 installer/                   # Windows setup app (bootstrapper/), VB-Cable fetch
 docs/                        # Website (Vite + React); scripts/render-file-tree.mjs draws the image above
 ```
@@ -331,8 +403,8 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 |:--|:--|
 | `--model {deepfilternet3,gtcrn,rnnoise}` | Engine (default `deepfilternet3`) |
 | `--onnx PATH` | Custom DeepFilterNet3 model file |
-| `--backend` | `auto`, `pipewire`, `pulse` (Linux) · `wasapi`, `portaudio` (Windows) |
-| `--source` / `--sink` | Pulse capture source / playback sink (Linux) |
+| `--backend` | `auto`, `pipewire`, `pulse` (Linux) · `wasapi`, `portaudio` (Windows) · `coreaudio` (macOS) |
+| `--source` / `--sink` | Pulse capture source / playback sink (Linux); playback device name or uid (macOS: `--sink` only — there is no capture device to choose) |
 | `--input-device` / `--output-device` | Device IDs (Windows) |
 | `--list-devices` | List devices and exit |
 | `--no-aad` | Process silence too |
@@ -340,7 +412,8 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 | `--atten-lim-db DB` | Reduction strength (default −60) |
 | `--no-vb-cable` | Leave the default device alone; route apps yourself |
 | `--vb-cable-name NAME` | VB-Cable device name, if not auto-detected |
-| `--doctor` · `--reset-audio` · `--fix-execstack` | Linux repair tools |
+| `--doctor` · `--reset-audio` | Startup checks and audio recovery, per platform |
+| `--fix-execstack` | Linux repair tool (ONNX Runtime `execstack` flag) |
 
 </details>
 
@@ -350,7 +423,7 @@ docs/                        # Website (Vite + React); scripts/render-file-tree.
 | Variable | Effect |
 |:--|:--|
 | `POISE_BACKEND` | Same as `--backend` |
-| `POISE_PW_MARGIN_MS` · `POISE_WIN_MARGIN_MS` | Per-frame deadline margin; adds to the delay |
+| `POISE_PW_MARGIN_MS` · `POISE_WIN_MARGIN_MS` · `POISE_MAC_MARGIN_MS` | Per-frame deadline margin; adds to the delay |
 | `POISE_ONNX_THREADS` | Inference threads (default 2 on Linux, 1 on Windows) |
 | `POISE_SKIP_HEALTH=1` | Skip the startup pre-flight |
 | `POISE_LOG_LEVEL` · `POISE_LOG_DIR` · `POISE_DISABLE_FILE_LOG=1` | Logging |

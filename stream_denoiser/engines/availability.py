@@ -82,6 +82,17 @@ def available_models() -> List[str]:
     return models
 
 
+def model_supported_here(name: str) -> bool:
+    """Whether this platform can run the engine at all.
+
+    Not the same as available: RNNoise needs librnnoise.so/.dll and
+    engines/rnnoise_lib refuses every other platform, so on macOS it cannot
+    be installed into working order and the UI should not offer it.
+    """
+    key = (name or "").strip().lower()
+    return not (key == MODEL_RNNOISE and sys.platform == "darwin")
+
+
 def model_unavailable_reason(name: str) -> Optional[str]:
     """
     Why a model cannot be used on this machine, or None if available.
@@ -97,5 +108,7 @@ def model_unavailable_reason(name: str) -> Optional[str]:
     if key == MODEL_RNNOISE and not rnnoise_available():
         if sys.platform == "win32":
             return "rnnoise.dll not found next to the app (reinstall Poise)"
+        if sys.platform == "darwin":
+            return "RNNoise is Linux and Windows only"
         return "librnnoise not installed (e.g. 'sudo pacman -S rnnoise' on Arch)"
     return None

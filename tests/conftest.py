@@ -20,6 +20,7 @@ tests need no per-file importorskip guard.
 """
 import importlib.util
 import os
+import pathlib
 import tempfile
 
 import pytest
@@ -69,6 +70,38 @@ try:
     _animations.LIVE_ENV = True
 except Exception:
     _SESSION_APP = None
+
+
+# ---------------------------------------------------------------------------
+# The gui marker
+# ---------------------------------------------------------------------------
+# The desktop app's tests need Qt and drive a real event loop, which makes them
+# timing-sensitive on a loaded CI runner (they pump with processEvents() and
+# fixed sleeps). Marking them lets a platform job separate "the backend suite
+# blocks the PR" from "the GUI suite runs and reports", without a list of
+# files to maintain or a relaxed assertion. Modules are detected by what they
+# import, so a new GUI test file is covered automatically.
+_GUI_IMPORT = ("stream_denoiser.gui", "PyQt6")
+_gui_cache: dict = {}
+
+
+def _is_gui_module(path) -> bool:
+    key = str(path)
+    if key not in _gui_cache:
+        try:
+            text = pathlib.Path(path).read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        _gui_cache[key] = any(marker in text for marker in _GUI_IMPORT)
+    return _gui_cache[key]
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tag every test that lives in a Qt-bound module with ``gui``."""
+    gui = pytest.mark.gui
+    for item in items:
+        if _is_gui_module(getattr(item, "path", "")):
+            item.add_marker(gui)
 
 
 @pytest.fixture(autouse=True)

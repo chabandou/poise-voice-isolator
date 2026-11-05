@@ -123,12 +123,15 @@ class ModelPickerScreen(ModalScreen[Optional[str]]):
             pass
 
     def compose(self):
-        from ...engines import available_models, model_unavailable_reason
+        from ...engines import (available_models, model_supported_here,
+                                model_unavailable_reason)
 
         usable = set(available_models())
         with Vertical():
             with ListView(id="model-picker-list"):
                 for model_id in ALL_MODELS:
+                    if not model_supported_here(model_id):
+                        continue  # cannot run here at all, e.g. RNNoise off Linux
                     info = MODEL_INFO.get(model_id, {})
                     label = info.get("label", model_id)
                     # Picker shows the tradeoff blurb (independent of the

@@ -12,6 +12,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach/mach.h>
 #else
 #include <semaphore.h>
 #endif
@@ -29,8 +31,10 @@
 /* Peak below which audio counts as silence (about -100 dBFS). */
 #define SILENCE 1e-5f
 
-/* The worker's wake-up: a POSIX semaphore, or a Win32 one on Windows
- * (the WASAPI path). Posting never blocks on either. */
+/* The worker's wake-up: a POSIX semaphore, a Win32 one on Windows (the
+ * WASAPI path), or a Mach one on macOS (the Core Audio path; Darwin has no
+ * unnamed POSIX semaphores, see measurements/mac-wake.md). Posting never
+ * blocks on any of them. */
 #ifdef _WIN32
 typedef HANDLE poise_sem;
 
@@ -57,6 +61,57 @@ static int sem_wait_until_(poise_sem *s, uint64_t deadline_ms)
 	DWORD wait = deadline_ms > now ? (DWORD)(deadline_ms - now) : 0;
 
 	return WaitForSingleObject(*s, wait) == WAIT_OBJECT_0 ? 0 : -1;
+}
+#elif defined(__APPLE__)
+typedef semaphore_t poise_sem;
+
+static int sem_open_(poise_sem *s)
+{
+	return semaphore_create(mach_task_self(), s, SYNC_POLICY_FIFO, 0) ==
+	       KERN_SUCCESS;
+}
+
+static void sem_close_(poise_sem *s)
+{
+	semaphore_destroy(mach_task_self(), *s);
+}
+
+/* A trap, no user-space lock: p99 0.625 us, max 1.0 us with a thread holding
+ * the same mutex for 100 ms on the same machine (measurements/mac-wake.md
+ * P4). */
+static void sem_post_(poise_sem *s)
+{
+	semaphore_signal(*s);
+}
+
+static uint64_t monotonic_ns_(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+
+/* Wait until deadline_ns (CLOCK_MONOTONIC): 0 = posted, -1 = timeout.
+ * semaphore_timedwait() takes an INTERVAL, not a deadline, so the remaining
+ * time is recomputed on each retry; a KERN_ABORTED (thread_abort, the Mach
+ * counterpart of EINTR) therefore does not extend the wait. */
+static int sem_wait_until_(poise_sem *s, uint64_t deadline_ns)
+{
+	for (;;) {
+		uint64_t now = monotonic_ns_();
+		uint64_t left = deadline_ns > now ? deadline_ns - now : 0;
+		mach_timespec_t interval;
+		kern_return_t kr;
+
+		interval.tv_sec = (unsigned int)(left / 1000000000ull);
+		interval.tv_nsec = (clock_res_t)(left % 1000000000ull);
+		kr = semaphore_timedwait(*s, interval);
+		if (kr == KERN_SUCCESS)
+			return 0;
+		if (kr != KERN_ABORTED)
+			return -1;
+	}
 }
 #else
 typedef sem_t poise_sem;
@@ -395,6 +450,9 @@ int64_t poise_core_wait_frame(poise_core *c, float *dst, int timeout_ms)
 	const int64_t F = c->frame;
 #ifdef _WIN32
 	uint64_t deadline = GetTickCount64() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 0);
+#elif defined(__APPLE__)
+	uint64_t deadline_ns = monotonic_ns_() +
+		(uint64_t)(timeout_ms > 0 ? timeout_ms : 0) * 1000000ull;
 #else
 	struct timespec deadline;
 
@@ -452,6 +510,9 @@ int64_t poise_core_wait_frame(poise_core *c, float *dst, int timeout_ms)
 			return -1;
 #ifdef _WIN32
 		if (sem_wait_until_(&c->sem, deadline) != 0)
+			return atomic_load(&c->stopping) ? -2 : -1;
+#elif defined(__APPLE__)
+		if (sem_wait_until_(&c->sem, deadline_ns) != 0)
 			return atomic_load(&c->stopping) ? -2 : -1;
 #else
 		while (sem_timedwait(&c->sem, &deadline) != 0) {
